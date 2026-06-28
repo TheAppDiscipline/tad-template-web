@@ -1,0 +1,130 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://example.local/schemas/<feature_name>.schema.json",
+    "title": "<feature_name> Response Schema",
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+        "schema_version",
+        "request_id",
+        "ok",
+        "data",
+        "error"
+    ],
+    "properties": {
+        "schema_version": {
+            "type": "string",
+            "description": "Version del schema para compatibilidad",
+            "pattern": "^v\\d+(\\.\\d+)?$"
+        },
+        "request_id": {
+            "type": "string",
+            "minLength": 1
+        },
+        "ok": {
+            "type": "boolean"
+        },
+        "data": {
+            "$ref": "#/$defs/Data"
+        },
+        "error": {
+            "$ref": "#/$defs/Error"
+        }
+    },
+    "$defs": {
+        "Error": {
+            "type": [
+                "object",
+                "null"
+            ],
+            "additionalProperties": false,
+            "required": [
+                "code",
+                "message",
+                "missing_fields",
+                "retryable"
+            ],
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "enum": [
+                        "NONE",
+                        "MISSING_FIELDS",
+                        "AMBIGUOUS",
+                        "INVALID_INPUT",
+                        "POLICY_BLOCK",
+                        "PROVIDER_ERROR",
+                        "INTERNAL_ERROR"
+                    ]
+                },
+                "message": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 400
+                },
+                "missing_fields": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "maxItems": 20
+                },
+                "retryable": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "Data": {
+            "type": [
+                "object",
+                "null"
+            ],
+            "additionalProperties": false,
+            "description": "TODO: Reemplaza esto por el shape real de tu feature.",
+            "required": [],
+            "properties": {}
+        }
+    },
+    "allOf": [
+        {
+            "if": {
+                "properties": {
+                    "ok": {
+                        "const": true
+                    }
+                }
+            },
+            "then": {
+                "properties": {
+                    "error": {
+                        "type": "object",
+                        "properties": {
+                            "code": {
+                                "const": "NONE"
+                            }
+                        },
+                        "required": [
+                            "code"
+                        ]
+                    }
+                }
+            }
+        },
+        {
+            "if": {
+                "properties": {
+                    "ok": {
+                        "const": false
+                    }
+                }
+            },
+            "then": {
+                "properties": {
+                    "error": {
+                        "type": "object"
+                    }
+                }
+            }
+        }
+    ]
+}

@@ -1,0 +1,6 @@
+extends: existence
+message: "Evita headings de profundidad excesiva en docs Discipline Loop."
+level: warning
+scope: heading
+tokens:
+  - '^#{5,}'

@@ -1,0 +1,170 @@
+/* Component styles should use semantic tokens from tokens.css */
+
+.app-shell {
+  width: min(100%, var(--layout-max-width));
+  display: grid;
+  gap: var(--space-6);
+}
+
+.panel {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-soft);
+  box-shadow: var(--shadow-md);
+}
+
+.hero {
+  padding: var(--space-10);
+  display: grid;
+  gap: var(--space-5);
+}
+
+.eyebrow {
+  margin: 0;
+  color: var(--color-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--font-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.hero h1,
+.feature-card h2,
+.checklist-panel h2 {
+  margin: 0;
+}
+
+.hero h1 {
+  font-size: clamp(2.5rem, 6vw, 4.5rem);
+  line-height: var(--line-tight);
+}
+
+.hero-copy,
+.feature-card p,
+.checklist-panel p,
+.checklist li {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-md);
+  line-height: var(--line-relaxed);
+}
+
+.hero-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.hero-meta div {
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-strong);
+}
+
+.hero-meta dt {
+  margin: 0 0 var(--space-2);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.hero-meta dd {
+  margin: 0;
+  color: var(--color-text);
+  font-size: var(--text-lg);
+  font-weight: var(--font-semibold);
+}
+
+.panel-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.feature-card,
+.checklist-panel,
+.state-panel,
+.state-card {
+  padding: var(--space-6);
+}
+
+.feature-card {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.state-panel {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.state-copy {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.state-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.state-card {
+  display: grid;
+  gap: var(--space-3);
+  min-height: 10rem;
+}
+
+.state-label {
+  margin: 0;
+  color: var(--color-text);
+  font-size: var(--text-lg);
+  font-weight: var(--font-semibold);
+}
+
+.state-loading {
+  background: linear-gradient(180deg, var(--color-state-loading-bg), var(--color-surface-soft));
+}
+
+.state-empty {
+  background: linear-gradient(180deg, var(--color-state-empty-bg), var(--color-surface-soft));
+}
+
+.state-error {
+  background: linear-gradient(180deg, var(--color-state-error-bg), var(--color-surface-soft));
+}
+
+.state-normal {
+  background: linear-gradient(180deg, var(--color-state-normal-bg), var(--color-surface-soft));
+}
+
+.checklist-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: var(--space-6);
+  align-items: start;
+}
+
+.checklist-copy {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.checklist {
+  margin: 0;
+  padding-left: var(--space-5);
+  display: grid;
+  gap: var(--space-4);
+}
+
+@media (max-width: 900px) {
+  .hero-meta,
+  .panel-grid,
+  .state-grid,
+  .checklist-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .hero {
+    padding: var(--space-8);
+  }
+}

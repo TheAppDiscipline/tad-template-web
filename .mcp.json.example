@@ -1,0 +1,62 @@
+{
+  "_README": "Copia este archivo como .mcp.json en tu repo (NO commitear; .gitignore lo cubre). Mantén SOLO los servers que realmente uses. Cada server con prefijo _DISABLED_ está apagado; renómbralo (quita _DISABLED_) y rellena credenciales para activarlo. Setup detallado en CLAUDE.md o en el vault §Capa 4.",
+  "_DOC_LINK": "https://docs.claude.com/en/docs/claude-code/mcp",
+  "_LEAST_PRIVILEGE_RULE": "Cada credencial debe ser READ-ONLY hasta que la operación lo requiera. NUNCA pegar SERVICE_ROLE_KEY ni tokens con write scope amplio aquí.",
+
+  "mcpServers": {
+    "github": {
+      "_purpose": "Leer PRs, issues, releases, CI status sin salir del contexto de Claude Code. PAT debe ser read-only (scopes: repo:read, public_repo).",
+      "command": "npx",
+      "args": ["-y", "@anthropic-ai/github-mcp"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_replace-with-read-only-PAT"
+      }
+    },
+
+    "playwright": {
+      "_purpose": "Debug puntual en browser: tomar screenshots, ejecutar selectors, leer HTML para diagnostico de UI. Sin credenciales.",
+      "command": "npx",
+      "args": ["@playwright/mcp@latest"]
+    },
+
+    "_DISABLED_supabase": {
+      "_purpose": "Leer tablas, RLS policies, migrations en read-only. Útil para Paso 2 (validar arquitectura) y audit 2 (RLS check). Para activarlo: quita _DISABLED_, instala @supabase/mcp-server, configura SUPABASE_URL + SUPABASE_ANON_KEY (NUNCA service_role).",
+      "command": "npx",
+      "args": ["-y", "@supabase/mcp-server"],
+      "env": {
+        "SUPABASE_URL": "https://your-project.supabase.co",
+        "SUPABASE_ANON_KEY": "<your-supabase-anon-key>"
+      }
+    },
+
+    "_DISABLED_sentry": {
+      "_purpose": "Leer issues, releases, performance metrics de Sentry. Útil para Paso 6 (post-deploy verification) y audit 4 (perf). Token con scope project:read.",
+      "command": "npx",
+      "args": ["-y", "@sentry/mcp-server"],
+      "env": {
+        "SENTRY_AUTH_TOKEN": "sntrys_replace-with-read-only-token",
+        "SENTRY_ORG": "your-org-slug",
+        "SENTRY_PROJECT": "your-project-slug"
+      }
+    },
+
+    "_DISABLED_posthog": {
+      "_purpose": "Leer eventos, funnels, dashboards de PostHog. Útil para Paso 7 (productización, decisiones basadas en uso real). Personal API key con read-only.",
+      "command": "npx",
+      "args": ["-y", "@posthog/mcp-server"],
+      "env": {
+        "POSTHOG_PROJECT_API_KEY": "phx_replace-with-personal-api-key",
+        "POSTHOG_HOST": "https://us.i.posthog.com"
+      }
+    },
+
+    "_DISABLED_stripe": {
+      "_purpose": "Leer customers, subscriptions, invoices. Útil para Paso 7 con monetización (audit ingresos, debugging billing). Restricted key con scope read.",
+      "command": "npx",
+      "args": ["-y", "@stripe/mcp-server"],
+      "env": {
+        "STRIPE_SECRET_KEY": "rk_live_replace-with-restricted-key-read-only"
+      }
+    }
+  }
+}

@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Enable Corepack (for pnpm/yarn)
+        run: corepack enable
+
+      - name: Install dependencies (auto-detect)
+        run: |
+          if [ -f pnpm-lock.yaml ]; then
+            pnpm install --frozen-lockfile
+          elif [ -f yarn.lock ]; then
+            yarn install --frozen-lockfile
+          elif [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Audit dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Run full gate
+        run: |
+          if [ -f pnpm-lock.yaml ]; then
+            pnpm run gate:full
+          elif [ -f yarn.lock ]; then
+            yarn run gate:full
+          else
+            npm run gate:full
+          fi
+
+      - name: Install Playwright browsers
+        run: npx playwright install chromium
+
+      - name: Run visual smoke gate
+        run: |
+          if [ -f pnpm-lock.yaml ]; then
+            pnpm run gate:visual
+          elif [ -f yarn.lock ]; then
+            yarn gate:visual
+          else
+            npm run gate:visual
+          fi

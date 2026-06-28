@@ -1,0 +1,136 @@
+# .discipline/scorecard.template.yaml
+#
+# PLANTILLA del scorecard de Gate D (Launch). El validador NO lee este archivo
+# (busca `.discipline/scorecard.yaml`), así que es un punto de arranque inerte.
+#
+# Cuando prepares LAUNCH (PROFILE=LAUNCH en discipline.md):
+#   1. Copiá este archivo a `.discipline/scorecard.yaml`.
+#   2. Completá cada ítem: `status` (done | not_done | deferred | not_applicable).
+#      Para los CRÍTICOS en `done`, agregá `evidence` (URL, path o descripción verificable).
+#   3. Corré `npm run discipline:validate:launch` hasta que pase (0 errores).
+#
+# Schema y reglas completas: ver el vault (Launch vs PROD + Scorecard as Code).
+#
+# Reglas que aplica el validador (resumen):
+#   - launch.critical `done` SIN `evidence` -> FAIL.
+#   - launch.critical `not_done` o `deferred` -> FAIL, salvo `blocking: false` (baja a warning).
+#       Para handoffs honestos (infra que todavía no existe en local: deploy público, Sentry,
+#       uptime, HSTS, etc.) usá `deferred` + `blocking: false` + `deferred_reason`.
+#       NUNCA marques `done` algo que no hiciste.
+#   - launch.recommended `deferred` necesita `deferred_reason` + `expires_on` futuro.
+#
+# Recién copiado, este scorecard FALLA Gate D a propósito (todo `not_done`): NO está roto.
+# Es el estado correcto hasta que completes cada ítem (status `done` + `evidence`) o lo
+# difieras explícitamente (`deferred` + `blocking: false` + `deferred_reason`).
+
+meta:
+  project: ""                 # nombre de tu app
+  version: "1.0"
+  profile_target: "LAUNCH"
+  last_updated: ""            # YYYY-MM-DD
+  next_review: ""             # YYYY-MM-DD
+
+# ---------------------------------------------------------------------------
+# Gate D — Launch. Ítems CRÍTICOS (bloquean el lanzamiento público).
+# ---------------------------------------------------------------------------
+launch:
+  critical:
+    - id: L01
+      name: "Privacy Policy publicada + accesible desde /privacy"
+      status: not_done
+      evidence: null
+      notes: null
+
+    - id: L02
+      name: "Terms of Service publicado + accesible desde /terms"
+      status: not_done
+      evidence: null
+
+    - id: L03
+      name: "Account deletion funcional end-to-end"
+      status: not_done
+      evidence: null
+
+    - id: L04
+      name: "Sentry (o equivalente) recibiendo errores de prod"
+      status: not_done
+      evidence: null
+
+    - id: L05
+      name: "Uptime monitor activo con alerta configurada"
+      status: not_done
+      evidence: null
+
+    - id: L06
+      name: "HTTPS obligatorio + CORS no '*' + secrets solo en server"
+      status: not_done
+      evidence: null
+
+    - id: L06b
+      name: "HSTS header configurado en respuestas HTTPS"
+      status: not_done
+      evidence: null
+
+    - id: L07
+      name: "Rollback probado mínimo una vez"
+      status: not_done
+      evidence: null
+
+    - id: L08
+      name: "Support channel activo + respuesta esperada comunicada"
+      status: not_done
+      evidence: null
+
+    - id: L09a
+      name: "Lighthouse Accessibility > 90"
+      status: not_done
+      evidence: null
+
+    # Condicionales: solo aplican si activás el switch en discipline.md.
+    # El validador los exige (CRÍTICO) cuando applies_when es verdadero.
+    - id: L16
+      name: "Billing seguro: webhook firmado y verificado, acceso premium chequeado server-side, idempotencia de eventos, y bypass por localStorage probado en negativo"
+      status: not_done
+      evidence: null
+      applies_when: "BILLING == true"
+      notes: "Solo si tu app cobra. Marcá `- BILLING: true` en discipline.md. Evidencia: PR/commit del webhook + test de idempotencia + test de bypass denegado."
+
+    - id: L17
+      name: "Storage privado verificado: usuario B (incógnito) NO abre el archivo privado de usuario A y el signed URL expira (npm run test:storage:privacy)"
+      status: not_done
+      evidence: null
+      applies_when: "UPLOADS == true"
+      notes: "Solo si tu app sube archivos privados. Marcá `- UPLOADS: true` en discipline.md. Evidencia: salida de `npm run test:storage:privacy` + captura del intento denegado."
+
+  # -------------------------------------------------------------------------
+  # Ítems RECOMENDADOS (warning si faltan, no bloquean).
+  # -------------------------------------------------------------------------
+  recommended:
+    - id: L09
+      name: "Analytics activación + retención semana 1"
+      status: not_done
+
+    - id: L10
+      name: "Load test básico (50 usuarios simultáneos)"
+      status: not_done
+
+    - id: L11
+      name: "Lighthouse Performance > 70 mobile"
+      status: not_done
+
+    - id: L13
+      name: "FAQ o docs públicos para 3 problemas comunes"
+      status: not_done
+
+    - id: L14
+      name: "Status page o mecanismo de comunicación de incidentes"
+      status: not_done
+
+    - id: L15
+      name: "Logs estructurados (JSON) en backend con user_id + request_id"
+      status: not_done
+
+# ---------------------------------------------------------------------------
+# Gate E — PROD: agregá la sección `prod:` (critical + conditional) recién al
+# preparar PROFILE=PROD. Ver el vault (Launch vs PROD + Scorecard as Code) §3.
+# ---------------------------------------------------------------------------

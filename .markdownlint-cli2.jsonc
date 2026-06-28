@@ -1,0 +1,22 @@
+{
+  "config": {
+    "default": true,
+    "MD013": { "line_length": 200 },
+    "MD033": false,
+    "MD041": false
+  },
+  "globs": [
+    "**/*.md",
+    "discipline.md",
+    "task_plan.md",
+    "findings.md",
+    "progress.md",
+    ".discipline/**/*.md"
+  ],
+  "ignores": [
+    "node_modules/**",
+    "dist/**",
+    ".discipline/backups/**",
+    ".discipline/patches/applied/**"
+  ]
+}

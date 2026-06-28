@@ -1,0 +1,55 @@
+name: Gate Launch
+
+# Runs the launch gate (gate:strict + scorecard + RLS cross-user + prod audit).
+# It only enforces once you prepare a launch scorecard (.discipline/scorecard.yaml),
+# so the template repo stays green until you reach PROFILE=LAUNCH.
+#
+# The cross-user RLS test (test:rls) runs against a real Supabase project when these
+# repository secrets are set: SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY.
+# Without them it skips cleanly. The LLM security review lives in security-review.yml
+# (opt-in: set the ANTHROPIC_API_KEY secret to enable it).
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gate-launch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Launch gate (enforced only when a scorecard.yaml exists)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TEST_PRIVATE_BUCKET: ${{ secrets.TEST_PRIVATE_BUCKET }}
+        run: |
+          if [ -f .discipline/scorecard.yaml ]; then
+            echo "scorecard.yaml found — running gate:launch."
+            npm run gate:launch
+          else
+            echo "No .discipline/scorecard.yaml yet. gate:launch enforces at PROFILE=LAUNCH; skipping."
+          fi

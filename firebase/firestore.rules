@@ -1,0 +1,35 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isMember(spaceId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/memberships/$(spaceId + '_' + request.auth.uid));
+    }
+
+    match /spaces/{spaceId} {
+      allow read: if isMember(spaceId);
+      allow create: if signedIn() && request.resource.data.created_by == request.auth.uid;
+      allow update: if isMember(spaceId);
+      allow delete: if false;
+    }
+
+    match /memberships/{membershipId} {
+      allow read: if signedIn() && resource.data.user_id == request.auth.uid;
+      allow create: if signedIn() && request.resource.data.user_id == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if isMember(resource.data.space_id);
+      allow create: if signedIn() && isMember(request.resource.data.space_id);
+      allow update: if isMember(resource.data.space_id)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read_at', 'updated_at']);
+      allow delete: if false;
+    }
+  }
+}

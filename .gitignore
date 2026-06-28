@@ -1,0 +1,43 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Build artifacts
+*.tsbuildinfo
+build_output.txt
+
+# Editor folders
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Discipline Loop pipeline artifacts — versioned alongside code (packets = context handoff)
+# Do NOT ignore .discipline/ contents — they are project artifacts, not build output
+
+
+# Environment
+.env
+.env.*
+!.env.example
+!.env.example.supabase
+!.env.example.firebase
+
+# Playwright artifacts
+playwright-report
+test-results

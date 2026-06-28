@@ -1,0 +1,11 @@
+repos:
+  - repo: https://github.com/DavidAnson/markdownlint-cli2
+    rev: v0.18.1
+    hooks:
+      - id: markdownlint-cli2
+
+  - repo: https://github.com/errata-ai/vale
+    rev: v3.13.0
+    hooks:
+      - id: vale
+        args: ["--no-exit"]

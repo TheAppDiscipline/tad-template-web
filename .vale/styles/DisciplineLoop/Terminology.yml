@@ -1,0 +1,9 @@
+extends: substitution
+message: "Usa '%s' en lugar de '%s'."
+level: warning
+ignorecase: true
+swap:
+  hand-off: handoff
+  hand off: handoff
+  patchblock: patch block
+  paste ready: paste-ready
