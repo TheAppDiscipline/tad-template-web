@@ -9,9 +9,12 @@ on:
 permissions:
   contents: read
 
+# Vercel deploys are opt-in. To enable preview/production deploys, set the repository
+# variable ENABLE_VERCEL_CD=true and add the VERCEL_TOKEN / VERCEL_ORG_ID / VERCEL_PROJECT_ID
+# secrets. Until then this workflow is a no-op (keeps a fresh template free of failed deploys).
 jobs:
   preview:
-    if: github.event_name == 'pull_request'
+    if: vars.ENABLE_VERCEL_CD == 'true' && github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
@@ -54,7 +57,7 @@ jobs:
           PREVIEW_URL: ${{ steps.deploy.outputs.url }}
 
   production:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: vars.ENABLE_VERCEL_CD == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:

@@ -13,7 +13,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "node --test --test-isolation=none tests/tooling.test.js tests/tooling.discipline.test.js",
+    "test": "node --test tests/tooling.test.js tests/tooling.discipline.test.js",
     "check-tokens": "node tools/check_no_hex_colors.js",
     "check-secrets": "node tools/check_no_secrets_in_frontend.js",
     "check-bundle": "node tools/check_bundle_size.js",
