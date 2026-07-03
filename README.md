@@ -101,7 +101,7 @@ npm run discipline:watch      # Watch new packets and run the mechanical plumbin
 
 ## Optional Repo Hardening
 
-This template now includes the safe base for pipeline enforcement:
+This template includes the safe base for pipeline enforcement:
 
 - `.mcp.json.example` with minimal MCP examples
 - `.pre-commit-config.yaml` for local Markdown and Vale checks

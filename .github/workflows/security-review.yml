@@ -6,7 +6,7 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write  # para comentar findings en el PR
+  pull-requests: write  # comment findings on the PR
 
 jobs:
   security-review:
