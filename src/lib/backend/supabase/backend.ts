@@ -27,7 +27,7 @@ export const backend: Backend = {
             const user = userData.user
             if (!user) throw new Error('Not authenticated')
 
-            // 1) buscar un space "Personal" creado por el user (o el primero que tenga membership owner)
+            // 1) look for a "Personal" space created by the user (or the first one where they have owner membership)
             const { data: existing, error: exErr } = await supabase
                 .from('spaces')
                 .select('id,name,created_by,created_at')
@@ -47,7 +47,7 @@ export const backend: Backend = {
                 return { space, membership: mem as Membership }
             }
 
-            // 2) crear space + membership owner
+            // 2) create space + owner membership
             const { data: created, error: cErr } = await supabase
                 .from('spaces')
                 .insert({ name: 'Personal', created_by: user.id })

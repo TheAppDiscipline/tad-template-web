@@ -22,8 +22,8 @@ export async function logRun(root: string, entry: { step: string; tool: string; 
   disciplineInfo(`Run logged: Step ${entry.step} with ${entry.tool}`);
 }
 
-// Solo ejecutar como CLI cuando se invoca directamente (npm run discipline:log).
-// Cuando se importa desde otro modulo (ej: watch.ts), no auto-ejecutar.
+// Only execute as CLI when invoked directly (npm run discipline:log).
+// When imported from another module (for example watch.ts), do not auto-execute.
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
   const args = minimist(process.argv.slice(2));

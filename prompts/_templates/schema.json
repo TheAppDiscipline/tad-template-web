@@ -14,7 +14,7 @@
     "properties": {
         "schema_version": {
             "type": "string",
-            "description": "Version del schema para compatibilidad",
+            "description": "Schema version for compatibility",
             "pattern": "^v\\d+(\\.\\d+)?$"
         },
         "request_id": {
@@ -80,7 +80,7 @@
                 "null"
             ],
             "additionalProperties": false,
-            "description": "TODO: Reemplaza esto por el shape real de tu feature.",
+            "description": "TODO: Replace this with the real shape of your feature.",
             "required": [],
             "properties": {}
         }

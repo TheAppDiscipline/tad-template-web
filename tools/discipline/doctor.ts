@@ -57,7 +57,7 @@ function diagnoseLog(logPath?: string): Finding[] {
       files_to_check: ['package.json', 'tools/discipline'],
     });
   }
-  if (/Anchor faltante|anchor/i.test(log)) {
+  if (/Missing anchor|anchor/i.test(log)) {
     findings.push({
       status: 'warning',
       probable_cause: 'A Discipline file is missing a required section anchor.',

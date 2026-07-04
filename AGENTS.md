@@ -8,7 +8,7 @@ This project follows the Discipline Loop methodology. `discipline.md` is the law
 - **One Writer Per Slice:** never have two agents editing the same slice
 - **Gates before merge:** `npm run gate` must pass before any commit
 - **No breaking schema changes** without migrations
-- **Self-annealing:** 2 identical error signatures with no material change (evidence, context, hypothesis, strategy) → stop; escalating the model grants a single third attempt only when you document why more reasoning capacity could change the diagnosis; hard stop at 3 failures of the same gate
+- **Self-annealing:** 2 identical error signatures with no material change (evidence, context, hypothesis, strategy) -> stop; escalating the model grants a single third attempt only when you document why more reasoning capacity could change the diagnosis; hard stop at 3 failures of the same gate
 
 ## Recommended Pipeline Mode
 
@@ -82,16 +82,16 @@ Never rename or delete headings in `discipline.md`, `task_plan.md`, `findings.md
 
 Choose the right **model role** based on slice complexity. Concrete model IDs, prices, lifecycle and free tiers live in the separately-sold The App Discipline vault's model registry; do not hardcode versions here.
 
-- **Simple slices** (CRUD, UI layout, static pages): Use `Premium Reliable - Trabajo Mecánico`, `Premium Reliable - Agente Async`, or `Frontier-Budget - Implementación` when gates and review are strong.
-- **Complex slices** (business logic, multi-table operations, state management): Use `Premium Reliable - Implementación`.
-- **Slices touching RLS, auth, sync, or permissions**: Use `Premium Reliable - Implementación` plus cross-review. Do not use a cheap/async-only path.
-- **If the gate fails 2 times with the same error**: Escalate to `Premium Reliable - Decisiones Críticas` before the 3rd attempt.
-- **Architecture decisions or persistent bugs**: Escalate to `Premium Reliable - Decisiones Críticas` with the strongest available reasoning mode.
-- **Visual UI / design system / brand-aware mockups (Paso 3)**: Use `Premium Reliable - Diseño Visual` (Claude Design) when there is brand, design system, realistic prototypes or handoff to Claude Code; `Frontier-Budget - UI/Frontend` (Stitch, v0.dev) for budget exploration without established brand. Both produce `UI_HANDOFF_PACKET` for Paso 5.
+- **Simple slices** (CRUD, UI layout, static pages): Use `Premium Reliable - Mechanical Work`, `Premium Reliable - Async Agent`, or `Frontier-Budget - Implementation` when gates and review are strong.
+- **Complex slices** (business logic, multi-table operations, state management): Use `Premium Reliable - Implementation`.
+- **Slices touching RLS, auth, sync, or permissions**: Use `Premium Reliable - Implementation` plus cross-review. Do not use a cheap/async-only path.
+- **If the gate fails 2 times with the same error**: Escalate to `Premium Reliable - Critical Decisions` before the 3rd attempt.
+- **Architecture decisions or persistent bugs**: Escalate to `Premium Reliable - Critical Decisions` with the strongest available reasoning mode.
+- **Visual UI / design system / brand-aware mockups (Step 3)**: Use `Premium Reliable - Visual Design` (Claude Design) when there is brand, design system, realistic prototypes or handoff to Claude Code; `Frontier-Budget - UI/Frontend` (Stitch, v0.dev) for budget exploration without established brand. Both produce `UI_HANDOFF_PACKET` for Step 5.
 
 ## Slice Loop (Step 5)
 
-For each slice follow the 8-step loop: Plan → Implement → Self-Review → Gate → Repair → Log → Commit → Deploy/Verify.
+For each slice follow the 8-step loop: Plan -> Implement -> Self-Review -> Gate -> Repair -> Log -> Commit -> Deploy/Verify.
 
 1. **Plan:** Read `STEP_5_SLICE_PACKET` from `.discipline/packets/` and review `discipline.md` contracts
 2. **Implement:** Write the code for the slice. One writer per slice.

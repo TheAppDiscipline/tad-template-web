@@ -2,7 +2,7 @@
 
 ## Current Status
 - Working on: N/A — template initialized
-- Next: Fill discipline.md with project switches (Paso 1)
+- Next: Fill discipline.md with project switches (Step 1)
 - Blockers: none
 
 ## Last Completed Slices

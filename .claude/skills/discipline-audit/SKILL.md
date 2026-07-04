@@ -1,99 +1,99 @@
 ---
 name: discipline-audit
-description: "Run one or all 15 self-audit prompts from 48c (Prompts de Auto-Auditoría) against the project. Each prompt validates specific NN against current state, produces structured JSON/Markdown output, and auto-logs entry to findings.md §Audits. Triggers on /discipline-audit <n|all|name>, 'auditar X', 'audit project'."
+description: "Run one or all 15 self-audit prompts (the auto-audit prompt set in The App Discipline vault, sold separately) against the project. Each prompt validates specific NN against current state, produces structured JSON/Markdown output, and auto-logs an entry to findings.md §Audits. Triggers on /discipline-audit <n|all|name>, 'audit project', 'security audit', 'launch audit'."
 ---
 
-# /discipline-audit - Orquestar los 15 prompts de auto-auditoria de Discipline Loop
+# /discipline-audit - Orchestrate the 15 Discipline Loop self-audit prompts
 
-Este skill ejecuta uno o todos los 15 prompts de los Prompts de Auto-Auditoría del vault en sesion unica. Convierte 15 operaciones manuales copy/paste en un comando, captura outputs estructurados, y registra cada run en `findings.md §Audits`.
+This skill runs one or all 15 of the auto-audit prompts (the set documented in The App Discipline vault, sold separately) in a single session. It turns 15 manual copy/paste operations into one command, captures structured output, and logs each run to `findings.md §Audits`.
 
-Uso recomendado: pre-Gate D Launch (correr `all`), pre-Gate E PROD (correr `all` con foco en P-categoria), retros mensuales de la Retrospectiva del Factory del vault.
+Recommended use: pre-Gate D Launch (run `all`), pre-Gate E PROD (run `all` with a focus on the P-category), and the monthly factory retrospective in the vault (sold separately).
 
-## Lo que el usuario ve
+## What the user sees
 
-1. El skill pide indice o nombre del audit (`1`-`15`, `all`, o slug como `rls`, `secrets`, `a11y`).
-2. Para cada audit ejecutado:
-   a. Lee inputs requeridos (archivos, comandos shell, output de tools).
-   b. Aplica los criterios del prompt correspondiente.
-   c. Produce output con schema declarado en 48c.
-   d. Anota entry en `findings.md §Audits`.
-3. Si modo `all`, al final reporta agregado: cuantos PASS, cuantos GAP, top 3 acciones por impacto.
+1. The skill asks for the audit index or name (`1`-`15`, `all`, or a slug like `rls`, `secrets`, `a11y`).
+2. For each audit that runs:
+   a. Reads the required inputs (files, shell commands, tool output).
+   b. Applies the criteria of the corresponding prompt.
+   c. Produces output with the schema declared in the auto-audit prompt set.
+   d. Records an entry in `findings.md §Audits`.
+3. In `all` mode, at the end it reports an aggregate: how many PASS, how many GAP, and the top 3 actions by impact.
 
-## Prerrequisitos
+## Prerequisites
 
-- Repo con `.discipline/` y artefactos canonicos (`discipline.md`, `task_plan.md`, `findings.md`, `progress.md`).
-- Comandos del template oficial disponibles segun el audit (`npm run gate`, `npx gitleaks`, `npx tsc`, `npx lighthouse`, etc.).
-- WebSearch no requerido (todo es local).
-- Credenciales activas si el audit las necesita (audits 3, 10, 15 referencian vendors externos).
+- Repo with `.discipline/` and the canonical artifacts (`discipline.md`, `task_plan.md`, `findings.md`, `progress.md`).
+- Official template commands available depending on the audit (`npm run gate`, `npx gitleaks`, `npx tsc`, `npx lighthouse`, etc.).
+- WebSearch not required (everything is local).
+- Active credentials if the audit needs them (audits 3, 10, 15 reference external vendors).
 
 ---
 
-## Catalogo de los 15 audits
+## Catalog of the 15 audits
 
-Mapeo de indice a slug y NN validado. Cuando el usuario invoca el skill puede usar cualquiera de los tres.
+Mapping of index to slug and validated NN. When the user invokes the skill, they can use any of the three.
 
-| # | Slug | Valida | Frecuencia recomendada |
+| # | Slug | Validates | Recommended frequency |
 |---|---|---|---|
-| 1 | `nn-coverage` | NN 1, 11, 12, 17 contra discipline.md | Pre-Gate C, post-Paso 2 |
-| 2 | `rls` | NN 17.3 RLS contra migrations | Tras cada migration que toca PII |
-| 3 | `privacy-policy` | NN 17 + 62 §Privacy contra app real | Pre-Gate D, al añadir vendor |
+| 1 | `nn-coverage` | NN 1, 11, 12, 17 against discipline.md | Pre-Gate C, post-Step 2 |
+| 2 | `rls` | NN 17.3 RLS against migrations | After every migration that touches PII |
+| 3 | `privacy-policy` | NN 17 + 62 §Privacy against the real app | Pre-Gate D, when adding a vendor |
 | 4 | `perf` | NN 20 (bundle + Lighthouse) | Pre-deploy, pre-Gate D |
-| 5 | `progress-drift` | NN 5, 8 (progress.md vs git) | Inicio de sesion con retro |
-| 6 | `findings-gaps` | NN 5 (memoria) | Fin de semana de dev |
+| 5 | `progress-drift` | NN 5, 8 (progress.md vs git) | Start of a session with a retro |
+| 6 | `findings-gaps` | NN 5 (memory) | End of a dev week |
 | 7 | `test-coverage` | NN 22 (boundaries) | Pre-Gate C, pre-Gate D |
-| 8 | `secrets` | NN 17.5 | Pre-push a main, repo heredado |
-| 9 | `ts-strict` | NN 21 (any, ts-ignore) | Semanal, cuando tsc tarda |
-| 10 | `deps-vulns` | NN 17.7 | Cada 2 semanas, pre-release |
-| 11 | `query-discipline` | NN 23 (N+1, indices) | Tras cada slice con queries, pre-Gate D |
+| 8 | `secrets` | NN 17.5 | Pre-push to main, inherited repo |
+| 9 | `ts-strict` | NN 21 (any, ts-ignore) | Weekly, when tsc gets slow |
+| 10 | `deps-vulns` | NN 17.7 | Every 2 weeks, pre-release |
+| 11 | `query-discipline` | NN 23 (N+1, indexes) | After every slice with queries, pre-Gate D |
 | 12 | `a11y` | NN 24 (WCAG AA) | Pre-Gate D |
 | 13 | `error-handling` | NN 18 | Pre-Gate C |
-| 14 | `tokens` | NN 9 (UI tokens) | Tras cada PR de UI |
-| 15 | `backup-restore` | 62 + NN 17 operacional | Mensual, pre-Gate E |
+| 14 | `tokens` | NN 9 (UI tokens) | After every UI PR |
+| 15 | `backup-restore` | 62 + NN 17 operational | Monthly, pre-Gate E |
 
 ---
 
-## Implementacion interna
+## Internal implementation
 
-### Fase 0: Resolver invocacion
+### Phase 0: Resolve the invocation
 
-Input del usuario: numero `1`-`15`, `all`, slug de la tabla, o nombre parcial.
+User input: a number `1`-`15`, `all`, a slug from the table, or a partial name.
 
-Resolver a la lista de audits a correr. Si ambiguo (eg `coverage` matches 7 y 14), pedir clarificacion.
+Resolve it to the list of audits to run. If ambiguous (e.g. `coverage` matches 7 and 14), ask for clarification.
 
-### Fase 1: Verificar contexto
+### Phase 1: Check context
 
-Antes de cada audit:
-- Leer `discipline.md §0` para extraer PROFILE y switches (algunos audits aplican solo a ciertos profiles).
-- Saltar audits no aplicables. Ejemplos:
-  - audit 2 RLS: skip si BACKEND_PROVIDER != SUPABASE.
-  - audit 3 privacy: skip si PROFILE = LITE sin externos.
-  - audit 12 a11y: skip si lane sin UI (CLI/Backend, hoy archivados v1.0).
-  - audit 15 backup-restore: skip si BACKEND_PROVIDER = LOCAL_ONLY.
+Before each audit:
+- Read `discipline.md §0` to extract PROFILE and switches (some audits apply only to certain profiles).
+- Skip audits that do not apply. Examples:
+  - audit 2 RLS: skip if BACKEND_PROVIDER != SUPABASE.
+  - audit 3 privacy: skip if PROFILE = LITE with no external services.
+  - audit 12 a11y: skip if the lane has no UI (CLI/Backend, archived as of v1.0).
+  - audit 15 backup-restore: skip if BACKEND_PROVIDER = LOCAL_ONLY.
 
-Al saltar, registrar en findings con razon: `skipped: not_applicable (PROFILE=LITE)`.
+When skipping, log it in findings with the reason: `skipped: not_applicable (PROFILE=LITE)`.
 
-### Fase 2: Ejecutar cada audit
+### Phase 2: Run each audit
 
-Para cada audit en la lista, aplicar el prompt correspondiente de los Prompts de Auto-Auditoría del vault. La estructura tipo:
+For each audit in the list, apply the corresponding prompt from the auto-audit prompt set in the vault (sold separately). The typical structure:
 
-#### Audit 1, nn-coverage (ejemplo)
+#### Audit 1, nn-coverage (example)
 
 **Inputs:**
-- Leer `discipline.md` completo.
-- Leer la lista de 24 NN canonica desde `.claude/skills/discipline-step0a/SKILL.md` o la doctrina Discipline Loop del vault.
+- Read all of `discipline.md`.
+- Read the canonical list of 24 NN from `.claude/skills/discipline-step0a/SKILL.md` or the Discipline Loop doctrine in the vault (sold separately).
 
-**Logica:**
-- Por cada NN, verificar si `discipline.md` lo declara explicitamente y con suficiente especificidad.
-- Marcar PASS / GAP / N/A segun el profile actual.
+**Logic:**
+- For each NN, check whether `discipline.md` declares it explicitly and with enough specificity.
+- Mark PASS / GAP / N/A according to the current profile.
 
-**Output JSON:**
+**JSON output:**
 ```json
 {
   "audit": "nn-coverage",
   "profile": "FAMILY_SYNC",
   "checks": [
-    { "nn": 1, "status": "PASS", "evidence": "discipline.md §3 Data Model declara 4 tablas", "action": null },
-    { "nn": 17, "status": "GAP", "evidence": null, "action": "Agregar §Security Baseline con 17.1-17.4" }
+    { "nn": 1, "status": "PASS", "evidence": "discipline.md §3 Data Model declares 4 tables", "action": null },
+    { "nn": 17, "status": "GAP", "evidence": null, "action": "Add §Security Baseline with 17.1-17.4" }
   ],
   "summary": { "pass": 18, "gap": 4, "na": 2 }
 }
@@ -103,100 +103,100 @@ Para cada audit en la lista, aplicar el prompt correspondiente de los Prompts de
 
 **Inputs:**
 - Glob `supabase/migrations/*.sql`.
-- Para cada tabla detectada, parsear:
+- For each detected table, parse:
   - `ENABLE ROW LEVEL SECURITY`?
-  - Cuantas policies?
-  - Cubren SELECT/INSERT/UPDATE/DELETE?
-  - Hay `auth.uid() IS NOT NULL` sin scoping a tenant/space?
+  - How many policies?
+  - Do they cover SELECT/INSERT/UPDATE/DELETE?
+  - Is there `auth.uid() IS NOT NULL` without scoping to tenant/space?
 
-**Output Markdown:**
-| tabla | RLS | policies (S/I/U/D) | red flag | accion |
+**Markdown output:**
+| table | RLS | policies (S/I/U/D) | red flag | action |
 |---|---|---|---|---|
 
 #### Audit 3, privacy-policy
 
 **Inputs:**
-- Leer `public/privacy-policy.md` o URL.
-- Grep imports en `src/**` para detectar vendors (`@supabase/*`, `@sentry/*`, `resend`, `posthog-js`, `stripe`, etc.).
-- Leer `discipline.md §Data Model` para retention declarado.
+- Read `public/privacy-policy.md` or URL.
+- Grep imports in `src/**` to detect vendors (`@supabase/*`, `@sentry/*`, `resend`, `posthog-js`, `stripe`, etc.).
+- Read `discipline.md §Data Model` for the declared retention.
 
-**Logica:**
-- Vendors en codigo deben aparecer en privacy policy.
-- Retention en policy debe coincidir con config real (Sentry default 90d).
-- Vendors US deben mencionar transfer mechanism (SCCs o DPF).
+**Logic:**
+- Vendors in code must appear in the privacy policy.
+- Retention in the policy must match the real config (Sentry default 90d).
+- US vendors must mention a transfer mechanism (SCCs or DPF).
 
-**Output JSON:**
+**JSON output:**
 ```json
 {
   "vendors_in_code": ["supabase", "sentry"],
   "vendors_in_policy": ["supabase"],
   "missing_in_policy": ["sentry"],
   "retention_mismatches": [],
-  "action_list": ["Agregar Sentry a §Third parties con retention 90d y SCCs"]
+  "action_list": ["Add Sentry to §Third parties with 90d retention and SCCs"]
 }
 ```
 
 #### Audit 4, perf
 
-**Comandos:**
+**Commands:**
 ```bash
 npm run build
-npx vite-bundle-visualizer  # o equivalente
+npx vite-bundle-visualizer  # or equivalent
 npx unlighthouse --site http://localhost:4173
 ```
 
-**Logica:**
-- Comparar contra umbrales de NN 20 (Web: entry < 200KB gzip · Lighthouse Perf > 70 mobile).
+**Logic:**
+- Compare against the NN 20 thresholds (Web: entry < 200KB gzip · Lighthouse Perf > 70 mobile).
 
 **Output:**
-- Tabla entry size real vs target.
-- Top 5 deps por peso.
-- Lighthouse score por categoria.
-- Lista de acciones si falla algun umbral.
+- Table of real entry size vs target.
+- Top 5 deps by weight.
+- Lighthouse score per category.
+- List of actions if any threshold fails.
 
 #### Audit 5, progress-drift
 
 **Inputs:**
-- Leer `progress.md §Last Completed Slices` y `§Current Status`.
+- Read `progress.md §Last Completed Slices` and `§Current Status`.
 - `git log --oneline -50`.
 - `git log --name-only -20`.
 
-**Logica:**
-- Slices declarados done sin commit asociado.
-- Commits sin entry en progress.md.
-- Errores cerrados en progress.md ya resueltos en codigo.
+**Logic:**
+- Slices declared done with no associated commit.
+- Commits with no entry in progress.md.
+- Errors closed in progress.md that are already resolved in code.
 
 **Output:**
-- Tabla slice × commit × estado real.
-- Lista de entries a agregar/actualizar/borrar en progress.md.
+- Table of slice × commit × real state.
+- List of entries to add/update/delete in progress.md.
 
 #### Audit 6-15
 
-Seguir la estructura declarada en los Prompts de Auto-Auditoría del vault para cada uno. Schema de output viene en cada prompt original.
+Follow the structure declared in the auto-audit prompt set in the vault (sold separately) for each one. The output schema comes with each original prompt.
 
-### Fase 3: Registrar en findings.md
+### Phase 3: Log to findings.md
 
-Para cada audit corrido, agregar entry a `findings.md §Audits`. Si la seccion no existe, crearla.
+For each audit that ran, add an entry to `findings.md §Audits`. If the section does not exist, create it.
 
-Formato:
+Format:
 ```markdown
 ## Audits
 
-- <fecha YYYY-MM-DD HH:MM> · audit-<slug> · status=<PASS|GAP|N/A counts> · top-action=<accion mas critica si GAP>
-- <fecha> · audit-<slug> · ...
+- <date YYYY-MM-DD HH:MM> · audit-<slug> · status=<PASS|GAP|N/A counts> · top-action=<most critical action if GAP>
+- <date> · audit-<slug> · ...
 ```
 
-Si un audit produce GAP critico (eg secrets commiteados, RLS desactivado en tabla con PII), tambien agregar entry a `findings.md §Risks`:
+If an audit produces a critical GAP (e.g. committed secrets, RLS disabled on a table with PII), also add an entry to `findings.md §Risks`:
 ```markdown
-- 2026-04-26 · CRITICAL · audit-secrets detecta API key en .env committeado · rotar y `git filter-repo` antes de proximo push.
+- 2026-04-26 · CRITICAL · audit-secrets detects an API key in a committed .env · rotate and `git filter-repo` before the next push.
 ```
 
-### Fase 4: Modo `all`, agregado final
+### Phase 4: `all` mode, final aggregate
 
-Si el usuario invoca `all`, despues de ejecutar los 15 audits:
+If the user invokes `all`, after running the 15 audits:
 
 ```markdown
-## Resumen agregado, /discipline-audit all (<fecha>)
+## Aggregate summary, /discipline-audit all (<date>)
 
 Profile: <profile>
 Total audits: 15
@@ -204,69 +204,69 @@ Total audits: 15
 - GAP: <N>
 - N/A (skipped): <N>
 
-### Top 5 acciones por impacto
+### Top 5 actions by impact
 
-1. <accion mas critica de los GAPs>
+1. <most critical action from the GAPs>
 2. ...
 
-### Audits con GAP
+### Audits with GAP
 
-| Audit | GAPs | Top accion |
+| Audit | GAPs | Top action |
 |---|---|---|
-| nn-coverage | 4 | Agregar §Security Baseline |
+| nn-coverage | 4 | Add §Security Baseline |
 | ... | ... | ... |
 
-### Veredicto Gate D Launch
+### Gate D Launch verdict
 
-<READY si 0 GAPs criticos | NOT READY si hay GAPs en audits criticos para Gate D>
+<READY if 0 critical GAPs | NOT READY if there are GAPs in audits critical for Gate D>
 
-Audits criticos para Gate D: 1 (nn-coverage), 2 (rls), 3 (privacy-policy), 7 (test-coverage), 8 (secrets), 12 (a11y), 13 (error-handling).
-Audits criticos para Gate E PROD: todos los anteriores + 4 (perf), 10 (deps-vulns), 11 (query-discipline), 15 (backup-restore).
+Audits critical for Gate D: 1 (nn-coverage), 2 (rls), 3 (privacy-policy), 7 (test-coverage), 8 (secrets), 12 (a11y), 13 (error-handling).
+Audits critical for Gate E PROD: all of the above + 4 (perf), 10 (deps-vulns), 11 (query-discipline), 15 (backup-restore).
 ```
 
-### Fase 5: Resumen al usuario
+### Phase 5: Summary to the user
 
-Si invoco un audit individual:
+If an individual audit was invoked:
 ```
-Audit <slug> completado.
+Audit <slug> completed.
 Status: PASS / GAP <N>
-Top accion: <accion>
-Detalle: findings.md §Audits.
+Top action: <action>
+Detail: findings.md §Audits.
 ```
 
-Si invoco `all`:
+If `all` was invoked:
 ```
-Audit batch completado en <minutos> minutos.
+Audit batch completed in <minutes> minutes.
 PASS: <N>/15
 GAP: <N>/15
 N/A skipped: <N>/15
 
-Top 3 acciones criticas:
+Top 3 critical actions:
 1. ...
 2. ...
 3. ...
 
-Veredicto Gate D Launch: <READY|NOT READY>
+Gate D Launch verdict: <READY|NOT READY>
 
-Detalle completo: findings.md §Audits.
+Full detail: findings.md §Audits.
 ```
 
 ---
 
-## Manejo de errores
+## Error handling
 
-- Audit individual falla por input faltante (eg supabase/migrations/ no existe pero BACKEND=SUPABASE): registrar como skipped con razon, no abortar el batch en modo `all`.
-- Comando externo falla (gitleaks, lighthouse, axe): instalar bajo demanda con `npx -y <package>` o saltar con notice.
-- Output muy largo (eg `npm audit` con 100 vulns): truncar a top-20, crear entry adjunta en `.discipline/audits/<slug>-<fecha>.md` con detalle completo.
-- Si el usuario interrumpe modo `all` a mitad, registrar audits ya corridos en findings.md y reportar progreso parcial.
+- An individual audit fails on a missing input (e.g. supabase/migrations/ does not exist but BACKEND=SUPABASE): log it as skipped with the reason, do not abort the batch in `all` mode.
+- An external command fails (gitleaks, lighthouse, axe): install on demand with `npx -y <package>` or skip with a notice.
+- Output too long (e.g. `npm audit` with 100 vulns): truncate to the top 20, create an attached entry in `.discipline/audits/<slug>-<date>.md` with the full detail.
+- If the user interrupts `all` mode partway through, log the audits already run to findings.md and report partial progress.
 
 ---
 
-## Reglas criticas
+## Critical rules
 
-- No marcar items como `done` o `fixed` desde el skill. Solo audita; el usuario aplica fixes.
-- No agregar entries falsas a findings. Si no hay GAP, audit-result va a findings.md §Audits con status PASS, no a §Risks.
-- audit 8 (secrets): si detecta secret real, NO loggear el secret en findings; solo el patron y la accion (rotar + filter-repo).
-- audit 3 (privacy-policy): si detecta vendor en codigo no listado en policy, alertar pero no escribir nada en publica/privacy-policy.md (eso es responsabilidad de `/discipline-legal-init`).
-- Modo `all` no es para correr cada commit. Tipicamente pre-Gate D o retros mensuales.
-- Tiempo objetivo: audit individual <1min, modo `all` 15-30 min.
+- Do not mark items as `done` or `fixed` from the skill. It only audits; the user applies the fixes.
+- Do not add false entries to findings. If there is no GAP, the audit result goes to findings.md §Audits with status PASS, not to §Risks.
+- audit 8 (secrets): if it detects a real secret, do NOT log the secret in findings; only the pattern and the action (rotate + filter-repo).
+- audit 3 (privacy-policy): if it detects a vendor in code that is not listed in the policy, alert but do not write anything into public/privacy-policy.md (that is the responsibility of `/discipline-legal-init`).
+- `all` mode is not for running on every commit. Typically pre-Gate D or monthly retros.
+- Target time: individual audit <1min, `all` mode 15-30 min.

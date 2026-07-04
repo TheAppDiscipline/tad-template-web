@@ -41,7 +41,7 @@ writeIfNew('task_plan.md', `# task_plan.md\n\n## 1) Current Goal\n\n## 2) Defini
 
 writeIfNew('findings.md', `# findings.md\n\n## Decisions\n\n## Open Questions\n\n## Risks\n\n## Constraints\n\n## Assumptions\n\n## Deferred\n`);
 
-writeIfNew('progress.md', `# progress.md \u2014 Current Status + Logs\n\n## Current Status\n- Working on: N/A\n- Next: Fill discipline.md (Paso 1)\n- Blockers: none\n\n## Last Completed Slices\n1) (empty)\n2) (empty)\n3) (empty)\n\n## Open Errors\n- (none)\n\n## Next Actions\n- Choose BACKEND_PROVIDER and run backend:smoke\n\n## Deploy Notes\n- N/A\n\n---\n`);
+writeIfNew('progress.md', `# progress.md \u2014 Current Status + Logs\n\n## Current Status\n- Working on: N/A\n- Next: Fill discipline.md (Step 1)\n- Blockers: none\n\n## Last Completed Slices\n1) (empty)\n2) (empty)\n3) (empty)\n\n## Open Errors\n- (none)\n\n## Next Actions\n- Choose BACKEND_PROVIDER and run backend:smoke\n\n## Deploy Notes\n- N/A\n\n---\n`);
 
 writeIfNew('.discipline/run-log.md', `# Run Log\n\n| Date | Step | Tool | Input | Output | Notes |\n|---|---|---|---|---|---|\n`);
 

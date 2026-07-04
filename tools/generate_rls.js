@@ -98,13 +98,13 @@ CREATE TABLE IF NOT EXISTS public.${table} (
 
 ALTER TABLE public.${table} ENABLE ROW LEVEL SECURITY;
 
--- NOTA (RLS + RETURNING, FINDING-04): esta policy SELECT es membership-based. Para esta
--- tabla HIJA es segura: quien inserta ya es miembro del space, así que .insert().select()
--- (return=representation) funciona. Pero si llevás este patrón a una tabla RAÍZ cuya
--- membership la crea un trigger AFTER en su propio insert (p.ej. una tabla "spaces"),
--- .insert().select() dará 403: RETURNING evalúa la policy SELECT antes de que la fila de
--- membership del trigger sea visible. Fix: agregá "OR auth.uid() = ${table}.created_by" a
--- la policy SELECT de esa tabla, o insertá con return=minimal (sin .select()).
+-- NOTE (RLS + RETURNING, FINDING-04): this SELECT policy is membership-based. For this
+-- CHILD table, it is safe: the inserting user is already a space member, so .insert().select()
+-- (return=representation) works. But if you carry this pattern to a ROOT table whose
+-- membership is created by an AFTER trigger on its own insert (for example a "spaces" table),
+-- .insert().select() will return 403: RETURNING evaluates the SELECT policy before the
+-- trigger-created membership row is visible. Fix: add "OR auth.uid() = ${table}.created_by" to
+-- that table's SELECT policy, or insert with return=minimal (without .select()).
 -- SELECT: any space member can read
 CREATE POLICY "${table}_select" ON public.${table}
   FOR SELECT USING (

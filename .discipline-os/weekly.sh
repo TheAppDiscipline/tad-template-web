@@ -12,7 +12,7 @@ echo ""
 echo "=== 2/4 Security audit ==="
 npm audit --production || {
   echo ""
-  echo "⚠ audit found issues. Triage via skill #10 prompt in 48c - Prompts de Auto-Auditoría."
+  echo "⚠ audit found issues. Triage with the dependency and security audit checklist."
 }
 echo ""
 

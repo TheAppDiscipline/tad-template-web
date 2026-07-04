@@ -67,8 +67,8 @@ function bodyIsOwnership(body) {
 }
 
 // Collect user-defined functions, classified by what their body actually does:
-//   authOnly   — body is just an auth-presence check (signedIn() → request.auth != null)
-//   ownership  — body inspects the document/owner (isMember() → exists(...))
+//   authOnly   — body is just an auth-presence check (signedIn() -> request.auth != null)
+//   ownership  — body inspects the document/owner (isMember() -> exists(...))
 // Helpers that are neither (e.g. `alwaysTrue() { return true; }`) count as NEITHER,
 // so they cannot launder a pure-auth rule into looking ownership-scoped.
 function collectFunctions(content) {

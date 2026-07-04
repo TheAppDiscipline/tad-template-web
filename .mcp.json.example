@@ -1,11 +1,11 @@
 {
-  "_README": "Copia este archivo como .mcp.json en tu repo (NO commitear; .gitignore lo cubre). Mantén SOLO los servers que realmente uses. Cada server con prefijo _DISABLED_ está apagado; renómbralo (quita _DISABLED_) y rellena credenciales para activarlo. Setup detallado en CLAUDE.md o en el vault §Capa 4.",
+  "_README": "Copy this file to .mcp.json in your repo. Do not commit it; .gitignore covers it. Keep only the servers you actually use. Any server prefixed with _DISABLED_ is off by default; rename it by removing _DISABLED_ and fill in credentials to enable it. See CLAUDE.md for setup details. The complete The App Discipline vault is sold separately.",
   "_DOC_LINK": "https://docs.claude.com/en/docs/claude-code/mcp",
-  "_LEAST_PRIVILEGE_RULE": "Cada credencial debe ser READ-ONLY hasta que la operación lo requiera. NUNCA pegar SERVICE_ROLE_KEY ni tokens con write scope amplio aquí.",
+  "_LEAST_PRIVILEGE_RULE": "Every credential must be read-only until the task explicitly requires write access. Never paste SERVICE_ROLE_KEY values or broad write-scope tokens here.",
 
   "mcpServers": {
     "github": {
-      "_purpose": "Leer PRs, issues, releases, CI status sin salir del contexto de Claude Code. PAT debe ser read-only (scopes: repo:read, public_repo).",
+      "_purpose": "Read pull requests, issues, releases, and CI status without leaving Claude Code context. Use a read-only PAT when possible (scopes: repo:read or public_repo).",
       "command": "npx",
       "args": ["-y", "@anthropic-ai/github-mcp"],
       "env": {
@@ -14,13 +14,13 @@
     },
 
     "playwright": {
-      "_purpose": "Debug puntual en browser: tomar screenshots, ejecutar selectors, leer HTML para diagnostico de UI. Sin credenciales.",
+      "_purpose": "Debug the browser when needed: capture screenshots, run selectors, and inspect HTML for UI diagnosis. No credentials required.",
       "command": "npx",
       "args": ["@playwright/mcp@latest"]
     },
 
     "_DISABLED_supabase": {
-      "_purpose": "Leer tablas, RLS policies, migrations en read-only. Útil para Paso 2 (validar arquitectura) y audit 2 (RLS check). Para activarlo: quita _DISABLED_, instala @supabase/mcp-server, configura SUPABASE_URL + SUPABASE_ANON_KEY (NUNCA service_role).",
+      "_purpose": "Read tables, RLS policies, and migrations in read-only mode. Useful for Step 2 architecture validation and RLS audits. To enable it, remove _DISABLED_, install @supabase/mcp-server, and configure SUPABASE_URL plus SUPABASE_ANON_KEY. Never use service_role here.",
       "command": "npx",
       "args": ["-y", "@supabase/mcp-server"],
       "env": {
@@ -30,7 +30,7 @@
     },
 
     "_DISABLED_sentry": {
-      "_purpose": "Leer issues, releases, performance metrics de Sentry. Útil para Paso 6 (post-deploy verification) y audit 4 (perf). Token con scope project:read.",
+      "_purpose": "Read Sentry issues, releases, and performance metrics. Useful for Step 6 post-deploy verification and performance review. Use a token with project:read scope.",
       "command": "npx",
       "args": ["-y", "@sentry/mcp-server"],
       "env": {
@@ -41,7 +41,7 @@
     },
 
     "_DISABLED_posthog": {
-      "_purpose": "Leer eventos, funnels, dashboards de PostHog. Útil para Paso 7 (productización, decisiones basadas en uso real). Personal API key con read-only.",
+      "_purpose": "Read PostHog events, funnels, and dashboards. Useful for Step 7 product decisions based on real usage. Use a personal API key with read-only access.",
       "command": "npx",
       "args": ["-y", "@posthog/mcp-server"],
       "env": {
@@ -51,7 +51,7 @@
     },
 
     "_DISABLED_stripe": {
-      "_purpose": "Leer customers, subscriptions, invoices. Útil para Paso 7 con monetización (audit ingresos, debugging billing). Restricted key con scope read.",
+      "_purpose": "Read customers, subscriptions, and invoices. Useful for Step 7 monetization checks and billing diagnostics. Use a restricted key with read access only.",
       "command": "npx",
       "args": ["-y", "@stripe/mcp-server"],
       "env": {

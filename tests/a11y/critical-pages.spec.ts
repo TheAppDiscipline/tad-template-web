@@ -2,20 +2,20 @@ import { test, expect, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
 /**
- * Tests de accesibilidad runtime (WCAG 2.2 AA), parte de `npm run gate:visual`.
+ * Runtime accessibility tests (WCAG 2.2 AA), part of `npm run gate:visual`.
  *
- * Por defecto corre un smoke axe sobre la ruta base `/` (el shell del template),
- * asi que el gate verifica algo real desde el primer dia (no es un falso verde).
+ * By default, runs an axe smoke check against the base route `/` (the template shell),
+ * so the gate verifies something real from day one (not a false green).
  *
- * Para Gate D (Launch):
- *   1. Agrega las rutas de tu app que cualquier usuario externo puede ver a CRITICAL_ROUTES.
- *   2. Encadena `npm run test:a11y` en `gate:strict` si quieres que bloquee con PROFILE>=LAUNCH.
+ * For Gate D (Launch):
+ *   1. Add the routes of your app that any external user can see to CRITICAL_ROUTES.
+ *   2. Chain `npm run test:a11y` into `gate:strict` if you want it to block with PROFILE>=LAUNCH.
  *
- * Corre con el config dedicado (`playwright.a11y.config.ts`), que arranca el dev
- * server en 127.0.0.1:4173 via webServer y resuelve las rutas contra baseURL.
+ * Runs with the dedicated config (`playwright.a11y.config.ts`), which starts the dev
+ * server on 127.0.0.1:4173 via webServer and resolves routes against baseURL.
  */
 
-// Rutas de TU app. Vacio por defecto; el smoke base de `/` siempre corre.
+// Routes for YOUR app. Empty by default; the base smoke check for `/` always runs.
 const CRITICAL_ROUTES: string[] = [
   // '/sign-in',
   // '/dashboard',
@@ -31,13 +31,13 @@ async function expectNoA11yViolations(page: Page) {
 }
 
 test.describe('Accessibility (WCAG 2.2 AA)', () => {
-  // Smoke base: siempre corre contra el shell del template.
+  // Base smoke check: always runs against the template shell.
   test('a11y: / (shell base)', async ({ page }) => {
     await page.goto('/');
     await expectNoA11yViolations(page);
   });
 
-  // Rutas de negocio que agregue el comprador.
+  // Business routes added by the buyer.
   for (const route of CRITICAL_ROUTES) {
     test(`a11y: ${route}`, async ({ page }) => {
       await page.goto(route);

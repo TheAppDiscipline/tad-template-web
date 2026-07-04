@@ -1,13 +1,13 @@
 #!/usr/bin/env npx tsx
 /**
- * discipline:step1-prep — Generates Step 1 input files and prompt reference.
+ * discipline:step1-prep - Generates Step 1 input files and prompt reference.
  *
- * Reads IDEA_VALIDATION_PACKET (if exists) + discipline.md switches.
+ * Reads IDEA_VALIDATION_PACKET (if it exists) + discipline.md switches.
  * Produces:
- *   .discipline/step1-input/00_Input_Bruto.md
- *   .discipline/step1-input/01_Ejemplos_Reales.md
- *   .discipline/step1-input/02_Restricciones.md
- *   .discipline/prompts/paso-1-all-prompts.md  (all 13 prompts, interpolated)
+ *   .discipline/step1-input/00_Raw_Input.md
+ *   .discipline/step1-input/01_Real_Examples.md
+ *   .discipline/step1-input/02_Constraints.md
+ *   .discipline/prompts/step-1-all-prompts.md  (all 13 prompts, interpolated)
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -18,74 +18,69 @@ import { systemPrompt, getPrompt, OUTPUT_META } from './lib/step1-prompts.js';
 const root = resolveProjectRoot();
 const config = readDisciplineConfig(root);
 
-// ─── Directories ────────────────────────────────────────
 const inputDir = path.join(root, '.discipline', 'step1-input');
 const promptsDir = path.join(root, '.discipline', 'prompts');
 fs.mkdirSync(inputDir, { recursive: true });
 fs.mkdirSync(promptsDir, { recursive: true });
 
-// ─── Read IDEA_VALIDATION_PACKET if it exists ───────────
 const packetPath = path.join(root, '.discipline', 'packets', 'IDEA_VALIDATION_PACKET.md');
 const hasPacket = fs.existsSync(packetPath);
 const packetContent = hasPacket ? fs.readFileSync(packetPath, 'utf-8') : '';
 
-// ─── Generate 00_Input_Bruto ────────────────────────────
-const inputBruto = hasPacket
-  ? `# Input Bruto — ${config.projectName}
+const rawInput = hasPacket
+  ? `# Raw Input - ${config.projectName}
 
-## IDEA_VALIDATION_PACKET (del Paso 0a)
+## IDEA_VALIDATION_PACKET (from Step 0a)
 
 ${packetContent}
 
 ---
 
-## Contexto adicional
+## Additional context
 
-Agrega aquí cualquier detalle extra que no esté en el packet:
+Add any extra details that are not in the packet:
 
-- ¿Qué pantallas imaginas?
-- ¿Qué datos guardará?
-- ¿Qué odias de alternativas actuales?
-- Screenshots o URLs de apps de referencia (si tienes)
+- What screens do you imagine?
+- What data will it store?
+- What do you hate about current alternatives?
+- Screenshots or URLs of reference apps (if you have them)
 `
-  : `# Input Bruto — ${config.projectName}
+  : `# Raw Input - ${config.projectName}
 
-Pega aquí todo lo que tengas sobre la idea, sin ordenar demasiado:
+Paste everything you have about the idea here, without over-organizing it:
 
-- ¿Qué problema resuelve?
-- ¿Para quién es?
-- ¿Por qué te importa?
-- ¿Qué pantallas imaginas?
-- ¿Qué datos guardará?
-- ¿Requiere sync? ¿Notificaciones? ¿IA?
-- ¿La usarás tú, un grupo de confianza o público?
-- ¿Qué sería "éxito"?
-- ¿Qué odias de alternativas actuales?
-- Screenshots o URLs de apps de referencia (si tienes)
+- What problem does it solve?
+- Who is it for?
+- Why does it matter to you?
+- What screens do you imagine?
+- What data will it store?
+- Does it require sync? Notifications? AI?
+- Will you use it yourself, with a trusted group, or publicly?
+- What would "success" mean?
+- What do you hate about current alternatives?
+- Screenshots or URLs of reference apps (if you have them)
 `;
 
-// ─── Generate 01_Ejemplos_Reales ────────────────────────
-const ejemplos = `# Ejemplos Reales — ${config.projectName}
+const examples = `# Real Examples - ${config.projectName}
 
-Agrega 5–15 ejemplos concretos de uso:
+Add 5-15 concrete usage examples:
 
-Caso 1:
-- Quiero poder...
-- Resultado ideal...
+Case 1:
+- I want to be able to...
+- Ideal outcome...
 
-Caso 2:
-- Mi grupo compartido debería poder...
-- Resultado ideal...
+Case 2:
+- My shared group should be able to...
+- Ideal outcome...
 
-Caso 3:
-- En iPhone quiero...
-- En PC quiero...
+Case 3:
+- On iPhone I want...
+- On PC I want...
 `;
 
-// ─── Generate 02_Restricciones ──────────────────────────
-const restricciones = `# Restricciones — ${config.projectName}
+const constraints = `# Constraints - ${config.projectName}
 
-## Switches ya elegidos
+## Already chosen switches
 - LANE: ${config.lane}
 - PROFILE: ${config.profile}
 - BACKEND_PROVIDER: ${config.backendProvider}
@@ -94,37 +89,35 @@ const restricciones = `# Restricciones — ${config.projectName}
 - SYNC_MODE: ${config.syncMode}
 - AI_FEATURES: ${config.aiFeatures}
 - PUSH_PLUGIN: ${config.pushPlugin}
-- HOSTING: ${config.hosting || '(por decidir)'}
+- HOSTING: ${config.hosting || '(undecided)'}
 
-## Restricciones adicionales
+## Additional constraints
 
-Completa según tu caso:
+Complete based on your case:
 
-- Costo máximo mensual:
-- Rapidez esperada:
-- Menor debugging posible: sí
-- Multi-dispositivo: ${config.profile === 'SHARED_SYNC' ? 'sí' : 'no'}
-- Compartida: ${config.profile === 'SHARED_SYNC' ? 'sí' : 'no'}
-- Offline importante: ${config.syncMode === 'OFFLINE_FIRST' ? 'sí' : 'no'}
-- Privacidad: alta / media / baja
-- Vender después: sí / no
+- Maximum monthly cost:
+- Expected speed:
+- Least debugging possible: yes
+- Multi-device: ${config.profile === 'SHARED_SYNC' ? 'yes' : 'no'}
+- Shared: ${config.profile === 'SHARED_SYNC' ? 'yes' : 'no'}
+- Offline matters: ${config.syncMode === 'OFFLINE_FIRST' ? 'yes' : 'no'}
+- Privacy: high / medium / low
+- Sell later: yes / no
 `;
 
-// ─── Write input files ──────────────────────────────────
-fs.writeFileSync(path.join(inputDir, '00_Input_Bruto.md'), inputBruto);
-fs.writeFileSync(path.join(inputDir, '01_Ejemplos_Reales.md'), ejemplos);
-fs.writeFileSync(path.join(inputDir, '02_Restricciones.md'), restricciones);
-disciplineInfo(`Input files generados en ${inputDir}`);
+fs.writeFileSync(path.join(inputDir, '00_Raw_Input.md'), rawInput);
+fs.writeFileSync(path.join(inputDir, '01_Real_Examples.md'), examples);
+fs.writeFileSync(path.join(inputDir, '02_Constraints.md'), constraints);
+disciplineInfo(`Input files generated in ${inputDir}`);
 
-// ─── Generate all-prompts reference file ────────────────
-let allPrompts = `# Paso 1 — Prompts
-# Proyecto: ${config.projectName}
-# Generado por: discipline:step1-prep
-# Fecha: ${new Date().toISOString().split('T')[0]}
+let allPrompts = `# Step 1 - Prompts
+# Project: ${config.projectName}
+# Generated by: discipline:step1-prep
+# Date: ${new Date().toISOString().split('T')[0]}
 
 ---
 
-## SYSTEM PROMPT (pegar en ⚙️ Configura el chat → Personalizado → "Más larga")
+## SYSTEM PROMPT (paste into chat configuration -> custom/system instructions)
 
 \`\`\`
 ${systemPrompt(config)}
@@ -136,13 +129,13 @@ ${systemPrompt(config)}
 
 for (const meta of OUTPUT_META) {
   const skip = !meta.condition(config);
-  const skipNote = skip ? ' **(SKIP — condición no aplica)**' : '';
+  const skipNote = skip ? ' **(SKIP - condition does not apply)**' : '';
   const prompt = getPrompt(meta.number, config);
 
-  allPrompts += `## Output ${meta.number} — ${meta.noteTitle}${skipNote}
+  allPrompts += `## Output ${meta.number} - ${meta.noteTitle}${skipNote}
 
-**Guardar como:** ${meta.packetFile ? `\`.discipline/packets/${meta.packetFile}\`` : `output intermedio \`${meta.noteTitle}\` (no genera packet)`}
-${skip ? '\n> Este output se salta porque la condición no se cumple para este proyecto.\n' : ''}
+**Save as:** ${meta.packetFile ? `\`.discipline/packets/${meta.packetFile}\`` : `intermediate output \`${meta.noteTitle}\` (does not generate a packet)`}
+${skip ? '\n> This output is skipped because the condition does not apply to this project.\n' : ''}
 \`\`\`
 ${prompt}
 \`\`\`
@@ -152,28 +145,27 @@ ${prompt}
 `;
 }
 
-fs.writeFileSync(path.join(promptsDir, 'paso-1-all-prompts.md'), allPrompts);
-disciplineInfo(`Archivo de prompts generado en ${path.join(promptsDir, 'paso-1-all-prompts.md')}`);
+fs.writeFileSync(path.join(promptsDir, 'step-1-all-prompts.md'), allPrompts);
+disciplineInfo(`Prompt file generated in ${path.join(promptsDir, 'step-1-all-prompts.md')}`);
 
-// ─── Summary ────────────────────────────────────────────
 const activeOutputs = OUTPUT_META.filter(m => m.condition(config)).length;
 console.log(`
-╔══════════════════════════════════════════════════════════╗
-║  discipline:step1-prep completado                            ║
-╠══════════════════════════════════════════════════════════╣
-║  Proyecto: ${config.projectName.padEnd(43)}║
-║  LANE: ${config.lane.padEnd(48)}║
-║  Outputs activos: ${String(activeOutputs).padEnd(36)}║
-║  IDEA_VALIDATION_PACKET: ${(hasPacket ? 'sí' : 'no').padEnd(30)}║
-╠══════════════════════════════════════════════════════════╣
-║  Archivos generados:                                    ║
-║  .discipline/step1-input/00_Input_Bruto.md                   ║
-║  .discipline/step1-input/01_Ejemplos_Reales.md               ║
-║  .discipline/step1-input/02_Restricciones.md                 ║
-║  .discipline/prompts/paso-1-all-prompts.md                   ║
-╠══════════════════════════════════════════════════════════╣
-║  Siguiente:                                             ║
-║  Modo automatizado: /discipline-step1                        ║
-║  Modo manual: abre paso-1-all-prompts.md y sigue orden  ║
-╚══════════════════════════════════════════════════════════╝
++----------------------------------------------------------+
+|  discipline:step1-prep completed                         |
++----------------------------------------------------------+
+|  Project: ${config.projectName.padEnd(43)}|
+|  LANE: ${config.lane.padEnd(48)}|
+|  Active outputs: ${String(activeOutputs).padEnd(36)}|
+|  IDEA_VALIDATION_PACKET: ${(hasPacket ? 'yes' : 'no').padEnd(29)}|
++----------------------------------------------------------+
+|  Generated files:                                        |
+|  .discipline/step1-input/00_Raw_Input.md                 |
+|  .discipline/step1-input/01_Real_Examples.md             |
+|  .discipline/step1-input/02_Constraints.md               |
+|  .discipline/prompts/step-1-all-prompts.md               |
++----------------------------------------------------------+
+|  Next:                                                   |
+|  Automated mode: /discipline-step1                       |
+|  Manual mode: open step-1-all-prompts.md and follow order|
++----------------------------------------------------------+
 `);

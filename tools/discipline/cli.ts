@@ -1,21 +1,21 @@
 #!/usr/bin/env npx tsx
 /**
- * discipline - CLI local de dos capas sobre los scripts discipline:* existentes.
+ * discipline - two-layer local CLI over the existing discipline:* scripts.
  *
- * Capa 1 (determinista, default): prepara, valida, empaqueta. Sin LLM, sin red, sin costo.
- *   Despacha a los npm scripts existentes via child_process. NO reimplementa logica
- *   ni cambia el comportamiento de los scripts base.
- * Capa 2 (LLM, opt-in via --with-llm): SEAM. Aun NO implementada: falla claro (exit 2),
- *   nunca oculta costo, red ni dependencia de provider.
+ * Layer 1 (deterministic, default): prepares, validates, and packages. No LLM,
+ * no network, no cost. It dispatches to the existing npm scripts via child_process.
+ * It does not reimplement logic or change the base script behavior.
+ * Layer 2 (LLM, opt-in via --with-llm): seam only. Not implemented yet: fails
+ * clearly (exit 2) and never hides cost, network, or provider dependency.
  *
- * Uso: npm run discipline -- <comando> [args]   |   npx tsx tools/discipline/cli.ts <comando>
+ * Usage: npm run discipline -- <command> [args]   |   npx tsx tools/discipline/cli.ts <command>
  */
 import { spawnSync } from 'node:child_process'
 
 interface CommandSpec {
-  /** npm script al que despacha (reusa la capa de scripts existente, no reimplementa). */
+  /** npm script to dispatch to (reuses the existing script layer; does not reimplement). */
   script: string
-  /** Mensaje honesto de "siguiente accion" tras exito, para pasos cuya generacion es LLM. */
+  /** Honest next-action note after success for steps whose generation is LLM-driven. */
   note?: string
 }
 
@@ -23,15 +23,15 @@ const COMMANDS: Record<string, CommandSpec> = {
   step1: {
     script: 'discipline:step1-prep',
     note:
-      'Step 1 NO esta completo: esto solo preparo inputs, prompts y packet (deterministico).\n' +
-      '  Para GENERAR el PRD corre el skill /discipline-step1 en tu agente,\n' +
-      '  o usa `discipline step1 --with-llm` cuando la capa LLM este disponible.',
+      'Step 1 is NOT complete: this only prepared inputs, prompts, and packet (deterministic).\n' +
+      '  To GENERATE the PRD, run the /discipline-step1 skill in your agent,\n' +
+      '  or use `discipline step1 --with-llm` when the LLM layer is available.',
   },
   step2: {
     script: 'discipline:validate:architecture',
     note:
-      'Step 2: esto VALIDO la arquitectura (deterministico). La generacion la produce\n' +
-      '  el skill /discipline-step2 en tu agente (o --with-llm cuando este disponible).',
+      'Step 2: this VALIDATED the architecture (deterministic). Generation is produced by\n' +
+      '  the /discipline-step2 skill in your agent (or --with-llm when available).',
   },
   gate: { script: 'gate' },
   publish: { script: 'discipline:release-pack' },
@@ -48,27 +48,27 @@ const COMMANDS: Record<string, CommandSpec> = {
 function printHelp(): void {
   console.log(
     [
-      'discipline - CLI de dos capas sobre los scripts discipline:* existentes.',
+      'discipline - two-layer CLI over the existing discipline:* scripts.',
       '',
-      'Uso: npm run discipline -- <comando> [args]   (o: npx tsx tools/discipline/cli.ts <comando>)',
+      'Usage: npm run discipline -- <command> [args]   (or: npx tsx tools/discipline/cli.ts <command>)',
       '',
-      'Capa determinista (default, sin LLM, sin costo):',
-      '  step1            Prepara inputs/prompts/packet del Paso 1 (NO genera el PRD)',
-      '  step2            Valida la arquitectura del Paso 2',
-      '  gate             Corre el gate del lane (npm run gate)',
-      '  publish          Genera el release pack',
-      '  validate         Valida integridad del pipeline',
-      '  doctor           Diagnostico de salud del proyecto',
-      '  status           Dashboard del pipeline',
+      'Deterministic layer (default, no LLM, no cost):',
+      '  step1            Prepares Step 1 inputs/prompts/packet (does NOT generate the PRD)',
+      '  step2            Validates the Step 2 architecture',
+      '  gate             Runs the lane gate (npm run gate)',
+      '  publish          Generates the release pack',
+      '  validate         Validates pipeline integrity',
+      '  doctor           Project health diagnostics',
+      '  status           Pipeline dashboard',
       '  patch | assemble | progress | watch | cross-validate',
       '',
-      'Capa LLM (opt-in, AUN NO IMPLEMENTADA):',
-      '  <comando> --with-llm [--provider claude|codex]',
-      '                   Ejecutaria el paso via LLM headless. Requiere provider',
-      '                   configurado y confirmacion de costo. Hoy falla claro (exit 2).',
+      'LLM layer (opt-in, NOT IMPLEMENTED YET):',
+      '  <command> --with-llm [--provider claude|codex]',
+      '                   Would execute the step via headless LLM. Requires configured',
+      '                   provider and explicit cost confirmation. Currently fails clearly (exit 2).',
       '',
-      'El sistema decide y controla; el agente ejecuta. Esta CLI solo despacha a los',
-      'scripts existentes; no reimplementa logica ni oculta costo/dependencia.',
+      'The system decides and controls; the agent executes. This CLI only dispatches to',
+      'existing scripts; it does not reimplement logic or hide cost/dependency.',
     ].join('\n'),
   )
 }
@@ -82,34 +82,34 @@ if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h') {
 }
 
 if (!Object.prototype.hasOwnProperty.call(COMMANDS, cmd)) {
-  console.error(`discipline: comando desconocido "${cmd}". Corre \`discipline help\`.`)
+  console.error(`discipline: unknown command "${cmd}". Run \`discipline help\`.`)
   process.exit(1)
 }
 
-// Capa 2 (seam): aun no implementada. Falla fuerte y claro, nunca exit 0.
+// Layer 2 (seam): not implemented yet. Fail hard and clearly; never exit 0.
 if (argv.includes('--with-llm')) {
   console.error(
     [
       'discipline --with-llm: LLM execution is not implemented yet.',
       'This command would require provider config (--provider claude|codex) and explicit cost confirmation.',
-      'Por ahora corre el skill correspondiente (p.ej. /discipline-step1) en tu agente.',
+      'For now, run the matching skill (for example /discipline-step1) in your agent.',
     ].join('\n'),
   )
   process.exit(2)
 }
 
-// --provider solo tiene sentido con la capa LLM (--with-llm). Sin ella, fallar claro
-// en vez de descartar el flag en silencio: el usuario podria creer que invoco la LLM
-// cuando en realidad corrio la capa determinista.
+// --provider only makes sense with the LLM layer (--with-llm). Without it, fail clearly
+// instead of silently dropping the flag: the user could think they invoked the LLM layer
+// when they actually ran the deterministic layer.
 if (argv.includes('--provider')) {
   console.error(
-    'discipline: --provider solo aplica con --with-llm (capa LLM). Quita --provider o agrega --with-llm.',
+    'discipline: --provider only applies with --with-llm (LLM layer). Remove --provider or add --with-llm.',
   )
   process.exit(1)
 }
 
-// Args restantes pasan tal cual al script base.
-// (--with-llm y --provider ya cortaron arriba; no llegan aqui.)
+// Remaining args pass through unchanged to the base script.
+// (--with-llm and --provider already exited above; they never reach here.)
 const passthrough = argv.slice(1)
 
 const spec = COMMANDS[cmd]

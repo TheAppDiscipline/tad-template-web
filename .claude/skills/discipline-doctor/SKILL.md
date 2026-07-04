@@ -1,188 +1,188 @@
 ---
 name: discipline-doctor
-description: "Diagnose Discipline Loop project health in 30 seconds. Reports profile, last gate, pending packets/patches, progress.md drift, scorecard status. Triggers on /discipline-doctor, 'check project status', 'estado del proyecto'."
+description: "Diagnose Discipline Loop project health in 30 seconds. Reports profile, last gate, pending packets/patches, progress.md drift, scorecard status. Triggers on /discipline-doctor, 'check project status', 'doctor project', 'why is gate failing'."
 ---
 
-# /discipline-doctor - Diagnostico rapido del proyecto Discipline Loop
+# /discipline-doctor - Fast diagnosis of a Discipline Loop project
 
-Este skill recopila el estado actual del proyecto en una sola pasada y devuelve un reporte tabular legible. No modifica archivos. No corre gates pesados. No requiere internet.
+This skill gathers the current project state in a single pass and returns a readable tabular report. It does not modify files. It does not run heavy gates. It requires no internet.
 
-## Lo que el usuario ve
+## What the user sees
 
-1. El skill lee 5 fuentes: `discipline.md`, `progress.md`, `.discipline/packets/`, `.discipline/patches/pending/`, git status.
-2. Si `PROFILE>=LAUNCH`, intenta leer `.discipline/scorecard.yaml`.
-3. Reporta tabla con: profile actual, ultimo gate run, packets generados/aplicados, patches pendientes, drift `progress.md` vs git, scorecard status.
-4. Sugiere proxima accion concreta (un solo paso).
+1. The skill reads 5 sources: `discipline.md`, `progress.md`, `.discipline/packets/`, `.discipline/patches/pending/`, git status.
+2. If `PROFILE>=LAUNCH`, it tries to read `.discipline/scorecard.yaml`.
+3. It reports a table with: current profile, last gate run, packets generated/applied, pending patches, `progress.md` vs git drift, scorecard status.
+4. It suggests one concrete next action (a single step).
 
-## Prerrequisitos
+## Prerequisites
 
-- Proyecto inicializado (existe `.discipline/` y `discipline.md`).
-- Si el proyecto esta recien clonado sin `.discipline/`, decirlo y sugerir `npm run discipline:hydrate`.
-- No requiere ningun gate verde para correr.
+- Initialized project (`.discipline/` and `discipline.md` exist).
+- If the project was just cloned without `.discipline/`, say so and suggest `npm run discipline:hydrate`.
+- Does not require any green gate to run.
 
 ---
 
-## Implementacion interna
+## Internal implementation
 
-### Fase 0: Verificar que el proyecto este inicializado
+### Phase 0: Verify the project is initialized
 
-Verificar que existan:
-- `discipline.md` en raiz
-- `.discipline/` directorio
-- `package.json` con scripts `discipline:*`
+Verify these exist:
+- `discipline.md` at the root
+- `.discipline/` directory
+- `package.json` with `discipline:*` scripts
 
-Si falta alguno:
+If any is missing:
 ```
-El proyecto no parece tener Discipline Loop inicializado.
+This project does not appear to have Discipline Loop initialized.
 
-Falta: <archivo o directorio>
+Missing: <file or directory>
 
-Posibles causas:
-1. Repo recien clonado sin hydrate. Corre: npm run discipline:hydrate
-2. No es un template Discipline Loop. Verifica que clonaste tad-template-{web,mobile,desktop,extension}.
+Possible causes:
+1. Repo just cloned without hydrate. Run: npm run discipline:hydrate
+2. Not a Discipline Loop template. Verify you cloned tad-template-{web,mobile,desktop,extension}.
 
-Detente aqui hasta resolver.
+Stop here until resolved.
 ```
 
-### Fase 1: Extraer PROFILE y switches
+### Phase 1: Extract PROFILE and switches
 
-Leer `discipline.md` y extraer la seccion `§0 Switches` (o equivalente). Capturar:
+Read `discipline.md` and extract the `§0 Switches` section (or equivalent). Capture:
 - `PROFILE` (LITE / FAMILY_SYNC / LAUNCH / PROD)
 - `LANE` (WEB / MOBILE / DESKTOP / EXTENSION)
 - `BACKEND_PROVIDER`
 - `AUTH_MODE`
 - `AI_FEATURES`
 
-Si `PROFILE` no esta declarado, marcar warning: "discipline.md no declara PROFILE. Default FAMILY_SYNC implicito por NN #6, pero recomendable explicitarlo."
+If `PROFILE` is not declared, flag a warning: "discipline.md does not declare PROFILE. FAMILY_SYNC is the implicit default per NN #6, but making it explicit is recommended."
 
-### Fase 2: Leer `progress.md`
+### Phase 2: Read `progress.md`
 
-Capturar:
-- Numero total de lineas
-- Numero de slices marcados done (count de `- [x]` o `## Slice` con status done)
-- Ultimas 5 entries (titulo y fecha si tiene)
-- Si tiene seccion `§Open Errors`, listarla
+Capture:
+- Total number of lines
+- Number of slices marked done (count of `- [x]` or `## Slice` with status done)
+- Last 5 entries (title and date if present)
+- If it has an `§Open Errors` section, list it
 
-Si `progress.md > 150 lineas`: warning sobre NN #8 (Context Management).
+If `progress.md > 150 lines`: warning about NN #8 (Context Management).
 
-### Fase 3: Inventariar `.discipline/packets/`
+### Phase 3: Inventory `.discipline/packets/`
 
-Listar archivos en `.discipline/packets/`. Clasificar:
-- Packets validados (extension `.md` sin `.borrador` en nombre)
-- Packets en borrador (`.borrador.md`)
-- Packets superseded (`.superseded.md`)
+List the files in `.discipline/packets/`. Classify them:
+- Validated packets (`.md` extension without `.draft` in the name)
+- Draft packets (`.draft.md`)
+- Superseded packets (`.superseded.md`)
 
-Detectar pares anomalos:
-- Si existe `X.borrador.md` pero no `X.md`, el borrador no fue validado todavia.
-- Si existen ambos `X.borrador.md` y `X.md`, el borrador no fue limpiado tras validacion.
+Detect anomalous pairs:
+- If `X.draft.md` exists but not `X.md`, the draft has not been validated yet.
+- If both `X.draft.md` and `X.md` exist, the draft was not cleaned up after validation.
 
-### Fase 4: Inventariar `.discipline/patches/pending/`
+### Phase 4: Inventory `.discipline/patches/pending/`
 
-Contar archivos en `.discipline/patches/pending/`. Si hay alguno:
-- Listar nombres de archivos
-- Marcar como BLOCKER si count > 0 (no se puede avanzar sin aplicar)
+Count the files in `.discipline/patches/pending/`. If there are any:
+- List the file names
+- Mark as BLOCKER if count > 0 (you cannot move forward without applying them)
 
-Sugerir: `npm run discipline:patch` (o `npm run discipline:patch:dry-run` para preview).
+Suggest: `npm run discipline:patch` (or `npm run discipline:patch:dry-run` for a preview).
 
-### Fase 5: Git status y log
+### Phase 5: Git status and log
 
-Ejecutar (mentalmente o con Bash):
-- `git status --short` para ver cambios sin commit
-- `git log --oneline -5` para ver ultimos 5 commits
-- `git branch --show-current` para branch actual
+Run (mentally or with Bash):
+- `git status --short` to see uncommitted changes
+- `git log --oneline -5` to see the last 5 commits
+- `git branch --show-current` for the current branch
 
-Detectar drift entre `progress.md` y git log:
-- Slices declarados done en `progress.md` que NO tienen commit asociado
-- Commits relevantes que NO aparecen en `progress.md`
+Detect drift between `progress.md` and the git log:
+- Slices declared done in `progress.md` that have NO associated commit
+- Relevant commits that do NOT appear in `progress.md`
 
-### Fase 6: Scorecard YAML (solo si PROFILE >= LAUNCH)
+### Phase 6: Scorecard YAML (only if PROFILE >= LAUNCH)
 
-Si `PROFILE` es LAUNCH o PROD:
-- Verificar que `.discipline/scorecard.yaml` existe
-- Si existe, intentar correr `npm run discipline:validate:launch` (o `:prod`) y capturar exit code + output
-- Si no existe, marcar BLOCKER: "PROFILE=LAUNCH+ requiere scorecard.yaml. Crea desde la plantilla del vault (Launch vs PROD + Scorecard as Code)."
+If `PROFILE` is LAUNCH or PROD:
+- Verify that `.discipline/scorecard.yaml` exists
+- If it exists, try running `npm run discipline:validate:launch` (or `:prod`) and capture the exit code + output
+- If it does not exist, mark a BLOCKER: "PROFILE=LAUNCH+ requires scorecard.yaml. Create it from the launch-vs-PROD scorecard-as-code template in The App Discipline vault (sold separately)."
 
-### Fase 7: Generar reporte
+### Phase 7: Generate the report
 
-Output en formato tabular:
+Output in tabular format:
 
 ```markdown
-# Discipline Loop · Estado del proyecto
+# Discipline Loop · Project status
 
-**Generado:** <fecha actual>
-**Branch:** <branch git>
+**Generated:** <current date>
+**Branch:** <git branch>
 **Lane:** <LANE>
 **Profile:** <PROFILE>
 
-## Resumen
+## Summary
 
-| Area | Estado | Detalle |
+| Area | Status | Detail |
 |---|---|---|
-| Profile declarado | OK / WARNING | <PROFILE o "no declarado, default FAMILY_SYNC"> |
-| `progress.md` | OK / WARNING | <N lineas; warning si >150> |
-| Slices done | <N> | Ultimo: <titulo del ultimo slice> |
-| Packets validados | <N> | <lista corta de los principales> |
-| Packets en borrador | <N> | <lista; 0 si no hay> |
-| Patches pendientes | OK / BLOCKER | <N archivos en `.discipline/patches/pending/`> |
-| Errores abiertos | <N> | <de progress.md §Open Errors> |
-| Cambios sin commit | <N> | <de git status --short> |
-| Drift progress vs git | OK / WARNING | <descripcion si hay drift> |
-| Scorecard YAML | N/A o OK / BLOCKER | <solo si PROFILE>=LAUNCH; "no aplica" si LITE/FAMILY_SYNC> |
+| Profile declared | OK / WARNING | <PROFILE or "not declared, default FAMILY_SYNC"> |
+| `progress.md` | OK / WARNING | <N lines; warning if >150> |
+| Slices done | <N> | Last: <title of the last slice> |
+| Validated packets | <N> | <short list of the main ones> |
+| Draft packets | <N> | <list; 0 if none> |
+| Pending patches | OK / BLOCKER | <N files in `.discipline/patches/pending/`> |
+| Open errors | <N> | <from progress.md §Open Errors> |
+| Uncommitted changes | <N> | <from git status --short> |
+| Drift progress vs git | OK / WARNING | <description if there is drift> |
+| Scorecard YAML | N/A or OK / BLOCKER | <only if PROFILE>=LAUNCH; "not applicable" if LITE/FAMILY_SYNC> |
 
-## Bloqueadores
+## Blockers
 
-<si hay BLOCKERS, listarlos en orden de impacto. Si no hay, decir "Ningun bloqueador detectado.">
+<if there are BLOCKERS, list them in order of impact. If none, say "No blockers detected.">
 
 ## Warnings
 
-<si hay warnings, listarlos. Si no hay, decir "Sin warnings.">
+<if there are warnings, list them. If none, say "No warnings.">
 
-## Proxima accion sugerida
+## Suggested next action
 
-<un solo paso concreto, basado en el estado>
+<a single concrete step, based on the current state>
 ```
 
-**Reglas para "Proxima accion sugerida":**
-- Si hay patches pendientes, siempre sugerir aplicarlos primero.
-- Si hay packets en borrador sin validar, sugerir el paso productor que debe validarlos.
-- Si scorecard YAML falta y PROFILE>=LAUNCH, sugerir crearlo.
-- Si todo OK y hay slice next en `task_plan.md`, sugerir abrir `paste-ready/paso-X-input.md` correspondiente.
-- Si todo OK y no hay slice next, sugerir corre el siguiente paso del pipeline o cierra el batch con DEPLOY_READINESS_PACKET.
+**Rules for "Suggested next action":**
+- If there are pending patches, always suggest applying them first.
+- If there are unvalidated draft packets, suggest the producer step that should validate them.
+- If the scorecard YAML is missing and PROFILE>=LAUNCH, suggest creating it.
+- If everything is OK and there is a next slice in `task_plan.md`, suggest opening the matching `paste-ready/step-X-input.md`.
+- If everything is OK and there is no next slice, suggest running the next pipeline step or closing the batch with DEPLOY_READINESS_PACKET.
 
-### Fase 8: Logging
+### Phase 8: Logging
 
-No actualizar `progress.md`. No correr gates. No tocar packets.
+Do not update `progress.md`. Do not run gates. Do not touch packets.
 
-Solo registrar la corrida en `.discipline/run-log.md` con una entry minima:
+Just record the run in `.discipline/run-log.md` with a minimal entry:
 
 ```markdown
-- <fecha> · /discipline-doctor · status: <profile>/<N blockers>/<N warnings>
+- <date> · /discipline-doctor · status: <profile>/<N blockers>/<N warnings>
 ```
 
-Si `discipline:log` esta disponible:
+If `discipline:log` is available:
 ```bash
 npm run discipline:log -- --step doctor --tool "/discipline-doctor" --notes "blockers=N, warnings=M"
 ```
 
-Si no, agregar manualmente la linea al final de `run-log.md`.
+Otherwise, add the line to the end of `run-log.md` manually.
 
 ---
 
-## Manejo de errores
+## Error handling
 
-- Si `discipline.md` no parsea: reportar el error de parseo y mostrar las primeras 30 lineas para diagnostico humano.
-- Si `package.json` no tiene scripts `discipline:*`: el proyecto puede ser pre-Wave 3 o no ser template oficial. Reportar version detectada (lee version del package.json).
-- Si `npm run discipline:validate:launch` falla con exit !=0 pero produce output: incluir las primeras 20 lineas del output en el reporte como "Errores del scorecard".
-- Si git no esta inicializado: marcar git status como N/A y seguir.
+- If `discipline.md` does not parse: report the parse error and show the first 30 lines for human diagnosis.
+- If `package.json` has no `discipline:*` scripts: the project may be pre-Wave 3 or not an official template. Report the detected version (read version from package.json).
+- If `npm run discipline:validate:launch` fails with exit != 0 but produces output: include the first 20 lines of the output in the report as "Scorecard errors".
+- If git is not initialized: mark git status as N/A and continue.
 
 ---
 
-## Reglas criticas
+## Critical rules
 
-- No modificar archivos. Solo lectura.
-- No correr `npm run gate` ni `gate:full` (son pesados, el doctor es ligero).
-- No invocar otros skills.
-- El reporte debe caber en ~30 lineas legibles. Si requieres detallar mas, ofrecer profundizacion bajo pedido ("¿Quieres detalle de los packets?").
-- El reporte debe ser interpretable por un no-programador: usar terminos del glosario (ver el glosario del vault), no jerga interna del tooling.
-- Sugerir siempre UNA proxima accion, no una lista. Si hay multiples bloqueadores, priorizar el que destrabe el resto.
-- Tiempo total objetivo: 30 segundos de output al usuario.
+- Do not modify files. Read-only.
+- Do not run `npm run gate` or `gate:full` (they are heavy; the doctor is lightweight).
+- Do not invoke other skills.
+- The report must fit in ~30 readable lines. If you need more detail, offer to drill down on request ("Want the packet details?").
+- The report must be interpretable by a non-programmer: use glossary terms (see the glossary in The App Discipline vault, sold separately), not internal tooling jargon.
+- Always suggest ONE next action, not a list. If there are multiple blockers, prioritize the one that unblocks the rest.
+- Total target time: 30 seconds of output to the user.

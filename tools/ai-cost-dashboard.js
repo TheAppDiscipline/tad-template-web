@@ -102,7 +102,7 @@ function main() {
     console.log('');
     console.log('Action: projected spend exceeds budget.');
     console.log('  - Audit your recent sessions for expensive patterns (discipline-step7 with opus; long contexts without cache).');
-    console.log('  - Consider routing more work to sonnet or haiku (see vault 13 - Decisiones Rápidas §Modelos).');
+    console.log('  - Consider routing more work to sonnet or haiku (see vault 13 - Fast Decisions / Models).');
     console.log('  - Raise the budget with DISCIPLINE_AI_BUDGET if the spend is genuinely value-producing.');
   }
 }

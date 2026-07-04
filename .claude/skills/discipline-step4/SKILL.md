@@ -1,154 +1,154 @@
 ---
 name: discipline-step4
-description: "Automate Discipline Loop Step 4: expand validated packets into executable slices with STEP_5_SLICE_PACKET, patch blocks, and paste-readies. Triggers on /discipline-step4 or 'run step 4' / 'ejecutar paso 4'."
+description: "Automate Discipline Loop Step 4: expand the validated STEP_4_EXECUTION_PACKET into executable slices with STEP_5_SLICE_PACKET, patch blocks, and paste-readies. Triggers on /discipline-step4, 'run step 4', 'expand slices', or 'generate slice packet'."
 ---
 
-# /discipline-step4 - Automatizar Paso 4 del pipeline Discipline Loop
+# /discipline-step4 - Automate Step 4 of the Discipline Loop pipeline
 
-Este skill ejecuta el Paso 4 completo: expande los slices del STEP_4_EXECUTION_PACKET validado en slices ejecutables con scope, contratos, criterios de aceptacion y DoD, genera el STEP_5_SLICE_PACKET para el primer slice listo, emite patch blocks, y deja los paste-readies listos para el Paso 5.
+This skill runs the full Step 4: it expands the slices from the validated STEP_4_EXECUTION_PACKET into executable slices with scope, contracts, acceptance criteria, and DoD, generates the STEP_5_SLICE_PACKET for the first ready slice, emits patch blocks, and leaves the paste-readies ready for Step 5.
 
-No requiere herramientas externas. Claude genera todo directamente.
+No external tools required. Claude generates everything directly.
 
-## Lo que el usuario ve
+## What the user sees
 
-1. El skill verifica que el STEP_4_EXECUTION_PACKET exista y tenga STATUS: validated
-2. Lee todos los packets disponibles y el contexto del proyecto
-3. Expande cada slice con scope detallado, contratos, criterios de aceptacion y complejidad
-4. Genera el STEP_5_SLICE_PACKET para el primer slice listo
-5. Emite patch blocks para task_plan.md, discipline.md y findings.md
-6. Aplica patches, ensambla paste-readies, y reporta resumen
+1. The skill checks that the STEP_4_EXECUTION_PACKET exists and has STATUS: validated
+2. Reads all available packets and the project context
+3. Expands each slice with detailed scope, contracts, acceptance criteria, and complexity
+4. Generates the STEP_5_SLICE_PACKET for the first ready slice
+5. Emits patch blocks for task_plan.md, discipline.md, and findings.md
+6. Applies patches, assembles paste-readies, and reports a summary
 
-## Prerrequisitos
+## Prerequisites
 
-- Paso 2 completado (`STEP_4_EXECUTION_PACKET.md` con STATUS: validated)
-- Node.js + npm (para correr los scripts de Discipline Loop)
-- **Rol recomendado: Premium Reliable - Implementación o Premium Reliable - Trabajo Mecánico.** La expansión de slices es trabajo estructurado que no requiere Decisiones Críticas. Frontier-Budget - Implementación también es válido para slices simples si mantienes gates y review. Modelo concreto vigente: `09 - Referencia/01 - Registro Vivo de Modelos y Herramientas.md`.
+- Step 2 completed (`STEP_4_EXECUTION_PACKET.md` with STATUS: validated)
+- Node.js + npm (to run the Discipline Loop scripts)
+- **Recommended role: Premium Reliable - Implementation or Premium Reliable - Mechanical Work.** Slice expansion is structured work that does not require Critical Decisions. Frontier-Budget - Implementation is also valid for simple slices as long as you keep gates and review. Current concrete model: see the live model-and-tooling registry in The App Discipline vault (sold separately).
 
 ---
 
-## Implementacion interna
+## Internal implementation
 
-### Fase 0: Verificar inputs
+### Phase 0: Verify inputs
 
-Leer el contenido de estos archivos. Si el obligatorio no existe o no esta validado, detenerse con mensaje claro.
+Read the contents of these files. If the required one does not exist or is not validated, stop with a clear message.
 
-**Obligatorio:**
-1. `.discipline/packets/STEP_4_EXECUTION_PACKET.md` - debe existir Y tener `STATUS: validated`
+**Required:**
+1. `.discipline/packets/STEP_4_EXECUTION_PACKET.md` - must exist AND have `STATUS: validated`
 
-Si no existe:
+If it does not exist:
 ```
-Falta el STEP_4_EXECUTION_PACKET. Ejecuta /discipline-step2 primero.
-Buscado en: .discipline/packets/STEP_4_EXECUTION_PACKET.md
-```
-
-Si existe pero no tiene `STATUS: validated` (sigue como borrador o no tiene STATUS):
-```
-El STEP_4_EXECUTION_PACKET no esta validado (STATUS actual: <status>).
-Ejecuta /discipline-step2 para validar la arquitectura antes de expandir slices.
+The STEP_4_EXECUTION_PACKET is missing. Run /discipline-step2 first.
+Looked in: .discipline/packets/STEP_4_EXECUTION_PACKET.md
 ```
 
-**Opcionales (leer si existen, enriquecen los slices):**
-2. `.discipline/packets/UI_HANDOFF_PACKET.md` - descripciones de UI por pantalla y estado
-3. `.discipline/packets/AI_IMPLEMENTATION_PACKET.md` - detalles de implementacion de features de IA
-4. `.discipline/packets/STEP_3_STITCH_PACKET.md` - flujos de pantallas y navegacion
-5. `.discipline/packets/STEP_2_ARCHITECTURE_PACKET.md` - contexto de arquitectura original
+If it exists but does not have `STATUS: validated` (still a draft or has no STATUS):
+```
+The STEP_4_EXECUTION_PACKET is not validated (current STATUS: <status>).
+Run /discipline-step2 to validate the architecture before expanding slices.
+```
 
-**Contexto del proyecto (leer siempre):**
-6. `discipline.md` - switches, contratos, reglas operativas
-7. `task_plan.md` - plan de slices actual y orden
-8. `findings.md` - decisiones y riesgos documentados
-9. `progress.md` - si existe, indica que slice ejecutar a continuacion
+**Optional (read if they exist, they enrich the slices):**
+2. `.discipline/packets/UI_HANDOFF_PACKET.md` - per-screen and per-state UI descriptions
+3. `.discipline/packets/AI_IMPLEMENTATION_PACKET.md` - implementation details for AI features
+4. `.discipline/packets/STEP_3_STITCH_PACKET.md` - screen flows and navigation
+5. `.discipline/packets/STEP_2_ARCHITECTURE_PACKET.md` - original architecture context
 
-**Contexto adicional (leer si existen):**
-10. `.discipline/step1-outputs/05_Data_Model.md` - modelo de datos detallado
-11. `.discipline/step1-outputs/04_User_Stories.md` - user stories para criterios de aceptacion
-12. `.discipline/step2-outputs/Paso2_01_Architecture_Core.md` - arquitectura core validada
-13. `.discipline/step2-outputs/Paso2_02_Permissions_Security.md` - permisos y seguridad
-14. `.discipline/step2-outputs/Paso2_03_Migrations_Backend.md` - migraciones y backend
+**Project context (always read):**
+6. `discipline.md` - switches, contracts, operating rules
+7. `task_plan.md` - current slice plan and order
+8. `findings.md` - documented decisions and risks
+9. `progress.md` - if it exists, indicates which slice to run next
 
-### Fase 1: Expandir slices
+**Additional context (read if they exist):**
+10. `.discipline/step1-outputs/05_Data_Model.md` - detailed data model
+11. `.discipline/step1-outputs/04_User_Stories.md` - user stories for acceptance criteria
+12. `.discipline/step2-outputs/Step2_01_Architecture_Core.md` - validated core architecture
+13. `.discipline/step2-outputs/Step2_02_Permissions_Security.md` - permissions and security
+14. `.discipline/step2-outputs/Step2_03_Migrations_Backend.md` - migrations and backend
 
-**Contexto para la expansion:** Antes de expandir, Claude debe tener en mente:
-- Los switches del proyecto y contratos de datos
-- La arquitectura validada (componentes, dependencias, riesgos)
-- Las user stories y flujos de UI (si existen)
-- El orden y dependencias de slices definidos en el STEP_4_EXECUTION_PACKET
-- Los riesgos documentados en findings.md
+### Phase 1: Expand slices
 
-**Leer todos los packets disponibles.** Construir un mapa mental del proyecto completo antes de expandir.
+**Context for the expansion:** Before expanding, Claude should keep in mind:
+- The project switches and data contracts
+- The validated architecture (components, dependencies, risks)
+- The user stories and UI flows (if they exist)
+- The slice order and dependencies defined in the STEP_4_EXECUTION_PACKET
+- The risks documented in findings.md
 
-**Para cada slice listado en el STEP_4_EXECUTION_PACKET:**
+**Read all available packets.** Build a mental map of the whole project before expanding.
 
-Expandir con el siguiente detalle:
+**For each slice listed in the STEP_4_EXECUTION_PACKET:**
 
-1. **Goal**: Una frase que describe que logra este slice. Debe ser verificable (se puede demostrar que funciona).
+Expand it with the following detail:
 
-2. **Scope IN**: Lista explicita de lo que SI se construye en este slice:
-   - Archivos a crear o modificar
-   - Componentes, hooks, utilidades
-   - Endpoints o queries
-   - Migraciones o cambios de schema
-   - Tests minimos
+1. **Goal**: One sentence describing what this slice achieves. It must be verifiable (you can demonstrate that it works).
 
-3. **Scope OUT**: Lista explicita de lo que NO se construye en este slice (pero podria confundirse con que si):
-   - Features relacionadas que van en otro slice
-   - Optimizaciones que no son necesarias aun
-   - Edge cases que se resuelven despues
+2. **Scope IN**: An explicit list of what IS built in this slice:
+   - Files to create or modify
+   - Components, hooks, utilities
+   - Endpoints or queries
+   - Migrations or schema changes
+   - Minimum tests
 
-4. **Contracts touched**: Que contratos de datos del STEP_4_EXECUTION_PACKET se usan o implementan en este slice:
-   - Tablas / colecciones afectadas
-   - Endpoints consumidos o creados
-   - Types / interfaces definidas
-   - RLS policies o security rules aplicadas
+3. **Scope OUT**: An explicit list of what is NOT built in this slice (but could be mistaken for something that is):
+   - Related features that belong in another slice
+   - Optimizations that are not needed yet
+   - Edge cases resolved later
 
-5. **UI states affected**: Si hay UI_HANDOFF_PACKET, listar que pantallas y estados se implementan en este slice. Si no hay UI, poner "N/A (LANE sin UI)" o "N/A (slice de backend)".
+4. **Contracts touched**: Which data contracts from the STEP_4_EXECUTION_PACKET are used or implemented in this slice:
+   - Tables / collections affected
+   - Endpoints consumed or created
+   - Types / interfaces defined
+   - RLS policies or security rules applied
 
-6. **Acceptance criteria**: Lista en formato checkbox de criterios verificables:
+5. **UI states affected**: If there is a UI_HANDOFF_PACKET, list which screens and states are implemented in this slice. If there is no UI, put "N/A (LANE without UI)" or "N/A (backend slice)".
+
+6. **Acceptance criteria**: A checkbox-format list of verifiable criteria:
    ```
-   - [ ] El usuario puede <accion especifica>
-   - [ ] Los datos se persisten en <donde>
-   - [ ] El estado <X> muestra <Y>
-   - [ ] Error handling: si <condicion>, el usuario ve <mensaje>
+   - [ ] The user can <specific action>
+   - [ ] Data is persisted in <where>
+   - [ ] State <X> shows <Y>
+   - [ ] Error handling: if <condition>, the user sees <message>
    ```
-   Minimo 3 criterios, maximo 8. Cada uno debe ser verificable manualmente o con test.
+   Minimum 3 criteria, maximum 8. Each one must be verifiable manually or with a test.
 
-7. **Definition of Done (DoD)**: Condiciones tecnicas para considerar el slice completo:
-   - Codigo commiteado y sin errores de lint
-   - Tests pasando (si aplica al slice)
-   - UI states implementados (normal + al menos 1 mas)
-   - Sin TODOs criticos pendientes
-   - Documentado en progress.md
+7. **Definition of Done (DoD)**: Technical conditions for considering the slice complete:
+   - Code committed and free of lint errors
+   - Tests passing (if applicable to the slice)
+   - UI states implemented (normal + at least 1 more)
+   - No critical TODOs left pending
+   - Documented in progress.md
 
-8. **Dependencies**: Que slices deben estar completos antes de empezar este. Si es el primer slice (bootstrap), no tiene dependencias.
+8. **Dependencies**: Which slices must be complete before starting this one. If it is the first slice (bootstrap), it has no dependencies.
 
-9. **Complexity estimate**: S (< 1 hora), M (1-3 horas), L (3-8 horas). Basado en:
-   - S: Un archivo nuevo, cambio localizado, sin integraciones nuevas
-   - M: Varios archivos, una integracion nueva, logica moderada
-   - L: Multiples archivos, varias integraciones, logica compleja o edge cases
+9. **Complexity estimate**: S (< 1 hour), M (1-3 hours), L (3-8 hours). Based on:
+   - S: One new file, a localized change, no new integrations
+   - M: Several files, one new integration, moderate logic
+   - L: Multiple files, several integrations, complex logic or edge cases
 
-**Determinar orden de ejecucion.** Basandose en las dependencias:
-- Slice 0 siempre es bootstrap (setup, config, schema, seed data)
-- Slices sin dependencias se pueden paralelizar (documentar cuales)
-- Slices con dependencias siguen el orden del grafo
+**Determine execution order.** Based on the dependencies:
+- Slice 0 is always bootstrap (setup, config, schema, seed data)
+- Slices without dependencies can be parallelized (document which ones)
+- Slices with dependencies follow the graph order
 
-**Generar READY_SLICES_BLOCK.** Ensamblar todos los slices expandidos en un bloque unico con formato consistente:
+**Generate READY_SLICES_BLOCK.** Assemble all the expanded slices into a single block with a consistent format:
 
 ```markdown
 # READY_SLICES_BLOCK
 
 Total slices: <N>
 Complexity breakdown: <X>S / <Y>M / <Z>L
-Estimated total: <suma de estimaciones>
+Estimated total: <sum of estimates>
 
 ## Execution Order
-1. Slice 0: <nombre> [S/M/L] - bootstrap
-2. Slice 1: <nombre> [S/M/L] - depends on: 0
-3. Slice 2: <nombre> [S/M/L] - depends on: 0 (parallelizable with 1)
+1. Slice 0: <name> [S/M/L] - bootstrap
+2. Slice 1: <name> [S/M/L] - depends on: 0
+3. Slice 2: <name> [S/M/L] - depends on: 0 (parallelizable with 1)
 ...
 
 ---
 
-## Slice 0: <nombre>
+## Slice 0: <name>
 ### Goal
 ...
 ### Scope IN
@@ -170,82 +170,82 @@ Estimated total: <suma de estimaciones>
 
 ---
 
-## Slice 1: <nombre>
+## Slice 1: <name>
 ...
 ```
 
-Guardar en: `.discipline/step4-outputs/READY_SLICES_BLOCK.md`
-Reportar progreso por slice: `Slice N/M expanded: <nombre> [complexity]`
+Save to: `.discipline/step4-outputs/READY_SLICES_BLOCK.md`
+Report progress per slice: `Slice N/M expanded: <name> [complexity]`
 
-### Fase 2: Generar STEP_5_SLICE_PACKET
+### Phase 2: Generate STEP_5_SLICE_PACKET
 
-**Determinar cual slice va primero.** Criterio de seleccion:
-1. Si `progress.md` existe e indica un slice especifico como siguiente, usar ese
-2. Si no, usar el primer slice en el orden de ejecucion (tipicamente Slice 0 / bootstrap)
+**Determine which slice goes first.** Selection criteria:
+1. If `progress.md` exists and indicates a specific slice as next, use that one
+2. Otherwise, use the first slice in the execution order (typically Slice 0 / bootstrap)
 
-**Para el slice seleccionado, ensamblar el contexto completo de implementacion:**
+**For the selected slice, assemble the full implementation context:**
 
 ```markdown
 # STEP_5_SLICE_PACKET
 
-SLICE: <numero y nombre>
+SLICE: <number and name>
 COMPLEXITY: <S/M/L>
 STATUS: ready
 
 ---
 
 ## Goal
-<goal del slice>
+<slice goal>
 
 ## Scope
 ### IN
-<scope IN detallado>
+<detailed scope IN>
 
 ### OUT
-<scope OUT detallado>
+<detailed scope OUT>
 
 ## Contracts
-<contratos de datos relevantes, copiados del STEP_4_EXECUTION_PACKET con detalle completo>
-<incluir types/interfaces, schemas de tablas, endpoints con request/response>
+<relevant data contracts, copied from the STEP_4_EXECUTION_PACKET in full detail>
+<include types/interfaces, table schemas, endpoints with request/response>
 
 ## UI Reference
-<si hay UI_HANDOFF_PACKET: copiar las secciones de pantallas afectadas por este slice>
-<incluir los 4 estados de cada pantalla afectada>
-<si no hay UI: "N/A">
+<if there is a UI_HANDOFF_PACKET: copy the sections for the screens affected by this slice>
+<include all 4 states of each affected screen>
+<if there is no UI: "N/A">
 
 ## AI Implementation Reference
-<si hay AI_IMPLEMENTATION_PACKET y el slice toca features de IA: copiar secciones relevantes>
-<si no: "N/A">
+<if there is an AI_IMPLEMENTATION_PACKET and the slice touches AI features: copy the relevant sections>
+<if not: "N/A">
 
 ## Acceptance Criteria
-<criterios de aceptacion en formato checkbox>
+<acceptance criteria in checkbox format>
 
 ## DoD
 <definition of done>
 
 ## Architecture Context
-<extracto relevante del STEP_4_EXECUTION_PACKET: locks, guardrails, decisiones que afectan este slice>
+<relevant extract from the STEP_4_EXECUTION_PACKET: locks, guardrails, decisions that affect this slice>
 
 ## Known Risks
-<riesgos de findings.md que aplican a este slice>
+<risks from findings.md that apply to this slice>
 
 ## Implementation Hints
-<hints especificos para este slice basados en el analisis de arquitectura:>
-<- que patron usar (ej: server actions, API routes, RPC)>
-<- que templates del repo aprovechar>
-<- que evitar (anti-patterns documentados en guardrails)>
+<slice-specific hints based on the architecture analysis:>
+<- which pattern to use (e.g. server actions, API routes, RPC)>
+<- which repo templates to leverage>
+<- what to avoid (anti-patterns documented in guardrails)>
 ```
 
-Guardar en: `.discipline/packets/STEP_5_SLICE_PACKET.md`
-Reportar: `STEP_5_SLICE_PACKET generado para Slice <N>: <nombre>`
+Save to: `.discipline/packets/STEP_5_SLICE_PACKET.md`
+Report: `STEP_5_SLICE_PACKET generated for Slice <N>: <name>`
 
-### Fase 3: Generar patch blocks
+### Phase 3: Generate patch blocks
 
-**Evaluar que archivos del repo necesitan actualizarse y generar los bloques correspondientes.**
+**Evaluate which repo files need updating and generate the corresponding blocks.**
 
-**1. TASK_PLAN_PATCH_BLOCK** (siempre se genera):
+**1. TASK_PLAN_PATCH_BLOCK** (always generated):
 
-Actualizar la seccion Ready Slices de `task_plan.md` con los slices expandidos. Formato:
+Update the Ready Slices section of `task_plan.md` with the expanded slices. Format:
 
 ```markdown
 TARGET_FILE: task_plan.md
@@ -257,133 +257,133 @@ CONTENT:
 
 | # | Slice | Complexity | Dependencies | Status |
 |---|---|---|---|---|
-| 0 | <nombre> | S/M/L | none | ready |
-| 1 | <nombre> | S/M/L | 0 | ready |
-| 2 | <nombre> | S/M/L | 0 | ready |
+| 0 | <name> | S/M/L | none | ready |
+| 1 | <name> | S/M/L | 0 | ready |
+| 2 | <name> | S/M/L | 0 | ready |
 ...
 ```
 
-Guardar en: `.discipline/patches/pending/TASK_PLAN_PATCH_BLOCK.md`
+Save to: `.discipline/patches/pending/TASK_PLAN_PATCH_BLOCK.md`
 
-**2. DISCIPLINE_MD_PATCH_BLOCK** (solo si contratos necesitan actualizacion):
+**2. DISCIPLINE_MD_PATCH_BLOCK** (only if contracts need updating):
 
-Si durante la expansion de slices se identificaron contratos que necesitan refinamiento (ej: un campo faltante, un endpoint no documentado, un type incompleto), generar el patch:
+If during slice expansion you identified contracts that need refinement (e.g. a missing field, an undocumented endpoint, an incomplete type), generate the patch:
 
 ```markdown
 TARGET_FILE: discipline.md
 PATCH_MODE: replace_section
-ANCHOR: <seccion especifica a actualizar>
+ANCHOR: <specific section to update>
 
 CONTENT:
-<contenido actualizado>
+<updated content>
 ```
 
-Solo generar este bloque si hay cambios concretos. No generar "por si acaso".
+Only generate this block if there are concrete changes. Do not generate it "just in case".
 
-Guardar en: `.discipline/patches/pending/DISCIPLINE_MD_PATCH_BLOCK.md`
+Save to: `.discipline/patches/pending/DISCIPLINE_MD_PATCH_BLOCK.md`
 
-**3. FINDINGS_APPEND_BLOCK** (siempre se genera):
+**3. FINDINGS_APPEND_BLOCK** (always generated):
 
-Documentar decisiones de scope tomadas durante la expansion:
+Document the scope decisions made during the expansion:
 
 ```markdown
 TARGET_FILE: findings.md
 PATCH_MODE: append
 
 CONTENT:
-## Paso 4 - Expansion de slices (<fecha>)
+## Step 4 - Slice expansion (<date>)
 
-### Decisiones de scope
-- <decision 1: que se incluyo/excluyó y por que>
+### Scope decisions
+- <decision 1: what was included/excluded and why>
 - <decision 2>
 ...
 
-### Items diferidos
-- <item que se pospuso para un slice posterior o post-MVP>
+### Deferred items
+- <item postponed to a later slice or post-MVP>
 ...
 
-### Riesgos nuevos identificados
-- <riesgo descubierto durante la expansion, si los hay>
+### New risks identified
+- <risk discovered during the expansion, if any>
 ...
 ```
 
-Guardar en: `.discipline/patches/pending/FINDINGS_APPEND_BLOCK.md`
+Save to: `.discipline/patches/pending/FINDINGS_APPEND_BLOCK.md`
 
-Reportar: `Patch blocks generados: <N> (TASK_PLAN, DISCIPLINE_MD?, FINDINGS)`
+Report: `Patch blocks generated: <N> (TASK_PLAN, DISCIPLINE_MD?, FINDINGS)`
 
-### Fase 4: Post-procesamiento
+### Phase 4: Post-processing
 
-Aplicar patches pendientes:
+Apply pending patches:
 ```bash
 npm run discipline:patch
 ```
 
-Ensamblar paste-ready para el Paso 5:
+Assemble the paste-ready for Step 5:
 ```bash
 npm run discipline:assemble -- --step 5
 ```
 
-Esto genera `.discipline/paste-ready/paso-5-input.md` con el STEP_5_SLICE_PACKET y todo el contexto necesario para que el Paso 5 implemente el slice.
+This generates `.discipline/paste-ready/step-5-input.md` with the STEP_5_SLICE_PACKET and all the context Step 5 needs to implement the slice.
 
-Registrar en run-log:
+Record in the run-log:
 ```bash
 npm run discipline:log -- --step 4 --tool "Claude" --notes "Automated via /discipline-step4"
 ```
 
-### Fase 5: Resumen y siguiente paso
+### Phase 5: Summary and next step
 
-Mostrar al usuario:
+Show the user:
 
 ```
-Paso 4 completado.
+Step 4 complete.
 
-Slices expandidos: <N>
-Complejidad total: <X>S / <Y>M / <Z>L (estimado: <total horas>h)
+Slices expanded: <N>
+Total complexity: <X>S / <Y>M / <Z>L (estimated: <total hours>h)
 
-Slices listos:
-<tabla con numero, nombre, complejidad, dependencias>
+Ready slices:
+<table with number, name, complexity, dependencies>
 
-Primer slice preparado: Slice <N> - <nombre> [complexity]
+First slice prepared: Slice <N> - <name> [complexity]
 
-Archivos generados:
+Generated files:
 - .discipline/step4-outputs/READY_SLICES_BLOCK.md
 - .discipline/packets/STEP_5_SLICE_PACKET.md (Slice <N>)
 - .discipline/patches/pending/ (<N> patch blocks)
 
-Patches aplicados: <N>
-- task_plan.md: Ready Slices actualizado
-<si aplica:>
-- discipline.md: Contratos actualizados
-- findings.md: Decisiones y items diferidos
+Patches applied: <N>
+- task_plan.md: Ready Slices updated
+<if applicable:>
+- discipline.md: Contracts updated
+- findings.md: Decisions and deferred items
 
-Paste-readies listos:
-- .discipline/paste-ready/paso-5-input.md
+Paste-readies ready:
+- .discipline/paste-ready/step-5-input.md
 
-Siguiente paso: /discipline-step5 (Implementar Slice <N>: <nombre>)
+Next step: /discipline-step5 (Implement Slice <N>: <name>)
 ```
 
 ---
 
-## Manejo de errores
+## Error handling
 
-- Si `STEP_4_EXECUTION_PACKET` no existe: detenerse con "Ejecuta /discipline-step2 primero."
-- Si `STEP_4_EXECUTION_PACKET` no tiene STATUS validated: detenerse con mensaje indicando que ejecute /discipline-step2 para validar.
-- Si el EXECUTION_PACKET no tiene slices definidos: detenerse con "El STEP_4_EXECUTION_PACKET no contiene slices. Revisa el output del Paso 2."
-- Si `npm run discipline:patch` falla: reportar el error y continuar con el ensamblaje. Los patch blocks estan guardados en `.discipline/patches/pending/` y el operador puede aplicarlos manualmente.
-- Si `npm run discipline:assemble` falla: reportar que archivos faltaron y sugerir revision. El STEP_5_SLICE_PACKET ya esta guardado en `.discipline/packets/` y se puede usar directamente.
-- Si `npm run discipline:log` falla: reportar el error pero no bloquear. El log es informativo, no critico.
-- Si hay inconsistencias entre el EXECUTION_PACKET y otros packets (ej: UI_HANDOFF_PACKET referencia pantallas que no cuadran con los slices): documentar la inconsistencia en FINDINGS_APPEND_BLOCK y resolverla usando el EXECUTION_PACKET como fuente de verdad para scope y los packets especializados como fuente de verdad para detalle.
+- If `STEP_4_EXECUTION_PACKET` does not exist: stop with "Run /discipline-step2 first."
+- If `STEP_4_EXECUTION_PACKET` does not have STATUS validated: stop with a message telling the user to run /discipline-step2 to validate.
+- If the EXECUTION_PACKET has no slices defined: stop with "The STEP_4_EXECUTION_PACKET contains no slices. Review the output of Step 2."
+- If `npm run discipline:patch` fails: report the error and continue with the assembly. The patch blocks are saved in `.discipline/patches/pending/` and the operator can apply them manually.
+- If `npm run discipline:assemble` fails: report which files were missing and suggest a review. The STEP_5_SLICE_PACKET is already saved in `.discipline/packets/` and can be used directly.
+- If `npm run discipline:log` fails: report the error but do not stop. The log is informational, not critical.
+- If there are inconsistencies between the EXECUTION_PACKET and other packets (e.g. UI_HANDOFF_PACKET references screens that do not match the slices): document the inconsistency in FINDINGS_APPEND_BLOCK and resolve it using the EXECUTION_PACKET as the source of truth for scope and the specialized packets as the source of truth for detail.
 
 ---
 
-## Reglas criticas
+## Critical rules
 
-- Usar Extended Thinking para la expansion de slices. El valor de este paso es el scope preciso y los criterios de aceptacion verificables.
-- No inventar slices que no esten en el STEP_4_EXECUTION_PACKET. Solo expandir los que ya existen. Si la expansion revela que un slice debe dividirse, documentar la razon y proponer la division, pero no aplicarla sin que el execution packet lo refleje.
-- No cambiar el orden de slices sin justificacion fuerte documentada en findings.md.
-- Los criterios de aceptacion deben ser verificables. "Funciona bien" no es un criterio. "El usuario puede crear un item y verlo en la lista" si lo es.
-- Scope OUT es tan importante como Scope IN. Documentar explicitamente que NO va en cada slice evita scope creep durante la implementacion.
-- Los contratos copiados al STEP_5_SLICE_PACKET deben ser exactos, no resumidos. El Paso 5 implementa directamente desde este packet.
-- No recomendar optimizacion prematura en los slices. El bootstrap debe ser minimo y funcional.
-- Los patch blocks deben ser exactos y pegables, no sugerencias narrativas.
-- Si `progress.md` indica un slice diferente al primero, respetar esa indicacion. El operador puede estar retomando un pipeline parcial.
+- Use Extended Thinking for slice expansion. The value of this step is precise scope and verifiable acceptance criteria.
+- Do not invent slices that are not in the STEP_4_EXECUTION_PACKET. Only expand the ones that already exist. If the expansion reveals that a slice should be split, document the reason and propose the split, but do not apply it unless the execution packet reflects it.
+- Do not change the slice order without strong justification documented in findings.md.
+- Acceptance criteria must be verifiable. "Works well" is not a criterion. "The user can create an item and see it in the list" is.
+- Scope OUT is as important as Scope IN. Explicitly documenting what does NOT belong in each slice prevents scope creep during implementation.
+- The contracts copied into the STEP_5_SLICE_PACKET must be exact, not summarized. Step 5 implements directly from this packet.
+- Do not recommend premature optimization in the slices. The bootstrap should be minimal and functional.
+- Patch blocks must be exact and pasteable, not narrative suggestions.
+- If `progress.md` indicates a slice other than the first, respect that indication. The operator may be resuming a partial pipeline.

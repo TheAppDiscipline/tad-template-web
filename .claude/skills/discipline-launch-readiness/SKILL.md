@@ -1,196 +1,196 @@
 ---
 name: discipline-launch-readiness
-description: "Validate Gate D (Launch) or Gate E (PROD) readiness from .discipline/scorecard.yaml. Wraps discipline:validate:launch parser into a human-readable table for non-technical users. Triggers on /discipline-launch-readiness, 'check launch readiness', 'verificar listo para lanzar'."
+description: "Validate Gate D (Launch) or Gate E (PROD) readiness from .discipline/scorecard.yaml. Wraps the discipline:validate:launch parser into a human-readable table for non-technical users. Triggers on /discipline-launch-readiness, 'check launch readiness', 'am I ready to ship', 'Gate D readiness'."
 ---
 
-# /discipline-launch-readiness - Validar readiness de Gate D Launch o Gate E PROD
+# /discipline-launch-readiness - Validate Gate D Launch or Gate E PROD readiness
 
-Este skill ejecuta el parser scorecard-as-code (`discipline:validate:launch` o `:prod`), interpreta el output crudo en una tabla legible, y devuelve "listo para lanzar" o "faltan estos N items" con accion concreta por cada gap.
+This skill runs the scorecard-as-code parser (`discipline:validate:launch` or `:prod`), interprets the raw output as a readable table, and returns "ready to launch" or "these N items are missing" with a concrete action for each gap.
 
-NOTA: el skill NO modifica el scorecard.yaml. Solo lo lee y reporta. Si faltan items, el usuario los marca como `done` con evidencia despues de cumplirlos.
+NOTE: the skill does NOT modify scorecard.yaml. It only reads and reports. If items are missing, the user marks them `done` with evidence after actually completing them.
 
-## Lo que el usuario ve
+## What the user sees
 
-1. El skill verifica que `.discipline/scorecard.yaml` exista. Si no, ofrece generar el skeleton desde la plantilla del vault (Launch vs PROD + Scorecard as Code).
-2. Detecta el modo automaticamente leyendo `meta.profile_target` del YAML, o pregunta al usuario si es ambiguo.
-3. Corre el parser correspondiente y captura output + exit code.
-4. Procesa el output en tabla legible: id, nombre, status, evidencia, accion si falla.
-5. Resume al final: "X/Y criticos OK, ready" o "lista de items pendientes con prioridad".
-6. Registra el run en `findings.md §Audits` automaticamente.
+1. The skill checks that `.discipline/scorecard.yaml` exists. If not, it offers to generate the skeleton from the launch-vs-PROD scorecard-as-code template in The App Discipline vault (sold separately).
+2. It detects the mode automatically by reading `meta.profile_target` from the YAML, or asks the user if it is ambiguous.
+3. It runs the corresponding parser and captures output + exit code.
+4. It formats the output into a readable table: id, name, status, evidence, action if failing.
+5. It summarizes at the end: "X/Y criticals OK, ready" or "list of pending items by priority".
+6. It logs the run to `findings.md §Audits` automatically.
 
-## Prerrequisitos
+## Prerequisites
 
-- `.discipline/scorecard.yaml` existe (si no, ofrece crearlo).
-- `tools/discipline/validate-scorecard.ts` y scripts `discipline:validate:launch|prod` disponibles en package.json.
-- `discipline.md §0` con PROFILE definido (LAUNCH o PROD para que valide algo aplicable).
-- `js-yaml` instalado (es devDep del template; si falta, `npm install`).
+- `.discipline/scorecard.yaml` exists (if not, it offers to create it).
+- `tools/discipline/validate-scorecard.ts` and the `discipline:validate:launch|prod` scripts are available in package.json.
+- `discipline.md §0` with PROFILE defined (LAUNCH or PROD so there is something applicable to validate).
+- `js-yaml` installed (it is a devDep of the template; if missing, `npm install`).
 
 ---
 
-## Implementacion interna
+## Internal implementation
 
-### Fase 0: Verificar PROFILE y scorecard.yaml
+### Phase 0: Check PROFILE and scorecard.yaml
 
-Leer `discipline.md`. Extraer `PROFILE`. Si es `LITE` o `FAMILY_SYNC`, advertir:
-
-```
-PROFILE actual: <profile>. Gate D/E aplica solo a LAUNCH o PROD.
-
-Si quieres validar readiness para subir a LAUNCH:
-1. Define los criterios en `.discipline/scorecard.yaml` (plantilla en el vault, Launch vs PROD + Scorecard as Code §4.1).
-2. Marca status `done` cuando completes cada item con su evidencia.
-3. Vuelve a correr este skill cuando estes listo para Gate D.
-
-Detente aqui o continua con `--force` para ver el dry-run del parser.
-```
-
-Si `PROFILE` es LAUNCH o PROD, verificar que `.discipline/scorecard.yaml` exista. Si no:
+Read `discipline.md`. Extract `PROFILE`. If it is `LITE` or `FAMILY_SYNC`, warn:
 
 ```
-.discipline/scorecard.yaml no existe. PROFILE=<profile> requiere scorecard.
+Current PROFILE: <profile>. Gate D/E applies only to LAUNCH or PROD.
 
-Opciones:
-1. Generar skeleton ahora (creo el archivo con la plantilla canonica del vault, 65a §4.1; tu lo llenas con evidencia).
-2. Detenerme y revisas la doctrina primero.
+If you want to validate readiness to move up to LAUNCH:
+1. Define the criteria in `.discipline/scorecard.yaml` (the template is the launch-vs-PROD scorecard-as-code material in The App Discipline vault (sold separately), §4.1).
+2. Mark status `done` when you complete each item with its evidence.
+3. Run this skill again when you are ready for Gate D.
 
-Eleccion: <1|2>
+Stop here, or continue with `--force` to see the parser dry-run.
 ```
 
-Si elige 1, generar skeleton minimal con los 8 criticos de Launch + 7 recomendados (segun 65a §3) + meta.profile_target.
+If `PROFILE` is LAUNCH or PROD, check that `.discipline/scorecard.yaml` exists. If not:
 
-### Fase 1: Detectar modo
+```
+.discipline/scorecard.yaml does not exist. PROFILE=<profile> requires a scorecard.
 
-Leer `meta.profile_target` del scorecard.yaml. Si:
-- `LAUNCH` → modo es `launch`.
-- `PROD` → modo es `prod` (incluye launch + prod criticos).
-- Ausente o incoherente con PROFILE de discipline.md → preguntar al usuario que modo quiere.
+Options:
+1. Generate the skeleton now (I create the file with the canonical template from 65a §4.1; you fill it in with evidence).
+2. Stop so you can review the doctrine first.
 
-### Fase 2: Correr parser
+Choice: <1|2>
+```
+
+If they choose 1, generate a minimal skeleton with the 8 Launch criticals + 7 recommended (per 65a §3) + meta.profile_target.
+
+### Phase 1: Detect mode
+
+Read `meta.profile_target` from scorecard.yaml. If:
+- `LAUNCH` -> mode is `launch`.
+- `PROD` -> mode is `prod` (includes launch + prod criticals).
+- Absent or inconsistent with the PROFILE in discipline.md -> ask the user which mode they want.
+
+### Phase 2: Run the parser
 
 ```bash
 npm run discipline:validate:<mode>
 ```
 
-Capturar stdout, stderr, exit code.
+Capture stdout, stderr, exit code.
 
-Si falla por `js-yaml` no instalado: pedir al usuario `npm install` antes de continuar.
+If it fails because `js-yaml` is not installed: ask the user to run `npm install` before continuing.
 
-Si falla por scorecard.yaml malformado: mostrar error de parser y referir al schema del vault (65a §4.1).
+If it fails because scorecard.yaml is malformed: show the parser error and point to the scorecard schema in the vault (sold separately, 65a §4.1).
 
-### Fase 3: Post-procesar output a tabla legible
+### Phase 3: Post-process the output into a readable table
 
-El parser devuelve:
-- Cuantos criticos `done` / `not_done` / `deferred`.
-- Cuantos recomendados `done` / `not_done`.
-- Items con `expires_on` pasado.
-- Condicionales aplicables (solo en mode=prod).
+The parser returns:
+- How many criticals are `done` / `not_done` / `deferred`.
+- How many recommended items are `done` / `not_done`.
+- Items with a past `expires_on`.
+- Applicable conditionals (only in mode=prod).
 
-Reformatear en tabla Markdown:
+Reformat into a Markdown table:
 
 ```markdown
 ## Gate <D|E> Launch Readiness Report
 
 **Profile target:** <LAUNCH|PROD>
-**Generado:** <fecha>
-**Scorecard:** .discipline/scorecard.yaml (last_updated: <fecha del meta>)
+**Generated:** <date>
+**Scorecard:** .discipline/scorecard.yaml (last_updated: <date from meta>)
 
-### Criticos (bloquean si no estan done)
+### Criticals (block if not done)
 
-| ID | Nombre | Status | Evidencia | Accion si falla |
+| ID | Name | Status | Evidence | Action if failing |
 |---|---|---|---|---|
-| L01 | Privacy Policy publicada en /privacy | DONE | URL: https://app.com/privacy | OK |
-| L02 | ToS publicado en /terms | NOT_DONE | (vacio) | Crear con `/discipline-legal-init` o copiar plantilla en `Plantillas/Plantillas Legales/terms-of-service.md.template` |
+| L01 | Privacy Policy published at /privacy | DONE | URL: https://app.com/privacy | OK |
+| L02 | ToS published at /terms | NOT_DONE | (empty) | Create with `/discipline-legal-init` or copy the template at `Legal Templates/terms-of-service.md.template` |
 | ... | ... | ... | ... | ... |
 
-### Recomendados (warning, no bloquean)
+### Recommended (warning, non-blocking)
 
-| ID | Nombre | Status | Evidencia | Notas |
+| ID | Name | Status | Evidence | Notes |
 |---|---|---|---|---|
 | ... | ... | ... | ... | ... |
 
-### Resumen
+### Summary
 
-- Criticos: <N done> / <total> · <bloqueadores: cuantos pendientes>
-- Recomendados: <N done> / <total>
-- Deferred con expires_on pasado: <N> (escalan a fail hard)
-- Condicionales aplicables: <N> (solo PROD)
+- Criticals: <N done> / <total> · <blockers: how many pending>
+- Recommended: <N done> / <total>
+- Deferred with a past expires_on: <N> (escalate to fail hard)
+- Applicable conditionals: <N> (PROD only)
 
-### Veredicto
+### Verdict
 
 <READY | NOT READY>
 
-<Si NOT READY:>
-Bloqueadores en orden de impacto:
-1. <item ID> · <nombre> · <accion concreta>
+<If NOT READY:>
+Blockers in order of impact:
+1. <item ID> · <name> · <concrete action>
 2. ...
 
-Tiempo estimado para cerrar: <suma de esfuerzos por item>.
+Estimated time to close: <sum of effort per item>.
 
-<Si READY:>
-Gate <D|E> verde. Puedes activar PROFILE=<LAUNCH|PROD> en discipline.md y proceder con release.
+<If READY:>
+Gate <D|E> is green. You can set PROFILE=<LAUNCH|PROD> in discipline.md and proceed with the release.
 
-Recuerda:
-- Re-correr este skill antes de cada release subsecuente.
-- Items con expires_on requieren retrospective antes de la fecha.
+Remember:
+- Re-run this skill before every subsequent release.
+- Items with expires_on need a retrospective before that date.
 ```
 
-### Fase 4: Registrar en findings.md
+### Phase 4: Log to findings.md
 
-Agregar entry al `findings.md §Audits`:
+Add an entry to `findings.md §Audits`:
 
 ```markdown
-- <fecha> · /discipline-launch-readiness · mode=<launch|prod> · veredicto=<READY|NOT_READY> · criticos=<N done>/<total> · bloqueadores=<lista corta>
+- <date> · /discipline-launch-readiness · mode=<launch|prod> · verdict=<READY|NOT_READY> · criticals=<N done>/<total> · blockers=<short list>
 ```
 
-Si `findings.md §Audits` no existe, crearla.
+If `findings.md §Audits` does not exist, create it.
 
-### Fase 5: Resumen al usuario
+### Phase 5: Summary to the user
 
-Si READY:
+If READY:
 ```
 Gate <D|E> Launch Readiness: READY
 
-<N>/<total> criticos done. Puedes proceder con el release.
+<N>/<total> criticals done. You can proceed with the release.
 
-Siguiente:
-- Activar PROFILE en discipline.md (si todavia no es <LAUNCH|PROD>).
-- Correr `npm run gate:strict` antes del release.
-- Smoke en device real con cuenta limpia post-deploy.
+Next:
+- Set PROFILE in discipline.md (if it is not <LAUNCH|PROD> yet).
+- Run `npm run gate:strict` before the release.
+- Smoke test on a real device with a clean account post-deploy.
 ```
 
-Si NOT READY:
+If NOT READY:
 ```
 Gate <D|E> Launch Readiness: NOT READY
 
-<N> bloqueadores criticos:
-1. <id> · <nombre> · <accion>
+<N> critical blockers:
+1. <id> · <name> · <action>
 2. ...
 
-Sugerencia: cierra el primer bloqueador, vuelve a correr este skill. La curva no debe ser bajar bloqueadores en lote sin verificar.
+Suggestion: close the first blocker, then run this skill again. The move is not to knock down blockers in bulk without verifying.
 
-Si algun bloqueador requiere herramientas o conocimiento fuera de tu alcance, considera:
-- /discipline-legal-init para Privacy Policy + ToS + breach runbook.
-- /discipline-audit prompt-7 para test coverage.
-- /discipline-audit prompt-12 para a11y WCAG AA.
-- 81 - Resolucion Rapida de Problemas si te atascas en algo no documentado.
+If a blocker needs tools or knowledge beyond your reach, consider:
+- /discipline-legal-init for Privacy Policy + ToS + breach runbook.
+- /discipline-audit prompt-7 for test coverage.
+- /discipline-audit prompt-12 for a11y WCAG AA.
+- the quick-troubleshooting guide in the vault (sold separately) if you get stuck on something undocumented.
 ```
 
 ---
 
-## Manejo de errores
+## Error handling
 
-- `validate-scorecard.ts` no existe: el template no es post-Wave 3.1. Sugerir actualizar a la version actual o instalar el script manualmente según el vault (Estado de Implementación).
-- Parser exit code != 0 pero output vacio: probablemente excepcion. Mostrar stderr y referir al usuario a `npm run discipline:validate:launch -- --verbose` para diagnostico.
-- `expires_on` pasado en muchos items recomendados: warning, no fail. Sugerir retrospective de scope.
-- meta.profile_target ausente: preguntar al usuario que profile target eligio (LAUNCH o PROD).
+- `validate-scorecard.ts` does not exist: the template is not post-Wave 3.1. Suggest updating to the current version or installing the script manually per the implementation-status guide in the vault (sold separately).
+- Parser exit code != 0 but empty output: probably an exception. Show stderr and point the user to `npm run discipline:validate:launch -- --verbose` for diagnosis.
+- `expires_on` past on many recommended items: warning, not a fail. Suggest a scope retrospective.
+- meta.profile_target absent: ask the user which profile target they chose (LAUNCH or PROD).
 
 ---
 
-## Reglas criticas
+## Critical rules
 
-- No marcar items como `done` desde el skill. Solo el usuario decide cuando un item esta cumplido (con evidencia).
-- No saltar items criticos. `deferred` en criticos = fail hard, sin excepciones.
-- Recomendados pueden estar `deferred` con `deferred_reason` + `expires_on` futuro.
-- Si `expires_on` pasa, escalan a `fail hard` automaticamente (sin necesidad de re-marcar).
-- No desactivar reglas de NN para pasar el gate. Si una regla no aplica, marca `not_applicable` con justificacion en `notes`.
-- Tiempo objetivo: 30 segundos para validar y reportar. Si toma mas, probablemente el scorecard YAML es muy grande o el parser tiene bug.
+- Do not mark items as `done` from the skill. Only the user decides when an item is met (with evidence).
+- Do not skip critical items. `deferred` on a critical = fail hard, no exceptions.
+- Recommended items can be `deferred` with `deferred_reason` + a future `expires_on`.
+- If `expires_on` passes, they escalate to `fail hard` automatically (no need to re-mark).
+- Do not disable NN rules to pass the gate. If a rule does not apply, mark it `not_applicable` with justification in `notes`.
+- Target time: 30 seconds to validate and report. If it takes longer, the scorecard YAML is probably too large or the parser has a bug.

@@ -53,7 +53,7 @@ Return **only** the JSON envelope below as your final message: no prose, no mark
 - `status`: `PASS` = nothing out of scope; `WARN` = only moderate/minor; `FAIL` = at least one critical.
 - `blocking` is always `false`: this subagent flags, the human decides.
 - `location` and `fix` may be `null` (a finding can be global or have no direct fix).
-- Mapping: each file outside the declared slice scope is a finding: a reasonable side-effect (shared util, token file, slice test) → `minor`; a clearly unrelated file → `moderate`; a whole unrelated subsystem/feature → `critical`. `location` is the file path (line `null`); `fix` suggests moving to a new slice or updating the contract. If nothing is out of scope, return `PASS` with empty `findings`.
+- Mapping: each file outside the declared slice scope is a finding: a reasonable side-effect (shared util, token file, slice test) -> `minor`; a clearly unrelated file -> `moderate`; a whole unrelated subsystem/feature -> `critical`. `location` is the file path (line `null`); `fix` suggests moving to a new slice or updating the contract. If nothing is out of scope, return `PASS` with empty `findings`.
 
 ## Does not
 

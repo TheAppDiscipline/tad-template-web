@@ -10,7 +10,7 @@
  *        - or `CREATE TABLE <name> ... ENABLE ROW LEVEL SECURITY` inline (Postgres 16+ syntax)
  *   2. Skip tables in the EXEMPT set (system/meta tables).
  *
- * Enforces Discipline Loop NN #17.2 (Security Baseline: RLS activado en tablas de negocio).
+ * Enforces Discipline Loop NN #17.2 (Security Baseline: RLS enabled on business tables).
  *
  * Exit 0 = pass, Exit 1 = business tables missing RLS.
  */
@@ -134,7 +134,7 @@ for (const [name, meta] of createdTables) {
     missing.push({ name, file: meta.file });
     continue;
   }
-  // RLS is ON but no CREATE POLICY targets this table → effectively deny-all,
+  // RLS is ON but no CREATE POLICY targets this table -> effectively deny-all,
   // almost always a forgotten policy. A table with RLS and zero policies is the
   // false-green M6 closes: the gate must require >= 1 policy per RLS table.
   if (!tablesWithPolicy.has(name)) {

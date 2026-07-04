@@ -1,192 +1,192 @@
 ---
 name: discipline-step3
-description: "Automate Discipline Loop Step 3: prepare context for Stitch, orchestrate UI generation via Stitch MCP or manual Stitch session, and produce UI_HANDOFF_PACKET. Triggers on /discipline-step3 or 'run step 3' / 'ejecutar paso 3'."
+description: "Automate Discipline Loop Step 3: prepare context for Stitch, orchestrate UI generation via Stitch MCP or a manual Stitch session, and produce the UI_HANDOFF_PACKET. Triggers on /discipline-step3, 'run step 3', 'generate the UI', or 'do the Stitch handoff'."
 ---
 
-# /discipline-step3 - Automatizar Paso 3 del pipeline Discipline Loop
+# /discipline-step3 - Automate Step 3 of the Discipline Loop pipeline
 
-Este skill prepara el contexto para Stitch, orquesta la generacion de pantallas (via Stitch MCP si esta disponible, o guiando al operador en stitch.withgoogle.com), y produce el UI_HANDOFF_PACKET a partir de lo que Stitch genero.
+This skill prepares the context for Stitch, orchestrates screen generation (via Stitch MCP if it is available, or by guiding the operator on stitch.withgoogle.com), and produces the UI_HANDOFF_PACKET from whatever Stitch generated.
 
-**Stitch es la herramienta primaria de este paso.** El skill no reemplaza a Stitch; lo complementa haciendo el antes (preparar contexto) y el despues (ensamblar packet y paste-readies).
+**Stitch is the primary tool for this step.** The skill does not replace Stitch; it complements it by handling the before (prepare context) and the after (assemble the packet and paste-readies).
 
-## Lo que el usuario ve
+## What the user sees
 
-1. El skill verifica que el LANE tenga UI (no BACKEND ni CLI)
-2. Prepara el prompt optimizado para Stitch con adaptaciones por lane
-3. Si Stitch MCP esta disponible: genera pantallas automaticamente
-4. Si no: guia al operador para usar stitch.withgoogle.com y reportar resultados
-5. Ensambla el UI_HANDOFF_PACKET desde la salida de Stitch
-6. Ensambla paste-readies y reporta siguiente paso
+1. The skill verifies that the LANE has a UI (not BACKEND or CLI)
+2. It prepares the prompt optimized for Stitch with per-lane adaptations
+3. If Stitch MCP is available: it generates screens automatically
+4. If not: it guides the operator to use stitch.withgoogle.com and report the results
+5. It assembles the UI_HANDOFF_PACKET from Stitch's output
+6. It assembles paste-readies and reports the next step
 
-## Prerrequisitos
+## Prerequisites
 
-- Paso 1 completado (packets en `.discipline/packets/`)
-- Paso 2 completado (`STEP_4_EXECUTION_PACKET.md` con STATUS: validated)
-- `STEP_3_STITCH_PACKET.md` debe existir en `.discipline/packets/`
-- Node.js + npm (para correr los scripts de Discipline Loop)
-- **Herramienta primaria: Google Stitch** (stitch.withgoogle.com, gratis, 350 gen/mes)
-- **Stitch no expone un MCP server oficial instalable:** su handoff es manual (exporta desde stitch.withgoogle.com y pega el resultado). Si tu entorno ya tiene un MCP de Stitch configurado, el skill lo detecta y lo usa; si no, opera en modo guiado.
+- Step 1 completed (packets in `.discipline/packets/`)
+- Step 2 completed (`STEP_4_EXECUTION_PACKET.md` with STATUS: validated)
+- `STEP_3_STITCH_PACKET.md` must exist in `.discipline/packets/`
+- Node.js + npm (to run the Discipline Loop scripts)
+- **Primary tool: Google Stitch** (stitch.withgoogle.com, free, 350 gen/month)
+- **Stitch does not expose an official installable MCP server:** its handoff is manual (export from stitch.withgoogle.com and paste the result). If your environment already has a Stitch MCP configured, the skill detects it and uses it; if not, it operates in guided mode.
 
 ---
 
-## Implementacion interna
+## Internal implementation
 
-### Fase 0: Verificar inputs y LANE
+### Phase 0: Verify inputs and LANE
 
-**Verificar LANE.** Leer `discipline.md` y extraer el valor de LANE.
+**Verify LANE.** Read `discipline.md` and extract the value of LANE.
 
-Si LANE es BACKEND o CLI:
+If LANE is BACKEND or CLI:
 ```
-LANE={lane} no tiene UI. Paso 3 no aplica. Ve al Paso 4: /discipline-step4
+LANE={lane} has no UI. Step 3 does not apply. Go to Step 4: /discipline-step4
 ```
-Detenerse.
+Stop.
 
-**Verificar inputs:**
+**Verify inputs:**
 
-**Obligatorio (uno de los dos):**
-1. `.discipline/paste-ready/paso-3-input.md` (preferido, ya ensamblado)
-2. `.discipline/packets/STEP_3_STITCH_PACKET.md` (fuente directa)
+**Required (one of the two):**
+1. `.discipline/paste-ready/step-3-input.md` (preferred, already assembled)
+2. `.discipline/packets/STEP_3_STITCH_PACKET.md` (direct source)
 
-Si ninguno existe:
+If neither exists:
 ```
-Falta el STEP_3_STITCH_PACKET. Ejecuta /discipline-step1 primero.
+The STEP_3_STITCH_PACKET is missing. Run /discipline-step1 first.
 ```
 
-**Contexto del proyecto (leer siempre):**
-3. `discipline.md` — switches, contratos, reglas
-4. `.discipline/packets/STEP_4_EXECUTION_PACKET.md` — arquitectura validada, slices, contratos de datos
+**Project context (always read):**
+3. `discipline.md` — switches, contracts, rules
+4. `.discipline/packets/STEP_4_EXECUTION_PACKET.md` — validated architecture, slices, data contracts
 5. `task_plan.md`
 6. `findings.md`
 
-**Opcionales (leer si existen):**
-7. `.discipline/step1-outputs/06_UI_States.md` — estados de UI del Paso 1
-8. `.discipline/step1-outputs/04_User_Stories.md` — user stories para entender flujos
-9. `.discipline/packets/AI_IMPLEMENTATION_PACKET.md` — si hay features IA que afectan UI
+**Optional (read if they exist):**
+7. `.discipline/step1-outputs/06_UI_States.md` — UI states from Step 1
+8. `.discipline/step1-outputs/04_User_Stories.md` — user stories to understand flows
+9. `.discipline/packets/AI_IMPLEMENTATION_PACKET.md` — if there are AI features that affect the UI
 
-**Detectar Stitch MCP.** Verificar si el MCP de Stitch esta disponible:
-- Buscar `stitch` en la lista de MCPs configurados
-- Si esta disponible: modo automatico (Fase 1A)
-- Si no: modo guiado (Fase 1B)
+**Detect Stitch MCP.** Check whether the Stitch MCP is available:
+- Look for `stitch` in the list of configured MCPs
+- If available: automatic mode (Phase 1A)
+- If not: guided mode (Phase 1B)
 
-### Fase 1A: Generacion con Stitch MCP (si disponible)
+### Phase 1A: Generation with Stitch MCP (if available)
 
-Si Stitch MCP esta configurado, usarlo directamente.
+If Stitch MCP is configured, use it directly.
 
-**Preparar el prompt para Stitch.** Construir el prompt incluyendo:
+**Prepare the prompt for Stitch.** Build the prompt including:
 
-1. Nombre y descripcion de la app (de discipline.md)
-2. Pantallas P0 listadas en el STITCH_PACKET
-3. Flujos principales de usuario
-4. Adaptaciones por LANE:
+1. App name and description (from discipline.md)
+2. P0 screens listed in the STITCH_PACKET
+3. Main user flows
+4. Per-LANE adaptations:
 
-Para WEB:
+For WEB:
 ```
-Contexto: app web responsive (mobile-first).
-Patrones: top nav o sidebar, responsive breakpoints, PWA install prompt.
-```
-
-Para MOBILE:
-```
-Contexto: app movil nativa (iOS/Android).
-Patrones: bottom tabs si hay secciones, stack navigation, safe areas, haptic feedback.
+Context: responsive web app (mobile-first).
+Patterns: top nav or sidebar, responsive breakpoints, PWA install prompt.
 ```
 
-Para DESKTOP:
+For MOBILE:
 ```
-Contexto: app de escritorio (Mac/Windows/Linux).
-Patrones: window chrome, sidebar, menu bar, drag areas.
-```
-
-Para WEB_SSR:
-```
-Contexto: app web con SSR (Next.js).
-Patrones: same as web, pero considerar que el primer render es del servidor.
+Context: native mobile app (iOS/Android).
+Patterns: bottom tabs if there are sections, stack navigation, safe areas, haptic feedback.
 ```
 
-**Llamar al MCP.** Usar las herramientas de Stitch:
-- `stitch_generate_screens` con el prompt preparado
-- `stitch_get_design_system` para leer el sistema de diseno generado
-- `stitch_get_screens` para leer las pantallas generadas
+For DESKTOP:
+```
+Context: desktop app (Mac/Windows/Linux).
+Patterns: window chrome, sidebar, menu bar, drag areas.
+```
 
-**Verificar resultado.** Para cada pantalla P0:
-- Verificar que exista en la salida de Stitch
-- Verificar que cubra los 4 estados (normal, loading, empty, error) o documentar cuales faltan
+For WEB_SSR:
+```
+Context: web app with SSR (Next.js).
+Patterns: same as web, but consider that the first render comes from the server.
+```
 
-Reportar: `✓ Stitch genero <N> pantallas via MCP`
+**Call the MCP.** Use the Stitch tools:
+- `stitch_generate_screens` with the prepared prompt
+- `stitch_get_design_system` to read the generated design system
+- `stitch_get_screens` to read the generated screens
 
-Ir a Fase 2.
+**Verify the result.** For each P0 screen:
+- Verify that it exists in Stitch's output
+- Verify that it covers the 4 states (normal, loading, empty, error) or document which ones are missing
 
-### Fase 1B: Generacion guiada (si Stitch MCP no esta disponible)
+Report: `✓ Stitch generated <N> screens via MCP`
 
-Si Stitch MCP no esta disponible, guiar al operador.
+Go to Phase 2.
 
-**Preparar el prompt optimizado para Stitch.** Mismo contenido que Fase 1A, pero formateado para copiar y pegar.
+### Phase 1B: Guided generation (if Stitch MCP is not available)
 
-Mostrar al operador:
+If Stitch MCP is not available, guide the operator.
+
+**Prepare the prompt optimized for Stitch.** Same content as Phase 1A, but formatted for copy and paste.
+
+Show to the operator:
 
 ```
-Stitch MCP no esta disponible. Usa Stitch manualmente:
+Stitch MCP is not available. Use Stitch manually:
 
-1. Abre stitch.withgoogle.com
-2. Copia y pega este prompt:
+1. Open stitch.withgoogle.com
+2. Copy and paste this prompt:
 
 ---
-<prompt preparado con nombre de app, pantallas P0, flujos, adaptaciones por LANE>
+<prompt prepared with app name, P0 screens, flows, per-LANE adaptations>
 ---
 
-3. Genera las pantallas P0
-4. Usa el boton Play para navegar el flujo
-5. Exporta el codigo (React + Tailwind recomendado para Web)
-6. Cuando termines, dime:
-   - ¿Cuantas pantallas se generaron?
-   - ¿Cubren los flujos principales?
-   - ¿Hay algo que Stitch no pudo generar bien?
+3. Generate the P0 screens
+4. Use the Play button to navigate the flow
+5. Export the code (React + Tailwind recommended for Web)
+6. When you are done, tell me:
+   - How many screens were generated?
+   - Do they cover the main flows?
+   - Is there anything Stitch could not generate well?
 ```
 
-Esperar la respuesta del operador. Si reporta problemas con alguna pantalla, documentar en findings.md.
+Wait for the operator's response. If they report problems with any screen, document it in findings.md.
 
-Reportar: `✓ Operador completo Stitch manualmente: <N> pantallas`
+Report: `✓ Operator completed Stitch manually: <N> screens`
 
-### Fase 2: Ensamblar UI_HANDOFF_PACKET
+### Phase 2: Assemble the UI_HANDOFF_PACKET
 
-**Si se uso Stitch MCP:** leer las pantallas generadas via `stitch_get_screens` y el design system via `stitch_get_design_system`.
+**If Stitch MCP was used:** read the generated screens via `stitch_get_screens` and the design system via `stitch_get_design_system`.
 
-**Si se uso Stitch manual:** pedir al operador que describa brevemente cada pantalla generada, o que pegue la URL de la sesion de Stitch.
+**If Stitch was used manually:** ask the operator to briefly describe each generated screen, or to paste the URL of the Stitch session.
 
-**Para cada pantalla P0, documentar los 4 estados:**
+**For each P0 screen, document the 4 states:**
 
-Estos son obligatorios. Si Stitch no genero alguno explicitamente, inferirlo de la pantalla normal y los contratos del proyecto:
+These are mandatory. If Stitch did not generate one explicitly, infer it from the normal screen and the project contracts:
 
-1. **normal** — layout, componentes, accion primaria, acciones secundarias, variantes por rol
-2. **loading** — skeleton/spinner, que ya es visible vs que espera datos
-3. **empty** — mensaje orientado a accion, ilustracion sugerida, distinguir "nuevo" vs "sin resultados"
-4. **error** — mensaje user-friendly, accion de recovery, error boundaries
+1. **normal** — layout, components, primary action, secondary actions, per-role variants
+2. **loading** — skeleton/spinner, what is already visible vs what is waiting on data
+3. **empty** — action-oriented message, suggested illustration, distinguish "new" vs "no results"
+4. **error** — user-friendly message, recovery action, error boundaries
 
-**Aplicar adaptaciones por LANE** (obligatorias):
+**Apply per-LANE adaptations** (mandatory):
 - WEB: responsive notes, PWA considerations
-- MOBILE: safe areas, navigation patterns, gestos
+- MOBILE: safe areas, navigation patterns, gestures
 - DESKTOP: window chrome, IPC boundaries, menu bar
 - WEB_SSR: SSR vs client rendering, hydration boundaries
 
-**Ensamblar el packet.** Formato canonico:
+**Assemble the packet.** Canonical format:
 
 ```markdown
 # UI_HANDOFF_PACKET
 
 LANE: <lane>
 SCREENS: <N total>
-GENERATED: <fecha>
+GENERATED: <date>
 SOURCE: Stitch <MCP | manual>
 
 ---
 
-## SCREEN: <nombre>
+## SCREEN: <name>
 
 ### States
 
 #### normal
 - Structure: <layout>
-- Main components: <lista>
+- Main components: <list>
 - Primary action: <CTA>
 - Notes for implementation: <hints>
 
@@ -204,76 +204,76 @@ SOURCE: Stitch <MCP | manual>
 ## Flow Notes
 
 ### Navigation Map
-<como se conectan las pantallas>
+<how the screens connect>
 
 ### Shared Components
-<componentes que se repiten>
+<components that repeat>
 
 ### Interaction Patterns
-<patrones por LANE>
+<per-LANE patterns>
 
 ### Accessibility Notes
 <labels, contrast, focus, screen reader>
 ```
 
-Guardar en: `.discipline/packets/UI_HANDOFF_PACKET.md`
-Reportar: `✓ UI_HANDOFF_PACKET ensamblado con <N> pantallas`
+Save to: `.discipline/packets/UI_HANDOFF_PACKET.md`
+Report: `✓ UI_HANDOFF_PACKET assembled with <N> screens`
 
-**Opcionalmente, generar DESIGN_MD_READY_BLOCK** si Stitch produjo decisiones de diseno (colores, tipografia, spacing) que deben persistir. Solo si hay contenido real, no por defecto.
+**Optionally, generate a DESIGN_MD_READY_BLOCK** if Stitch produced design decisions (colors, typography, spacing) that should persist. Only if there is real content, not by default.
 
-### Fase 3: Post-procesamiento
+### Phase 3: Post-processing
 
-Ensamblar paste-ready para el Paso 4:
+Assemble the paste-ready for Step 4:
 ```bash
 npm run discipline:assemble -- --step 4
 ```
 
-Registrar en run-log:
+Log to the run-log:
 ```bash
 npm run discipline:log -- --step 3 --tool "Stitch <MCP|manual> + Claude" --notes "Automated via /discipline-step3"
 ```
 
-### Fase 4: Resumen y siguiente paso
+### Phase 4: Summary and next step
 
 ```
-Paso 3 completado.
+Step 3 completed.
 
-Herramienta: Stitch <MCP | manual>
-Pantallas documentadas: <N>
-<lista de nombres de pantalla>
+Tool: Stitch <MCP | manual>
+Screens documented: <N>
+<list of screen names>
 
-Archivos generados:
+Files generated:
 - .discipline/packets/UI_HANDOFF_PACKET.md
-<si se genero:>
+<if generated:>
 - .discipline/packets/DESIGN_MD_READY_BLOCK.md
 
-Paste-readies actualizados:
-- .discipline/paste-ready/paso-4-input.md
+Paste-readies updated:
+- .discipline/paste-ready/step-4-input.md
 
-Siguiente paso: /discipline-step4 (Slices ejecutables)
+Next step: /discipline-step4 (Executable slices)
 ```
 
 ---
 
-## Manejo de errores
+## Error handling
 
-- Si LANE es BACKEND o CLI: detenerse inmediatamente. No es un error, es un skip esperado.
-- Si STEP_3_STITCH_PACKET no existe: detenerse con "Ejecuta /discipline-step1 primero."
-- Si Stitch MCP falla: caer al modo guiado (Fase 1B). Reportar el error del MCP.
-- Si Stitch no puede generar alguna pantalla: documentar en UI_HANDOFF_PACKET con "TODO: requiere generacion manual" y registrar en findings.md.
-- Si el operador reporta que Stitch no cubrio un flujo: documentar como gap e incluir en el handoff para que el Paso 5 lo resuelva durante implementacion.
-- Si `npm run discipline:assemble` falla: reportar. El UI_HANDOFF_PACKET ya esta en `.discipline/packets/`.
-- Si `npm run discipline:log` falla: reportar pero no bloquear.
+- If LANE is BACKEND or CLI: stop immediately. This is not an error, it is an expected skip.
+- If STEP_3_STITCH_PACKET does not exist: stop with "Run /discipline-step1 first."
+- If Stitch MCP fails: fall back to guided mode (Phase 1B). Report the MCP error.
+- If Stitch cannot generate some screen: document it in the UI_HANDOFF_PACKET with "TODO: requires manual generation" and log it in findings.md.
+- If the operator reports that Stitch did not cover a flow: document it as a gap and include it in the handoff so that Step 5 resolves it during implementation.
+- If `npm run discipline:assemble` fails: report it. The UI_HANDOFF_PACKET is already in `.discipline/packets/`.
+- If `npm run discipline:log` fails: report it but do not block.
 
 ---
 
-## Reglas criticas
+## Critical rules
 
-- **Stitch es la herramienta primaria.** No generar pantallas con Claude. Claude ensambla el packet a partir de lo que Stitch produjo.
-- Si Stitch MCP esta disponible, usarlo. Si no, guiar al operador. En ambos casos, Stitch genera las pantallas.
-- Los 4 estados (normal, loading, empty, error) son obligatorios por pantalla. Si Stitch no los genero todos, completar la documentacion de estados a partir de la pantalla normal y los contratos del proyecto.
-- Las adaptaciones por LANE son obligatorias. Una pantalla WEB debe incluir responsive notes; una MOBILE debe incluir safe areas.
-- No inventar pantallas que no esten en el STITCH_PACKET. Solo documentar las P0 listadas.
-- No recomendar librerias de componentes a menos que discipline.md o el STITCH_PACKET las mencione.
-- Las notas de implementacion son hints, no codigo. El codigo se escribe en el Paso 5.
-- Si hay inconsistencias entre Stitch y el STEP_4_EXECUTION_PACKET (ej: pantalla referencia datos que no estan en contratos), documentar en findings.md y usar los contratos como fuente de verdad.
+- **Stitch is the primary tool.** Do not generate screens with Claude. Claude assembles the packet from what Stitch produced.
+- If Stitch MCP is available, use it. If not, guide the operator. In both cases, Stitch generates the screens.
+- The 4 states (normal, loading, empty, error) are mandatory per screen. If Stitch did not generate them all, complete the state documentation from the normal screen and the project contracts.
+- The per-LANE adaptations are mandatory. A WEB screen must include responsive notes; a MOBILE screen must include safe areas.
+- Do not invent screens that are not in the STITCH_PACKET. Only document the P0 screens listed.
+- Do not recommend component libraries unless discipline.md or the STITCH_PACKET mentions them.
+- The implementation notes are hints, not code. The code is written in Step 5.
+- If there are inconsistencies between Stitch and the STEP_4_EXECUTION_PACKET (e.g., a screen references data that is not in the contracts), document it in findings.md and use the contracts as the source of truth.

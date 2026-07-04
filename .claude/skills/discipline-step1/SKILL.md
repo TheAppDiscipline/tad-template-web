@@ -1,249 +1,249 @@
 ---
 name: discipline-step1
-description: "Automate Discipline Loop Step 1: generate PRD, contracts, switches, and handoff packets from an app description. Triggers on /discipline-step1 or 'run step 1' / 'ejecutar paso 1'."
+description: "Automate Discipline Loop Step 1: generate the PRD, contracts, switches, and handoff packets from an app description. Triggers on /discipline-step1, 'run step 1', 'generate the PRD', or 'set up my project from a description'."
 ---
 
-# /discipline-step1 - Automatizar Paso 1 del pipeline Discipline Loop
+# /discipline-step1 - Automate Step 1 of the Discipline Loop pipeline
 
-Este skill ejecuta el Paso 1 completo: configura el proyecto, genera los 13 outputs (PRD, user stories, data model, validación cruzada, packets de handoff), y deja todo listo para el Paso 2.
+This skill runs the full Step 1: it configures the project, generates the 13 outputs (PRD, user stories, data model, cross-validation, handoff packets), and leaves everything ready for Step 2.
 
-No requiere herramientas externas. Claude genera todo directamente.
+No external tools required. Claude generates everything directly.
 
-## Lo que el usuario ve
+## What the user sees
 
-1. El skill pide que describa su app (si no hay descripción previa)
-2. Hace hasta 3 preguntas de clarificación si la descripción tiene vacíos
-3. Infiere la configuración técnica, la muestra, y pide confirmación
-4. Genera 3 archivos de input pre-llenados para que el usuario los revise
-5. Una vez confirmados, genera los 13 outputs secuencialmente
-6. Si la validación cruzada (Output 8) detecta inconsistencias, las corrige antes de generar los packets finales
-7. Reporta progreso (`✓ Output N/13: nombre`) y al final muestra un resumen
+1. The skill asks the user to describe their app (if there is no prior description)
+2. It asks up to 3 clarifying questions if the description has gaps
+3. It infers the technical configuration, shows it, and asks for confirmation
+4. It generates 3 pre-filled input files for the user to review
+5. Once confirmed, it generates the 13 outputs sequentially
+6. If the cross-validation (Output 8) detects inconsistencies, it fixes them before generating the final packets
+7. It reports progress (`✓ Output N/13: name`) and shows a summary at the end
 
-## Prerrequisitos
+## Prerequisites
 
-- Node.js + npm (para correr los scripts de Discipline Loop)
-- El proyecto debe estar basado en el Repo Template (o tener `package.json` con los scripts `discipline:*`)
+- Node.js + npm (to run the Discipline Loop scripts)
+- The project must be based on the Repo Template (or have a `package.json` with the `discipline:*` scripts)
 
-No se necesita Playwright ni cuentas externas.
+Playwright and external accounts are not needed.
 
 ---
 
-## Implementación interna
+## Internal implementation
 
-### Fase 0: Verificar o configurar proyecto
+### Phase 0: Verify or configure the project
 
-Verificar si existe `discipline.md` en el directorio actual y si tiene los switches configurados. Leer `discipline.md` y revisar si los campos clave tienen valores (PROFILE, BACKEND_PROVIDER, AUTH_MODE). Si están vacíos o son placeholder (e.g., `PROFILE:` sin valor), los switches NO están configurados.
+Check whether `discipline.md` exists in the current directory and whether its switches are configured. Read `discipline.md` and check whether the key fields have values (PROFILE, BACKEND_PROVIDER, AUTH_MODE). If they are empty or placeholders (e.g., `PROFILE:` with no value), the switches are NOT configured.
 
-**Si los switches YA están configurados:** continuar a Fase 1.
+**If the switches are ALREADY configured:** continue to Phase 1.
 
-**Si NO existe `discipline.md` O los switches están vacíos:**
+**If `discipline.md` does NOT exist OR the switches are empty:**
 
-Pedirle al usuario que describa su app en lenguaje natural:
-
-```
-Descríbeme tu app: ¿qué hace, para quién es, y qué necesita el usuario poder hacer?
-
-Ejemplo: "Una app web para que equipos pequeños trackeen sus tareas semanales. 
-Cada miembro crea su cuenta con Google, ve sus tareas y las del equipo, 
-y el líder puede asignar tareas a otros."
-```
-
-Si ya existe un `IDEA_VALIDATION_PACKET` en `.discipline/packets/` o una descripción en `00_Input_Bruto.md`, usar esa información en vez de preguntar.
-
-**Analizar la descripción y detectar vacíos críticos.** Antes de inferir switches, revisar si la descripción cubre estos 4 ejes:
-
-1. **Problema**: ¿Queda claro qué dolor resuelve? Si no, preguntar.
-2. **Usuarios**: ¿Queda claro quién la usa y si hay roles distintos? Si no, preguntar.
-3. **Acciones clave**: ¿Queda claro qué puede hacer cada usuario? Si no, preguntar.
-4. **Datos**: ¿Queda claro qué información se guarda y si se comparte? Si no, preguntar.
-
-Si faltan 1 o más ejes, hacer las preguntas de clarificación **en un solo mensaje** (no una por una). Ejemplo:
+Ask the user to describe their app in natural language:
 
 ```
-Antes de configurar el proyecto necesito aclarar un par de cosas:
+Describe your app to me: what does it do, who is it for, and what does the user need to be able to do?
 
-1. ¿Cada persona crea sus propias tareas o alguien las asigna?
-2. ¿Las tareas tienen fecha límite o solo se marcan como completadas?
-
-Con eso tengo lo que necesito para continuar.
+Example: "A web app for small teams to track their weekly tasks.
+Each member creates an account with Google, sees their tasks and the team's,
+and the lead can assign tasks to others."
 ```
 
-Reglas para las preguntas de clarificación:
-- Máximo 3 preguntas. Si hay más de 3 vacíos, priorizar los que afectan switches (roles→COLLAB, datos compartidos→BACKEND, login→AUTH).
-- Solo preguntar lo que no se puede asumir razonablemente. Si la respuesta obvia es "sí" o "no", asumir y seguir.
-- No preguntar sobre tecnología (backend, hosting, auth method). Eso se infiere.
+If an `IDEA_VALIDATION_PACKET` already exists in `.discipline/packets/` or there is a description in `00_Raw_Input.md`, use that information instead of asking.
 
-Una vez que la descripción tiene los 4 ejes cubiertos, continuar:
+**Analyze the description and detect critical gaps.** Before inferring switches, check whether the description covers these 4 axes:
 
-**Inferir switches de la descripción.** Analizar lo que el usuario dijo y deducir la configuración técnica:
+1. **Problem**: Is it clear what pain it solves? If not, ask.
+2. **Users**: Is it clear who uses it and whether there are distinct roles? If not, ask.
+3. **Key actions**: Is it clear what each user can do? If not, ask.
+4. **Data**: Is it clear what information is stored and whether it is shared? If not, ask.
 
-| Señal en la descripción | Switch | Valor inferido |
+If 1 or more axes are missing, ask the clarifying questions **in a single message** (not one at a time). Example:
+
+```
+Before I configure the project I need to clarify a couple of things:
+
+1. Does each person create their own tasks, or does someone assign them?
+2. Do tasks have a due date, or are they just marked as complete?
+
+With that I have what I need to continue.
+```
+
+Rules for the clarifying questions:
+- At most 3 questions. If there are more than 3 gaps, prioritize the ones that affect switches (roles -> COLLAB, shared data -> BACKEND, login -> AUTH).
+- Only ask about what cannot be reasonably assumed. If the obvious answer is "yes" or "no", assume it and move on.
+- Do not ask about technology (backend, hosting, auth method). That is inferred.
+
+Once the description covers all 4 axes, continue:
+
+**Infer the switches from the description.** Analyze what the user said and deduce the technical configuration:
+
+| Signal in the description | Switch | Inferred value |
 |---|---|---|
-| "app web", "se abre en el navegador", "PWA", o no menciona plataforma | LANE | WEB |
-| "app móvil", "iPhone", "Android", "App Store" | LANE | MOBILE |
-| "extensión de Chrome/Firefox" | LANE | EXTENSION |
-| "API", "backend", "servicio" | LANE | BACKEND |
-| Pocas funciones, un tipo de usuario, uso personal | PROFILE | LITE |
-| Varios tipos de datos, compartir con familia/grupo cerrado | PROFILE | FAMILY_SYNC |
-| Beta público / primeros pagantes, sin scorecard PROD completo | PROFILE | LAUNCH |
-| Roles, permisos, admin, múltiples flujos, comercial ≥50 activos | PROFILE | PROD |
-| "login", "crear cuenta", "usuarios", "equipo", "miembros" | AUTH | MAGIC_LINK (default si no especifica método) |
-| "Google login", "entrar con Google" | AUTH | GOOGLE |
-| "sin login", "sin cuenta", uso personal sin mencionar cuentas | AUTH | NONE |
-| Si AUTH=NONE y no menciona compartir ni sync entre dispositivos | BACKEND | LOCAL_ONLY |
-| Si necesita cuentas, datos compartidos, o sync | BACKEND | SUPABASE (default) |
-| Menciona "Firebase" o "Google Cloud" explícitamente | BACKEND | FIREBASE |
-| "compartir", "equipo", "colaborar", "asignar a otros" | COLLAB | COLLABORATIVE |
-| "ver lo de otros", "compartir (lectura)", o no menciona colaboración | COLLAB | VIEW_ONLY |
-| "IA", "generar texto", "analizar con AI", "chatbot" | AI_FEATURES | enabled |
-| No menciona IA | AI_FEATURES | none |
-| "notificaciones", "alertas", "recordatorios push" | PUSH | true |
-| No menciona notificaciones | PUSH | false |
+| "web app", "opens in the browser", "PWA", or does not mention a platform | LANE | WEB |
+| "mobile app", "iPhone", "Android", "App Store" | LANE | MOBILE |
+| "Chrome/Firefox extension" | LANE | EXTENSION |
+| "API", "backend", "service" | LANE | BACKEND |
+| Few features, one type of user, personal use | PROFILE | LITE |
+| Several data types, sharing with family/closed group | PROFILE | FAMILY_SYNC |
+| Public beta / first paying users, without a complete PROD scorecard | PROFILE | LAUNCH |
+| Roles, permissions, admin, multiple flows, commercial >=50 active | PROFILE | PROD |
+| "login", "create account", "users", "team", "members" | AUTH | MAGIC_LINK (default if no method is specified) |
+| "Google login", "sign in with Google" | AUTH | GOOGLE |
+| "no login", "no account", personal use without mentioning accounts | AUTH | NONE |
+| If AUTH=NONE and there is no mention of sharing or sync across devices | BACKEND | LOCAL_ONLY |
+| If it needs accounts, shared data, or sync | BACKEND | SUPABASE (default) |
+| Explicitly mentions "Firebase" or "Google Cloud" | BACKEND | FIREBASE |
+| "share", "team", "collaborate", "assign to others" | COLLAB | COLLABORATIVE |
+| "see other people's stuff", "share (read-only)", or no mention of collaboration | COLLAB | VIEW_ONLY |
+| "AI", "generate text", "analyze with AI", "chatbot" | AI_FEATURES | enabled |
+| No mention of AI | AI_FEATURES | none |
+| "notifications", "alerts", "push reminders" | PUSH | true |
+| No mention of notifications | PUSH | false |
 
-Inferencias automáticas (no se preguntan):
-- SYNC: Si BACKEND=LOCAL_ONLY→OFFLINE_FIRST, cualquier otro→FAST_UI
+Automatic inferences (not asked):
+- SYNC: If BACKEND=LOCAL_ONLY -> OFFLINE_FIRST, anything else -> FAST_UI
 - HOSTING: Vercel (default)
 
-**Mostrar la configuración inferida y pedir confirmación:**
+**Show the inferred configuration and ask for confirmation:**
 
 ```
-Basándome en tu descripción, esta es la configuración que recomiendo:
+Based on your description, this is the configuration I recommend:
 
-- Tipo: Web (LANE=WEB)
-- Complejidad: Media, varios usuarios, datos compartidos (PROFILE=FAMILY_SYNC)
-- Login: Con Google (AUTH=GOOGLE)
-- Base de datos: Supabase, rápido de configurar, buen tier gratis (BACKEND=SUPABASE)
-- Colaboración: Los usuarios pueden editar datos compartidos (COLLAB=COLLABORATIVE)
-- Sincronización: UI rápida con sync al backend (SYNC=FAST_UI)
-- IA: No (AI_FEATURES=none)
-- Notificaciones push: No (PUSH=false)
+- Type: Web (LANE=WEB)
+- Complexity: Medium, several users, shared data (PROFILE=FAMILY_SYNC)
+- Login: With Google (AUTH=GOOGLE)
+- Database: Supabase, quick to set up, good free tier (BACKEND=SUPABASE)
+- Collaboration: Users can edit shared data (COLLAB=COLLABORATIVE)
+- Sync: Fast UI with sync to the backend (SYNC=FAST_UI)
+- AI: No (AI_FEATURES=none)
+- Push notifications: No (PUSH=false)
 - Hosting: Vercel (HOSTING=Vercel)
 
-¿Está bien así o quieres cambiar algo?
+Is this good, or do you want to change something?
 ```
 
-El usuario puede decir "sí", "perfecto", o "cambia X por Y". Ajustar según feedback.
+The user can say "yes", "perfect", or "change X to Y". Adjust based on the feedback.
 
-Una vez confirmado, ejecutar. Usar `--force` si `discipline.md` ya existe (para sobrescribir los switches vacíos):
+Once confirmed, run it. Use `--force` if `discipline.md` already exists (to overwrite the empty switches):
 
 ```bash
 npm run discipline:hydrate -- --lane <LANE> --profile <PROFILE> --backend <BACKEND> --auth <AUTH> --collab <COLLAB> --sync <SYNC> --ai <AI> --push <PUSH> --hosting <HOSTING> --force
 ```
 
-**Después de hydrate, llenar los campos de identidad en `discipline.md`.** Extraer de la descripción del usuario:
-- `PROJECT_NAME`: nombre corto de la app (ej: "MyWeek", "TaskFlow", "FamilyBudget"). Si el usuario no dio nombre, inferir uno descriptivo del propósito.
-- `PRIMARY_GOAL`: una frase que resuma el objetivo principal (ej: "Ayudar a equipos pequeños a organizar tareas semanales")
-- `NORTH_STAR_METRIC`: métrica medible (ej: "% de tareas completadas por semana", "usuarios activos semanales")
+**After hydrate, fill in the identity fields in `discipline.md`.** Extract from the user's description:
+- `PROJECT_NAME`: short name of the app (e.g., "MyWeek", "TaskFlow", "FamilyBudget"). If the user did not give a name, infer a descriptive one from the purpose.
+- `PRIMARY_GOAL`: one sentence that sums up the main objective (e.g., "Help small teams organize their weekly tasks")
+- `NORTH_STAR_METRIC`: a measurable metric (e.g., "% of tasks completed per week", "weekly active users")
 
-Editar `discipline.md` directamente para reemplazar los placeholders `<APP_NAME>`, `<one sentence>`, `<measurable metric>` con los valores reales.
+Edit `discipline.md` directly to replace the placeholders `<APP_NAME>`, `<one sentence>`, `<measurable metric>` with the real values.
 
-### Fase 1: Preparar inputs
+### Phase 1: Prepare inputs
 
-**Guardar la descripción del usuario como IDEA_VALIDATION_PACKET.** Si el usuario dio su descripción en Fase 0, guardarla en `.discipline/packets/IDEA_VALIDATION_PACKET.md` con este formato:
+**Save the user's description as the IDEA_VALIDATION_PACKET.** If the user gave their description in Phase 0, save it to `.discipline/packets/IDEA_VALIDATION_PACKET.md` in this format:
 
 ```markdown
 # IDEA_VALIDATION_PACKET
 
-## Problema
-<extraer de la descripción del usuario: qué problema resuelve>
+## Problem
+<extract from the user's description: what problem it solves>
 
-## Usuario objetivo
-<extraer de la descripción: para quién es>
+## Target user
+<extract from the description: who it is for>
 
-## Diferenciador
-<extraer de la descripción: qué lo hace diferente, o "A definir en Paso 1" si no lo mencionó>
+## Differentiator
+<extract from the description: what makes it different, or "To be defined in Step 1" if not mentioned>
 
-## Descripción original
-<la descripción textual que dio el usuario>
+## Original description
+<the verbatim description the user gave>
 ```
 
 ```bash
 npm run discipline:step1-prep
 ```
 
-Genera:
-- `.discipline/step1-input/00_Input_Bruto.md` - pre-llenado con `IDEA_VALIDATION_PACKET`
-- `.discipline/step1-input/01_Ejemplos_Reales.md` - template con formato de casos
-- `.discipline/step1-input/02_Restricciones.md` - pre-llenado con switches de `discipline.md`
-- `.discipline/prompts/paso-1-all-prompts.md` - los 13 prompts interpolados con switches del proyecto
+Generates:
+- `.discipline/step1-input/00_Raw_Input.md` - pre-filled with the `IDEA_VALIDATION_PACKET`
+- `.discipline/step1-input/01_Real_Examples.md` - template with the case format
+- `.discipline/step1-input/02_Constraints.md` - pre-filled with the switches from `discipline.md`
+- `.discipline/prompts/step-1-all-prompts.md` - the 13 prompts interpolated with the project's switches
 
-**Después de que `step1-prep` genere los archivos, enriquecer `01_Ejemplos_Reales.md` con un borrador de casos de uso.** Analizar la descripción del usuario y generar 3-5 casos de uso concretos con este formato:
+**After `step1-prep` generates the files, enrich `01_Real_Examples.md` with a draft of use cases.** Analyze the user's description and generate 3-5 concrete use cases in this format:
 
 ```markdown
-## Caso: <nombre descriptivo>
-- Actor: <quién>
-- Acción: <qué hace paso a paso>
-- Resultado esperado: <qué ve/obtiene>
-- Dato clave: <qué dato se crea, lee, o modifica>
+## Case: <descriptive name>
+- Actor: <who>
+- Action: <what they do, step by step>
+- Expected result: <what they see/get>
+- Key data: <what data is created, read, or modified>
 ```
 
-Escribir el borrador directamente en `.discipline/step1-input/01_Ejemplos_Reales.md`.
+Write the draft directly into `.discipline/step1-input/01_Real_Examples.md`.
 
-**Abrir los 3 archivos de input para que el usuario los revise.** Mostrar un resumen de qué hay en cada uno:
+**Open the 3 input files for the user to review.** Show a summary of what is in each one:
 
 ```
-Los 3 archivos de input están listos para revisión:
+The 3 input files are ready for review:
 
-1. 00_Input_Bruto.md - Tu idea de app (pre-llenado con lo que me describiste)
-2. 01_Ejemplos_Reales.md - Casos de uso que generé basándome en tu descripción (revisa que tengan sentido)
-3. 02_Restricciones.md - La configuración técnica que confirmaste
+1. 00_Raw_Input.md - Your app idea (pre-filled with what you described to me)
+2. 01_Real_Examples.md - Use cases I generated based on your description (check that they make sense)
+3. 02_Constraints.md - The technical configuration you confirmed
 
-Revísalos y dime si quieres cambiar algo, o "listo" para continuar.
+Review them and tell me if you want to change anything, or "ready" to continue.
 ```
 
-No continuar hasta que el usuario confirme. Si el usuario quiere cambiar algo, aplicar los cambios y volver a mostrar el resumen.
+Do not continue until the user confirms. If the user wants to change something, apply the changes and show the summary again.
 
-### Fase 2: Generar los 13 outputs
+### Phase 2: Generate the 13 outputs
 
-Leer los prompts de `.discipline/prompts/paso-1-all-prompts.md`. Leer los 3 archivos de input como contexto. Leer el system prompt de la sección "SYSTEM PROMPT" del archivo de prompts.
+Read the prompts from `.discipline/prompts/step-1-all-prompts.md`. Read the 3 input files as context. Read the system prompt from the "SYSTEM PROMPT" section of the prompts file.
 
-**Contexto para la generación:** Antes de generar cada output, Claude debe tener en mente:
-- El system prompt (actuar como Product Manager + Systems Designer)
-- Los 3 archivos de input (idea, ejemplos, restricciones)
-- Todos los outputs generados hasta el momento (cada output puede referenciar los anteriores)
+**Context for generation:** Before generating each output, Claude should keep in mind:
+- The system prompt (act as a Product Manager + Systems Designer)
+- The 3 input files (idea, examples, constraints)
+- All outputs generated so far (each output can reference the previous ones)
 
-**Ejecutar outputs 1-7, luego Output 8 (validación), resolver problemas, y finalmente outputs 9-13.**
+**Run outputs 1-7, then Output 8 (validation), resolve problems, and finally outputs 9-13.**
 
-**Para cada output (1-7):**
+**For each output (1-7):**
 
-1. **Verificar si aplica.** El archivo de prompts marca los condicionales con "(SKIP)". Si dice SKIP, saltarlo.
+1. **Check whether it applies.** The prompts file marks conditionals with "(SKIP)". If it says SKIP, skip it.
 
-2. **Verificar si ya existe.** Si el archivo de destino ya existe (de una ejecución anterior parcial), preguntar si re-generar o saltar.
+2. **Check whether it already exists.** If the destination file already exists (from an earlier partial run), ask whether to regenerate or skip.
 
-3. **Generar el output.** Usar el prompt correspondiente del archivo de prompts. Aplicar el system prompt como contexto. Incluir los 3 archivos de input y todos los outputs anteriores como referencia.
+3. **Generate the output.** Use the corresponding prompt from the prompts file. Apply the system prompt as context. Include the 3 input files and all previous outputs as reference.
 
-4. **Guardar en** `.discipline/step1-outputs/<note_title>.md`
+4. **Save to** `.discipline/step1-outputs/<note_title>.md`
 
-5. **Reportar:** `✓ Output N/13: <nombre>`
+5. **Report:** `✓ Output N/13: <name>`
 
-**Output 8 - Validación cruzada (tratamiento especial):**
+**Output 8 - Cross-validation (special handling):**
 
-**Importante: usar Extended Thinking para este output.** La cross-validation es un quality gate critico. Incluir "think deeply about inconsistencies" para activar razonamiento profundo. El valor de este output es detectar errores que la generacion de outputs 1-7 introdujo sin darse cuenta.
+**Important: use Extended Thinking for this output.** The cross-validation is a critical quality gate. Include "think deeply about inconsistencies" to trigger deep reasoning. The value of this output is catching errors that the generation of outputs 1-7 introduced without noticing.
 
-Generar el Output 8 usando el prompt de validación. Este prompt le pide revisar todos los outputs 1-7 buscando inconsistencias.
+Generate Output 8 using the validation prompt. This prompt asks it to review all of outputs 1-7 looking for inconsistencies.
 
-Guardar en `.discipline/step1-outputs/10_Validation.md`. Luego analizar el contenido:
+Save to `.discipline/step1-outputs/10_Validation.md`. Then analyze the content:
 
-- **Si NO hay inconsistencias**: reportar `✓ Output 8/13: Validación - sin inconsistencias` y continuar a outputs 9-13.
+- **If there are NO inconsistencies**: report `✓ Output 8/13: Validation - no inconsistencies` and continue to outputs 9-13.
 
-- **Si HAY inconsistencias (sin importar si parecen menores o graves)**:
-  **OBLIGATORIO: corregir TODAS las inconsistencias ANTES de continuar a outputs 9-13.** No posponer correcciones para después. No juzgar si son "menores". Los packets 9-13 se construyen sobre los outputs 1-7; si hay errores, se propagan.
-  1. Reportar: `⚠ Output 8: N inconsistencias detectadas. Corrigiendo antes de generar packets...`
-  2. Para cada output afectado (1-7), regenerar el output completo aplicando las correcciones indicadas por la validación.
-  3. Sobrescribir el archivo en `.discipline/step1-outputs/` con la versión corregida.
-  4. Reportar: `✓ Output N corregido: <nombre>`
-  5. **NO continuar a outputs 9-13 hasta que todas las correcciones estén aplicadas.**
+- **If there ARE inconsistencies (whether they seem minor or serious)**:
+  **MANDATORY: fix ALL inconsistencies BEFORE continuing to outputs 9-13.** Do not defer fixes for later. Do not judge whether they are "minor". Packets 9-13 are built on top of outputs 1-7; if there are errors, they propagate.
+  1. Report: `⚠ Output 8: N inconsistencies detected. Fixing before generating packets...`
+  2. For each affected output (1-7), regenerate the entire output applying the fixes indicated by the validation.
+  3. Overwrite the file in `.discipline/step1-outputs/` with the corrected version.
+  4. Report: `✓ Output N corrected: <name>`
+  5. **Do NOT continue to outputs 9-13 until all fixes are applied.**
 
-**Para cada output (9-13), después de resolver validación:**
+**For each output (9-13), after resolving validation:**
 
-Misma lógica que 1-7, pero guardar en ubicaciones diferentes:
-   - Outputs 9-13: guardar en `.discipline/packets/<packet_file>.md`
-   - Output 12: agregar `STATUS: borrador` al inicio del archivo
-   - Output 13: separar en `DISCIPLINE_MD_READY_BLOCK.md` + `TASK_PLAN_READY_BLOCK.md`
+Same logic as 1-7, but save to different locations:
+   - Outputs 9-13: save to `.discipline/packets/<packet_file>.md`
+   - Output 12: add `STATUS: draft` at the top of the file
+   - Output 13: split into `DISCIPLINE_MD_READY_BLOCK.md` + `TASK_PLAN_READY_BLOCK.md`
 
-**Referencia de outputs y destinos:**
+**Reference of outputs and destinations:**
 
-| Output | Nota | Archivo | Destino |
+| Output | Note | File | Destination |
 |---|---|---|---|
 | 1 | PRD | `03_PRD.md` | `.discipline/step1-outputs/` |
 | 2 | User Stories | `04_User_Stories.md` | `.discipline/step1-outputs/` |
@@ -254,53 +254,53 @@ Misma lógica que 1-7, pero guardar en ubicaciones diferentes:
 | 7 | Export for Discipline Loop | `09_Export_for_DisciplineLoop.md` | `.discipline/step1-outputs/` |
 | 8 | Validation | `10_Validation.md` | `.discipline/step1-outputs/` |
 | 9 | STEP_2_ARCHITECTURE_PACKET | `STEP_2_ARCHITECTURE_PACKET.md` | `.discipline/packets/` |
-| 10 | STEP_2_5_AI_PACKET | `STEP_2_5_AI_PACKET.md` | `.discipline/packets/` (solo si AI_FEATURES=enabled) |
-| 11 | STEP_3_STITCH_PACKET | `STEP_3_STITCH_PACKET.md` | `.discipline/packets/` (solo si LANE no es BACKEND ni CLI) |
-| 12 | STEP_4_EXECUTION_PACKET | `STEP_4_EXECUTION_PACKET.borrador.md` | `.discipline/packets/` (con STATUS: borrador) |
+| 10 | STEP_2_5_AI_PACKET | `STEP_2_5_AI_PACKET.md` | `.discipline/packets/` (only if AI_FEATURES=enabled) |
+| 11 | STEP_3_STITCH_PACKET | `STEP_3_STITCH_PACKET.md` | `.discipline/packets/` (only if LANE is not BACKEND or CLI) |
+| 12 | STEP_4_EXECUTION_PACKET | `STEP_4_EXECUTION_PACKET.draft.md` | `.discipline/packets/` (with STATUS: draft) |
 | 13 | REPO_READY_BLOCKS | `DISCIPLINE_MD_READY_BLOCK.md` + `TASK_PLAN_READY_BLOCK.md` | `.discipline/packets/` |
 
-### Fase 3: Post-procesamiento
+### Phase 3: Post-processing
 
 ```bash
 npm run discipline:assemble -- --step 2
 ```
 
-Si AI_FEATURES=enabled:
+If AI_FEATURES=enabled:
 ```bash
 npm run discipline:assemble -- --step 2.5
 ```
 
-Si LANE no es BACKEND ni CLI:
+If LANE is not BACKEND or CLI:
 ```bash
 npm run discipline:assemble -- --step 3
 ```
 
-Aplicar ready blocks al repo:
-- `DISCIPLINE_MD_READY_BLOCK.md` → `discipline.md`
-- `TASK_PLAN_READY_BLOCK.md` → `task_plan.md`
+Apply the ready blocks to the repo:
+- `DISCIPLINE_MD_READY_BLOCK.md` -> `discipline.md`
+- `TASK_PLAN_READY_BLOCK.md` -> `task_plan.md`
 
-Registrar en run-log:
+Record in the run-log:
 ```bash
 npm run discipline:log -- --step 1 --tool "Claude" --notes "Automated via /discipline-step1"
 ```
 
-### Fase 4: Resumen y validación final
+### Phase 4: Summary and final validation
 
-Mostrar al usuario:
-- Cuántos outputs se generaron (de los 13 posibles)
-- Qué packets están listos en `.discipline/packets/`
-- Qué paste-readies se ensamblaron
-- Cuál es el siguiente paso (Paso 2: Arquitectura)
+Show the user:
+- How many outputs were generated (out of the 13 possible)
+- Which packets are ready in `.discipline/packets/`
+- Which paste-readies were assembled
+- What the next step is (Step 2: Architecture)
 
-**Cross-validation final (automática, no preguntar).** Leer todos los packets generados y los outputs de referencia. Buscar inconsistencias entre ellos: datos contradictorios, user stories que no cuadran con el PRD, contratos que no cubren los flujos descritos, switches que no se reflejan en los packets.
+**Final cross-validation (automatic, do not ask).** Read all the generated packets and the reference outputs. Look for inconsistencies among them: contradictory data, user stories that do not line up with the PRD, contracts that do not cover the described flows, switches that are not reflected in the packets.
 
-- Si encuentra inconsistencias: reportar cada una, corregir los archivos afectados directamente, y reportar las correcciones.
-- Si no encuentra inconsistencias: confirmar que todo es coherente.
+- If it finds inconsistencies: report each one, fix the affected files directly, and report the fixes.
+- If it finds no inconsistencies: confirm that everything is consistent.
 
 ---
 
-## Manejo de errores
+## Error handling
 
-- Si `npm run discipline:step1-prep` falla: verificar que `package.json` tiene el script y que las dependencias están instaladas (`npm install`). Si `tsx` no se encuentra, usar `npx tsx`.
-- Si `npm run discipline:assemble` falla: verificar que los packets existen en `.discipline/packets/`.
-- Si un output falla al generarse: guardar cuál falló y continuar con el siguiente. Al final, reportar los outputs faltantes para que el usuario pueda re-ejecutar `/discipline-step1` (los outputs ya completados no se re-generan).
+- If `npm run discipline:step1-prep` fails: check that `package.json` has the script and that the dependencies are installed (`npm install`). If `tsx` is not found, use `npx tsx`.
+- If `npm run discipline:assemble` fails: check that the packets exist in `.discipline/packets/`.
+- If an output fails to generate: record which one failed and continue with the next. At the end, report the missing outputs so the user can re-run `/discipline-step1` (the already-completed outputs are not regenerated).

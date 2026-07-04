@@ -6,12 +6,12 @@ import reactRefresh from 'eslint-plugin-react-refresh'
 import tseslint from 'typescript-eslint'
 
 // Discipline Loop Non-Negotiables enforced via ESLint:
-//   NN #11 AI Studio Lane   -> no-console (salvo warn/error)
+//   NN #11 AI Studio Lane   -> no-console (except warn/error)
 //   NN #18 Error Handling   -> no-empty (no catch {} vacios)
 //   NN #21 TypeScript Strict -> no-explicit-any (error), ban-ts-comment (require descripcion)
-//   NN #24 Accessibility    -> jsx-a11y/* (estatico, prescrito por SOP 64)
+//   NN #24 Accessibility    -> jsx-a11y/* (static, prescribed by SOP 64)
 // Cambios <warn>-first permiten calibrar falsos positivos durante Wave 3.1.
-// Cuando PROFILE=LAUNCH/PROD, el gate debe correr con estas reglas en 'error'.
+// When PROFILE=LAUNCH/PROD, the gate must run these rules as 'error'.
 
 export default tseslint.config(
   { ignores: ['dist'] },
@@ -58,7 +58,7 @@ export default tseslint.config(
           minimumDescriptionLength: 10,
         },
       ],
-      // Discipline Loop NN #24 Accessibility (SOP 64), reglas criticas en error
+      // Discipline Loop NN #24 Accessibility (SOP 64), critical rules as errors
       'jsx-a11y/alt-text': 'error',
       'jsx-a11y/anchor-is-valid': 'error',
       'jsx-a11y/click-events-have-key-events': 'error',
@@ -66,7 +66,7 @@ export default tseslint.config(
       'jsx-a11y/label-has-associated-control': 'error',
     },
   },
-  // Tools, tests y scripts operacionales pueden usar console libremente
+  // Tools, tests, and operational scripts may use console freely
   {
     files: ['tools/**/*.{js,ts}', 'tests/**/*.{js,ts}', 'scripts/**/*.{js,ts}'],
     rules: {

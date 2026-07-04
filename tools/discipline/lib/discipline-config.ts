@@ -6,12 +6,12 @@ import { findSectionBounds } from './anchors.js';
 
 export function readDisciplineConfig(projectRoot: string): DisciplineConfig {
   const disciplinePath = path.join(projectRoot, 'discipline.md');
-  if (!fs.existsSync(disciplinePath)) disciplineError(`discipline.md no encontrado en: ${projectRoot}. ¿Corriste discipline:hydrate?`);
+  if (!fs.existsSync(disciplinePath)) disciplineError(`discipline.md not found in: ${projectRoot}. Did you run discipline:hydrate?`);
 
   const content = fs.readFileSync(disciplinePath, 'utf-8');
   const lines = content.split('\n');
   const bounds = findSectionBounds(lines, '## 0) Profile');
-  if (!bounds) disciplineError(`Sección "## 0) Profile" no encontrada en discipline.md`);
+  if (!bounds) disciplineError(`Section "## 0) Profile" not found in discipline.md`);
 
   const sectionLines = lines.slice(bounds.start, bounds.end);
   const switches: Record<string, string> = {};

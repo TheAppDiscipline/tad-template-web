@@ -14,7 +14,7 @@
  * that column on the same table. Composite indexes with the FK column first
  * satisfy the requirement.
  *
- * Enforces Discipline Loop NN #23.3 (Query Discipline: indices obligatorios en foreign keys).
+ * Enforces Discipline Loop NN #23.3 (Query Discipline: required indexes on foreign keys).
  *
  * Exit 0 = pass, Exit 1 = FK columns missing indexes.
  */
@@ -174,5 +174,5 @@ for (const m of missing) {
   console.log(`    Fix:    CREATE INDEX idx_${m.table}_${m.column} ON public.${m.table} (${m.column});`);
   console.log('');
 }
-console.log('Reference: Discipline Loop NN #23.3 Query Discipline (indices obligatorios en foreign keys).');
+console.log('Reference: Discipline Loop NN #23.3 Query Discipline (required indexes on foreign keys).');
 process.exit(1);

@@ -48,7 +48,7 @@ Return **only** the JSON envelope below as your final message: no prose, no mark
 - `status`: `PASS` = no findings; `WARN` = only moderate/minor findings; `FAIL` = at least one critical finding.
 - `blocking` is always `false`: this subagent flags; the human decides. It never asserts the project is compliant.
 - `location` and `fix` may be `null` (a missing doc has no path; some gaps have no single fix).
-- Mapping: missing privacy policy with data collection, or missing refund policy with payments → `critical`. A legal doc without the "not legal advice / requires a lawyer" disclaimer, or a placeholder left in buyer-facing text → `moderate`. Missing PROD breach runbook or an undocumented support channel → `moderate`. `rule` is a check name (`legal-docs-present`, `legal-disclaimer`, `breach-runbook`, `support-channel`, `vendor-disclosure`); `location` is the doc path or `null` when the doc is absent.
+- Mapping: missing privacy policy with data collection, or missing refund policy with payments -> `critical`. A legal doc without the "not legal advice / requires a lawyer" disclaimer, or a placeholder left in buyer-facing text -> `moderate`. Missing PROD breach runbook or an undocumented support channel -> `moderate`. `rule` is a check name (`legal-docs-present`, `legal-disclaimer`, `breach-runbook`, `support-channel`, `vendor-disclosure`); `location` is the doc path or `null` when the doc is absent.
 
 ## Does not
 

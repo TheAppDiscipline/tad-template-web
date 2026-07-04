@@ -1,253 +1,253 @@
 ---
 name: discipline-step5-slice
-description: "Cierra un slice del Paso 5 con Slice Loop completo: gate verde, Repair Budget enforcement, SLICE_COMPLETION_PACKET emitido, run-log actualizado. Triggers on /discipline-step5-slice or 'cerrar slice' / 'close slice'."
+description: "Close a Step 5 slice with the full Slice Loop: green gate, Repair Budget enforcement, SLICE_COMPLETION_PACKET emitted, run-log updated. Triggers on /discipline-step5-slice or 'close slice' / 'finish slice' / 'wrap up slice'."
 ---
 
-# /discipline-step5-slice - Cerrar un slice del Paso 5 siguiendo Slice Loop
+# /discipline-step5-slice - Close a Step 5 slice following the Slice Loop
 
-Este skill orquesta el cierre formal de un slice ya implementado: corre el gate, aplica Repair Budget si falla (max 3 intentos con escalación de modelo), genera SLICE_COMPLETION_PACKET, registra en run-log.md, y prepara el siguiente paste-ready (paso-4-reentry o paso-6-input).
+This skill orchestrates the formal close-out of an already-implemented slice: it runs the gate, applies the Repair Budget if it fails (max 3 attempts with model escalation), generates SLICE_COMPLETION_PACKET, records the run in run-log.md, and prepares the next paste-ready (step-4-reentry or step-6-input).
 
-NOTA: el Paso 5 (implementacion) sigue siendo iterativo y manual en el daily driver. Este skill NO implementa el slice; solo lo cierra. Si necesitas escribir codigo, usa Claude Code CLI o Cursor directamente.
+NOTE: Step 5 (implementation) is still iterative and manual in the daily driver. This skill does NOT implement the slice; it only closes it. If you need to write code, use the Claude Code CLI or Cursor directly.
 
-## Lo que el usuario ve
+## What the user sees
 
-1. El skill verifica DoR del slice (Definition of Ready en STEP_5_SLICE_PACKET).
-2. Corre `npm run gate` (o variant del lane).
-3. Si falla, aplica Repair Budget: 2 reintentos sin escalar; un 3er intento (modelo más fuerte) solo con razón documentada de por qué más razonamiento puede cambiar el diagnóstico; stop duro después.
-4. Cuando gate verde, genera SLICE_COMPLETION_PACKET con todos los campos.
-5. Si batch listo para deploy, tambien DEPLOY_READINESS_PACKET.
-6. Registra run en `.discipline/run-log.md`.
-7. Genera paste-ready para siguiente paso.
+1. The skill verifies the slice's DoR (Definition of Ready in STEP_5_SLICE_PACKET).
+2. Run `npm run gate` (or the lane variant).
+3. If it fails, it applies the Repair Budget: 2 retries without escalating; a 3rd attempt (stronger model) only with a documented reason for why more reasoning could change the diagnosis; hard stop after that.
+4. When the gate is green, it generates SLICE_COMPLETION_PACKET with all fields.
+5. If the batch is ready to deploy, also DEPLOY_READINESS_PACKET.
+6. Records the run in `.discipline/run-log.md`.
+7. Generates the paste-ready for the next step.
 
-## Prerrequisitos
+## Prerequisites
 
-- `STEP_5_SLICE_PACKET.md` existe en `.discipline/packets/` con DoR claro.
-- Codigo del slice ya implementado (no es trabajo de este skill).
-- `discipline.md`, `task_plan.md`, `findings.md`, `progress.md` actualizados.
-- Repo con `.discipline/` y scripts `discipline:*` disponibles.
+- `STEP_5_SLICE_PACKET.md` exists in `.discipline/packets/` with a clear DoR.
+- The slice code is already implemented (not this skill's job).
+- `discipline.md`, `task_plan.md`, `findings.md`, `progress.md` are up to date.
+- Repo with `.discipline/` and `discipline:*` scripts available.
 
 ---
 
-## Implementacion interna
+## Internal implementation
 
-### Fase 0: Verificar DoR
+### Phase 0: Verify DoR
 
-Leer `.discipline/packets/STEP_5_SLICE_PACKET.md`. Confirmar:
-- Goal definido
-- Scope IN/OUT explicito
+Read `.discipline/packets/STEP_5_SLICE_PACKET.md`. Confirm:
+- Goal defined
+- Scope IN/OUT explicit
 - Contracts (data model, API/IO, interaction surface)
-- Acceptance criteria verificables
-- Risks / edge cases listados
+- Verifiable acceptance criteria
+- Risks / edge cases listed
 
-Si falta DoR, abortar:
+If DoR is missing, abort:
 ```
-DoR incompleto en STEP_5_SLICE_PACKET. Vuelve a /discipline-step4 para refinar la spec antes de cerrar el slice.
+DoR incomplete in STEP_5_SLICE_PACKET. Go back to /discipline-step4 to refine the spec before closing the slice.
 
-Falta: <list de campos>
+Missing: <list of fields>
 ```
 
-### Fase 1: Verificar pre-condiciones
+### Phase 1: Verify preconditions
 
-- `.discipline/patches/pending/` esta vacio (si hay patches, aplicar primero con `npm run discipline:patch`).
-- Cambios en repo coinciden con scope del slice (revisar `git diff --stat`).
-- Archivos tocados estan dentro del scope IN del slice.
+- `.discipline/patches/pending/` is empty (if there are patches, apply them first with `npm run discipline:patch`).
+- Repo changes match the slice's scope (check `git diff --stat`).
+- Touched files are inside the slice's scope IN.
 
-Si patches pendientes:
+If patches are pending:
 ```bash
 npm run discipline:patch
 ```
 
-Si scope desvio detectado:
+If scope drift is detected:
 ```
-El diff incluye archivos fuera del scope IN del slice. Revisar:
-<lista archivos>
+The diff includes files outside the slice's scope IN. Review:
+<file list>
 
-Opciones:
-1. Si son legitimos, actualizar STEP_5_SLICE_PACKET §Scope IN.
-2. Si son drift, revertir y mantener slice acotado.
+Options:
+1. If they are legitimate, update STEP_5_SLICE_PACKET §Scope IN.
+2. If it is drift, revert and keep the slice bounded.
 ```
 
-### Fase 2: Correr gate
+### Phase 2: Run gate
 
-Ejecutar el gate del lane:
+Run the lane gate:
 - Web/Desktop: `npm run gate`
 - Mobile: `npm run gate` (lint + tsc + tests + checks)
 - Extension: `npm run gate`
 
-Capturar exit code y output completo.
+Capture the exit code and the full output.
 
-Si `AI_FEATURES=enabled` (leido de discipline.md):
+If `AI_FEATURES=enabled` (read from discipline.md):
 ```bash
 npm run ai:smoke
 npm run ai:eval
 ```
 
-### Fase 3: Repair Budget si gate falla
+### Phase 3: Repair Budget if the gate fails
 
-**Política (resumen de NN 10 Repair Budget; norma completa en `discipline.md` / vault `02 - Discipline Loop` §Grupo C):** 2 intentos con la misma signature y sin cambio material (evidencia, contexto, hipótesis o estrategia) = stop temprano; **escalar de modelo habilita un único tercer intento solo cuando documentas en `progress.md §Open Errors` (o `run-log.md`) por qué más capacidad de razonamiento puede cambiar el diagnóstico** (no es pase automático), que es lo que hace el Intento 3 de abajo; si la firma apunta a spec, arquitectura, datos o entorno, vuelve al paso productor (Paso 2/4); 3 fallos del mismo gate = stop duro, sin excepción.
+**Policy (summary of NN 10 Repair Budget; full rule in `discipline.md` / the Discipline Loop reference §Group C in The App Discipline vault, sold separately):** 2 attempts with the same signature and no material change (evidence, context, hypothesis, or strategy) = early stop; **escalating the model enables a single third attempt only when you document in `progress.md §Open Errors` (or `run-log.md`) why more reasoning capacity could change the diagnosis** (it is not an automatic pass), which is what Attempt 3 below does; if the signature points to spec, architecture, data, or environment, go back to the producing step (Step 2/4); 3 failures of the same gate = hard stop, no exceptions.
 
-**Intento 1 (gate falla, primera vez):**
-1. Analizar firma del error (TypeScript code, ESLint rule, test name).
-2. Buscar fix directo en los Errores Comunes del Gate del vault.
-3. Si match, aplicar fix manualmente (usuario lo aprueba).
-4. Reintentar: `npm run gate`.
+**Attempt 1 (gate fails, first time):**
+1. Analyze the error signature (TypeScript code, ESLint rule, test name).
+2. Look for a direct fix in the common gate errors reference in the vault (sold separately).
+3. If it matches, apply the fix manually (the user approves it).
+4. Retry: `npm run gate`.
 
-**Intento 2 (mismo error o nuevo):**
-1. Pegar error completo + contexto del slice al modelo actual.
-2. Pedir fix puntual sin agregar features ni dependencias.
-3. Reintentar.
+**Attempt 2 (same error or new one):**
+1. Paste the full error + slice context to the current model.
+2. Ask for a targeted fix without adding features or dependencies.
+3. Retry.
 
-**Intento 3 (escalar modelo, solo con razón documentada):**
-1. Si los 2 intentos previos fallaron con la misma signature, **documenta primero en `progress.md §Open Errors` por qué más capacidad de razonamiento puede cambiar el diagnóstico** (si no puedes, el problema es de spec/arquitectura/datos/entorno: para y vuelve al paso productor). Luego escalar del rol actual a `Premium Reliable - Decisiones Críticas`, o activar el modo de razonamiento fuerte del modelo vigente.
-2. Pegar error + cambios intentados + por que cada uno fallo.
-3. Reintentar.
+**Attempt 3 (escalate the model, only with a documented reason):**
+1. If the previous 2 attempts failed with the same signature, **first document in `progress.md §Open Errors` why more reasoning capacity could change the diagnosis** (if you cannot, the problem is spec/architecture/data/environment: stop and go back to the producing step). Then escalate from the current role to `Premium Reliable - Critical Decisions`, or turn on the strong reasoning mode of the current model.
+2. Paste the error + attempted changes + why each one failed.
+3. Retry.
 
-**Stop duro despues del 3er fallo:**
+**Hard stop after the 3rd failure:**
 ```
-Repair Budget agotado (3 fallos sin info nueva).
+Repair Budget exhausted (3 failures with no new info).
 
-Errores en orden:
+Errors in order:
 1. <signature 1>
 2. <signature 2>
 3. <signature 3>
 
-Causas posibles:
-- Spec del slice incompleta o contradictoria, vuelve a /discipline-step4 con `paso-4-reentry.md`.
-- Cambio de arquitectura necesario, vuelve a /discipline-step2.
-- Bug estructural en deps, revisar `npm audit`.
+Possible causes:
+- Slice spec incomplete or contradictory, go back to /discipline-step4 with `step-4-reentry.md`.
+- Architecture change needed, go back to /discipline-step2.
+- Structural bug in deps, check `npm audit`.
 
-Acciones:
-1. Documentar en progress.md §Open Errors los 3 intentos y signatures.
-2. Decidir: retry con info nueva, o escalar a Paso 2/4.
+Actions:
+1. Document the 3 attempts and signatures in progress.md §Open Errors.
+2. Decide: retry with new info, or escalate to Step 2/4.
 
-NO reintentar este skill hasta tener info nueva.
+Do NOT retry this skill until you have new info.
 ```
 
-Registrar el repair budget usado en SLICE_COMPLETION_PACKET (`REPAIR_BUDGET_USED: N/3`).
+Record the repair budget used in SLICE_COMPLETION_PACKET (`REPAIR_BUDGET_USED: N/3`).
 
-### Fase 4: Manual verification
+### Phase 4: Manual verification
 
-El gate verde no garantiza que el slice funciona desde el lado del usuario. Pedir verificacion manual:
+A green gate does not guarantee the slice works from the user's side. Ask for manual verification:
 
 ```
-Gate verde. Manual verification obligatoria antes de cerrar el slice:
+Gate green. Manual verification is mandatory before closing the slice:
 
-1. Happy path, ¿la accion principal funciona?
-2. Failure path si aplica, ¿el error se muestra al usuario sin crash?
-3. Si FAMILY_SYNC, smoke en 2 dispositivos.
-4. Si UI tiene estados loading/empty/error, ¿se ven correctamente?
+1. Happy path: does the main action work?
+2. Failure path if applicable: is the error shown to the user without a crash?
+3. If FAMILY_SYNC, smoke test on 2 devices.
+4. If the UI has loading/empty/error states, do they render correctly?
 
-Confirma con "manual verification OK" cuando termines, o reporta lo que fallo.
+Confirm with "manual verification OK" when you are done, or report what failed.
 ```
 
-Si manual verification falla, no cerrar el slice. Volver a Fase 2 con info nueva.
+If manual verification fails, do not close the slice. Go back to Phase 2 with new info.
 
-### Fase 5: Generar SLICE_COMPLETION_PACKET
+### Phase 5: Generate SLICE_COMPLETION_PACKET
 
-Escribir `.discipline/packets/SLICE_COMPLETION_PACKET.md` con la estructura canonica del vault (Paso 5 - Implementación, estructura mínima de SLICE_COMPLETION_PACKET):
+Write `.discipline/packets/SLICE_COMPLETION_PACKET.md` using the canonical structure from the vault (Step 5 - Implementation, the minimal SLICE_COMPLETION_PACKET structure, in The App Discipline vault, sold separately):
 
 ```markdown
 ## SLICE_COMPLETION_PACKET
 
 ### Slice
-- <id y nombre>
+- <id and name>
 
 ### Outcome
 - done | partial | blocked
 
 ### Scope delivered
-- <que si quedo implementado>
+- <what actually got implemented>
 
 ### Files touched
-- <archivo 1>
-- <archivo 2>
+- <file 1>
+- <file 2>
 
 ### Gates passed
 - npm run gate
-- <otros smoke/evals si aplica>
+- <other smoke/evals if applicable>
 
 ### Manual verification
 - happy path: OK
 - failure path: OK / N/A
-- dispositivos: <lista>
+- devices: <list>
 
 ### Repair budget used
-- N/3 (con signatures de errores si N>0)
+- N/3 (with error signatures if N>0)
 
 ### Open issues
-- <none o lista>
+- <none or list>
 
 ### Next recommendation
-- <siguiente slice o volver a otro paso>
+- <next slice or go back to another step>
 
 ### Deploy signal
 - not_ready | ready_for_preview | ready_for_production_candidate
 ```
 
-### Fase 6: Deploy signal y posibles outputs
+### Phase 6: Deploy signal and possible outputs
 
-Si `Deploy signal != not_ready`, generar tambien `.discipline/packets/DEPLOY_READINESS_PACKET.md` con la estructura del vault (Paso 5 - Implementación, estructura mínima de DEPLOY_READINESS_PACKET).
+If `Deploy signal != not_ready`, also generate `.discipline/packets/DEPLOY_READINESS_PACKET.md` using the vault structure (Step 5 - Implementation, the minimal DEPLOY_READINESS_PACKET structure, in the vault, sold separately).
 
-Si surgio info nueva:
-- `TASK_PLAN_PATCH_BLOCK` para reordenar slices o agregar uno nuevo.
-- `FINDINGS_APPEND_BLOCK` para riesgos/decisiones nuevas.
-- `DISCIPLINE_MD_PATCH_BLOCK` solo si cambia constitucion (raro).
+If new info came up:
+- `TASK_PLAN_PATCH_BLOCK` to reorder slices or add a new one.
+- `FINDINGS_APPEND_BLOCK` for new risks/decisions.
+- `DISCIPLINE_MD_PATCH_BLOCK` only if the constitution changes (rare).
 
-### Fase 7: Actualizar progress.md y run-log
+### Phase 7: Update progress.md and run-log
 
 ```bash
-npm run discipline:progress      # actualiza progress.md desde SLICE_COMPLETION_PACKET
+npm run discipline:progress      # updates progress.md from SLICE_COMPLETION_PACKET
 npm run discipline:log -- --step 5 --tool "/discipline-step5-slice" --notes "<slice id> closed, repair=<N>/3, deploy=<signal>"
 ```
 
-Si watcher esta corriendo, estos pasos son automaticos. Si no, ejecutarlos manualmente.
+If the watcher is running, these steps are automatic. If not, run them manually.
 
-### Fase 8: Generar paste-ready siguiente
+### Phase 8: Generate the next paste-ready
 
 ```bash
 npm run discipline:assemble
 ```
 
-El assembler decide automaticamente:
-- `paso-4-reentry.md` si `Deploy signal: not_ready` (mas slices por hacer).
-- `paso-6-input.md` si `Deploy signal: ready_for_preview` o `ready_for_production_candidate`.
+The assembler decides automatically:
+- `step-4-reentry.md` if `Deploy signal: not_ready` (more slices to do).
+- `step-6-input.md` if `Deploy signal: ready_for_preview` or `ready_for_production_candidate`.
 
-Reportar al usuario que paste-ready quedo listo y abrir el archivo.
+Report to the user which paste-ready is ready and open the file.
 
-### Fase 9: Resumen
+### Phase 9: Summary
 
 ```
-Paso 5 slice cerrado.
+Step 5 slice closed.
 
 Slice: <id>
 Outcome: done | partial
 Repair budget: <N>/3
 Deploy signal: <signal>
 
-Archivos generados:
+Files generated:
 - SLICE_COMPLETION_PACKET.md
-- DEPLOY_READINESS_PACKET.md (si aplica)
+- DEPLOY_READINESS_PACKET.md (if applicable)
 
-Siguiente: <pega `paste-ready/paso-X-input.md` en /discipline-stepX o continua loop con /discipline-step4>
+Next: <paste `paste-ready/step-X-input.md` into /discipline-stepX or continue the loop with /discipline-step4>
 ```
 
 ---
 
-## Manejo de errores
+## Error handling
 
-- Si STEP_5_SLICE_PACKET no existe: abortar y redirigir a /discipline-step4.
-- Si patches pendientes y `discipline:patch` falla: parar, reportar conflicto, redirigir a la guía Aplicar Patch Blocks del vault.
-- Si gate falla con error fuera de los 20 listados en 81a: aplicar Repair Budget normalmente.
-- Si manual verification se reporta como fallida: actualizar SLICE_COMPLETION_PACKET con `Outcome: partial` o `blocked` y dejar slice abierto para nueva iteracion.
+- If STEP_5_SLICE_PACKET does not exist: abort and redirect to /discipline-step4.
+- If patches are pending and `discipline:patch` fails: stop, report the conflict, redirect to the apply-patch-blocks guide in the vault (sold separately).
+- If the gate fails with an error outside the 20 listed in 81a: apply the Repair Budget normally.
+- If manual verification is reported as failed: update SLICE_COMPLETION_PACKET with `Outcome: partial` or `blocked` and leave the slice open for a new iteration.
 
 ---
 
-## Reglas criticas
+## Critical rules
 
-- Repair Budget no se relaja: 3 intentos sin info nueva = stop duro.
-- Manual verification no es opcional. Gate verde no implica slice done.
-- No tocar codigo de OTRO slice mientras este corre.
-- No actualizar `discipline.md` desde este skill (eso es Paso 2).
-- Si surgen 5+ open issues, el slice probablemente estaba mal definido, vuelve a Paso 4.
-- El skill no escribe codigo del slice. Solo lo cierra.
-- Tiempo objetivo: 5-15 min para cerrar un slice ya implementado.
+- The Repair Budget does not relax: 3 attempts with no new info = hard stop.
+- Manual verification is not optional. A green gate does not mean the slice is done.
+- Do not touch code from ANOTHER slice while this one is running.
+- Do not update `discipline.md` from this skill (that is Step 2).
+- If 5+ open issues come up, the slice was probably poorly defined, go back to Step 4.
+- The skill does not write the slice's code. It only closes it.
+- Target time: 5-15 min to close an already-implemented slice.

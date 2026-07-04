@@ -4,14 +4,14 @@
 - N/A
 
 ## 2) Definition of Ready
-- contracts claros
-- states claros
-- acceptance criteria claros
+- clear contracts
+- clear states
+- clear acceptance criteria
 
 ## 3) Definition of Done
-- gate pasa
-- docs actualizados
-- packet emitido
+- gate passes
+- docs updated
+- packet emitted
 
 ## 4) Ready Slices
 

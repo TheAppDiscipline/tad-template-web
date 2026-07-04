@@ -11,7 +11,7 @@ const model = process.env.LLM_MODEL // optional
 
 const input = {
     request_id: 'smoke-001',
-    user_context: { timezone: 'UTC', locale: 'es-419' },
+    user_context: { timezone: 'UTC', locale: 'en-US' },
     input: { ping: true },
 }
 

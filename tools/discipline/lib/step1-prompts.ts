@@ -1,40 +1,40 @@
 /**
- * Step 1 — All 13 prompts from vault note 20.
+ * Step 1 - All 13 prompts from the public Discipline Loop scaffold.
  * Each prompt is a function that receives the project config and returns the interpolated text.
  * Used by discipline:step1-prep and the /discipline-step1 skill (Claude Code, Sonnet by default).
  */
 import type { DisciplineConfig } from './types.js';
 
-// ─── System prompt ──────
+// System prompt
 
 export function systemPrompt(c: DisciplineConfig): string {
   const stacks: Record<string, string> = {
-    WEB: 'React + Vite + TypeScript + Tailwind (PWA). No sugieras tecnologías móviles nativas.',
-    MOBILE: 'Expo + React Native + TypeScript. Diseña para iOS/Android. No menciones Vite ni PWA.',
-    DESKTOP: 'Tauri + React + Vite + TypeScript. Diseña para ventana de escritorio Mac/Win/Linux.',
-    EXTENSION: 'WXT + React + TypeScript. Manifest V3, cross-browser Chromium + Firefox. Popup (360x480) + options page + background service worker + content script opcional. Patrón canónico: extensión free + sidecar web app para Pro tier.',
-    BACKEND: 'Hono (TypeScript) o FastAPI (Python). Sin UI. Solo endpoints, schemas y contratos de API.',
-    WEB_SSR: 'Next.js + TypeScript (App Router). SSR con backend integrado.',
-    CLI: 'Node.js o Python CLI. Sin UI gráfica. Diseña para terminal y argumentos de línea de comandos.',
+    WEB: 'React + Vite + TypeScript + semantic design tokens (PWA). Do not suggest native mobile technologies.',
+    MOBILE: 'Expo + React Native + TypeScript. Design for iOS/Android. Do not mention Vite or PWA.',
+    DESKTOP: 'Tauri + React + Vite + TypeScript. Design for a Mac/Windows/Linux desktop window.',
+    EXTENSION: 'WXT + React + TypeScript. Manifest V3, cross-browser Chromium + Firefox. Popup (360x480) + options page + background service worker + optional content script. Canonical pattern: free extension + sidecar web app for Pro tier.',
+    BACKEND: 'Hono (TypeScript) or FastAPI (Python). No UI. Only endpoints, schemas, and API contracts.',
+    WEB_SSR: 'Next.js + TypeScript (App Router). SSR with integrated backend.',
+    CLI: 'Node.js or Python CLI. No graphical UI. Design for terminal usage and command-line arguments.',
   };
-  return `Usa mis notas para transformar esta idea en una especificación ejecutable para construir una app con el menor costo posible, lo más rápido posible, con el menor debugging posible.
+  return `Use my notes to transform this idea into an executable specification for building an app with the lowest reasonable cost, the fastest path, and the least debugging.
 
-Quiero que pienses como Product Manager + Systems Designer.
+Think like a Product Manager + Systems Designer.
 
-Reglas:
-- No inventes features que no estén justificadas.
-- Si algo no está claro, asume lo mínimo y márcalo como supuesto.
-- Prioriza MVP brutalmente pequeño.
-- Si la app parece multi-dispositivo o compartida, usa spaces/memberships/roles.
-- Si la app parece solo personal/local, indícalo explícitamente.
-- Si una feature parece "bonita pero no esencial", márcala fuera de alcance del MVP.
-- El stack tecnológico es inamovible según el LANE que ya elegiste. No cambies el stack:
+Rules:
+- Do not invent features that are not justified.
+- If something is unclear, assume the minimum and mark it as an assumption.
+- Prioritize a brutally small MVP.
+- If the app seems multi-device or shared, use spaces/memberships/roles.
+- If the app seems personal/local only, say that explicitly.
+- If a feature seems nice but non-essential, mark it out of scope for the MVP.
+- The technology stack is locked by the LANE already chosen. Do not change the stack:
   - LANE=${c.lane}: ${stacks[c.lane] || stacks.WEB}
 
-Quiero outputs concretos, no teoría.`;
+I want concrete outputs, not theory.`;
 }
 
-// ─── Output metadata ────────────────────────────────────
+// Output metadata
 
 export interface OutputMeta {
   /** 1-based output number */
@@ -54,7 +54,7 @@ export const OUTPUT_META: OutputMeta[] = [
   { number: 4,  noteTitle: '06_UI_States',                    packetFile: null, condition: () => true },
   { number: 5,  noteTitle: '07_Events_and_Notifications',     packetFile: null, condition: () => true },
   { number: 6,  noteTitle: '08_Architecture_Switches',        packetFile: null, condition: () => true },
-  { number: 7,  noteTitle: '09_Export_for_DisciplineLoop',             packetFile: null, condition: () => true },
+  { number: 7,  noteTitle: '09_Export_for_DisciplineLoop',    packetFile: null, condition: () => true },
   { number: 8,  noteTitle: '10_Validation',                   packetFile: null, condition: () => true },
   { number: 9,  noteTitle: '16_STEP_2_ARCHITECTURE_PACKET',   packetFile: 'STEP_2_ARCHITECTURE_PACKET.md', condition: () => true },
   { number: 10, noteTitle: '17_STEP_2_5_AI_PACKET',           packetFile: 'STEP_2_5_AI_PACKET.md', condition: (c) => c.aiFeatures === 'enabled' },
@@ -63,101 +63,101 @@ export const OUTPUT_META: OutputMeta[] = [
   { number: 13, noteTitle: '20_REPO_READY_BLOCKS',            packetFile: null, condition: () => true }, // produces 2 files, handled specially
 ];
 
-// ─── The 13 prompts ─────────────────────────────────────
+// The 13 prompts
 
 export function getPrompt(number: number, _c: DisciplineConfig): string {
   const prompts: Record<number, string> = {
-    1: `Genera un PRD de 1 página con esta estructura exacta:
+    1: `Generate a one-page PRD with this exact structure:
 
 1. North Star:
-   - ¿Cuál es el resultado único deseado de esta app?
-   - Métrica: ¿cómo sabrías que está funcionando? (ej: "X% de usuarios hacen Y en semana 1", "N registros por sesión", "retention a 7 días")
+   - What is the single desired outcome of this app?
+   - Metric: how would you know it is working? (examples: "X% of users do Y in week 1", "N records per session", "7-day retention")
 
-2. Usuario(s) objetivo:
-   - Yo
-   - Mi grupo compartido
-   - Público futuro (si aplica)
+2. Target user(s):
+   - Me
+   - My shared group
+   - Future public audience (if applicable)
 
-3. Problema principal:
-   - ¿Qué dolor resuelve?
+3. Main problem:
+   - What pain does it solve?
 
-4. Solución propuesta:
-   - ¿Qué hace la app en términos simples?
+4. Proposed solution:
+   - What does the app do in simple terms?
 
-5. Alcance MVP:
-   - Qué sí entra en la primera versión
+5. MVP scope:
+   - What is included in the first version
 
-6. Fuera de alcance:
-   - Qué NO entra todavía
+6. Out of scope:
+   - What is NOT included yet
 
-7. Requisitos no funcionales:
-   - costo
-   - velocidad
-   - confiabilidad
-   - privacidad
-   - multi-dispositivo
+7. Non-functional requirements:
+   - cost
+   - speed
+   - reliability
+   - privacy
+   - multi-device
    - PWA/iPhone/PC
 
-8. Pantallas principales:
-   - lista de 3 a 8 pantallas
+8. Main screens:
+   - list of 3 to 8 screens
 
-9. Riesgos y supuestos:
-   - máximo 8`,
+9. Risks and assumptions:
+   - maximum 8`,
 
-    2: `Genera 10–15 user stories priorizadas usando P0 / P1 / P2.
+    2: `Generate 10-15 prioritized user stories using P0 / P1 / P2.
 
-Reglas:
-- Las P0 deben representar el verdadero MVP.
-- Cada story debe poder implementarse en slices pequeños.
-- Evita historias demasiado abstractas.
-- Prioriza historias verticales (que toquen data + API + UI en un solo slice, no "crear todas las tablas" primero).
+Rules:
+- P0 stories must represent the true MVP.
+- Each story must be implementable in small slices.
+- Avoid stories that are too abstract.
+- Prioritize vertical stories (touching data + API + UI in one slice, not "create all tables" first).
 
-Para las P0, agrega criterios Given/When/Then claros y testeables.`,
+For P0 stories, add clear, testable Given/When/Then criteria.`,
 
-    3: `Define el modelo de datos mínimo del MVP.
+    3: `Define the minimum MVP data model.
 
-Instrucciones:
-- Si la app es multi-dispositivo o compartida, usa:
+Instructions:
+- If the app is multi-device or shared, use:
   - spaces
   - memberships
   - roles
-- Si es solo personal/local, dilo explícitamente.
-- Para cada entidad, define:
-  - nombre
-  - propósito
-  - campos
-  - tipos aproximados
-  - relaciones
+- If it is personal/local only, say that explicitly.
+- For each entity, define:
+  - name
+  - purpose
+  - fields
+  - approximate types
+  - relationships
   - timestamps (created_at, updated_at)
-- Regla estricta: si la app es multi-usuario o compartida, TODAS las entidades de negocio deben incluir obligatoriamente el campo space_id.
-- Si una entidad NO necesita space_id, justifica explícitamente por qué.
-- Si aplica, incluye tabla notifications con: id, space_id, user_id, type, payload_json, read_at, created_at.
-- Si aplica sync, usa Last-Write-Wins con updated_at como estrategia MVP.
-- Mantén el modelo lo más pequeño posible.`,
+- Strict rule: if the app is multi-user or shared, ALL business entities must include the space_id field.
+- If an entity does NOT need space_id, explicitly justify why.
+- If applicable, include a notifications table with: id, space_id, user_id, type, payload_json, read_at, created_at.
+- If sync applies, use Last-Write-Wins with updated_at as the MVP strategy.
+- Keep the model as small as possible.`,
 
-    4: `Para cada pantalla principal, define los estados de UI obligatorios:
+    4: `For each main screen, define the required UI states:
 
 - loading
 - empty
 - error
 
-Para cada estado, explica:
-- qué ve el usuario
-- qué acción puede tomar
-- cómo se recupera`,
+For each state, explain:
+- what the user sees
+- what action they can take
+- how recovery works`,
 
-    5: `Lista los eventos del sistema que deberían generar notificaciones in-app si aplica.
+    5: `List the system events that should generate in-app notifications, if applicable.
 
-Para cada evento, define:
-- nombre del evento
-- qué lo dispara
-- payload mínimo
-- quién lo recibe
-- si podría convertirse en push más adelante`,
+For each event, define:
+- event name
+- what triggers it
+- minimum payload
+- who receives it
+- whether it could become push later`,
 
-    6: `Con base en la idea y restricciones, confirma o ajusta los switches de arquitectura para esta app:
+    6: `Based on the idea and constraints, confirm or adjust the architecture switches for this app:
 
-- LANE: WEB | MOBILE | DESKTOP | BACKEND | WEB_SSR | CLI (ya elegido al configurar el proyecto. Confirma que es correcto.)
+- LANE: WEB | MOBILE | DESKTOP | BACKEND | WEB_SSR | CLI (already chosen during project setup. Confirm that it is correct.)
 - PROFILE: LITE | SHARED_SYNC | LAUNCH | PROD
 - BACKEND_PROVIDER: SUPABASE | FIREBASE | LOCAL_ONLY
 - AUTH_MODE: MAGIC_LINK | GOOGLE | GITHUB | EMAIL_PASSWORD | NONE
@@ -165,23 +165,23 @@ Para cada evento, define:
 - SYNC_MODE: FAST_UI | OFFLINE_FIRST
 - AI_FEATURES: none | enabled
 - PUSH_PLUGIN: true | false
-- HOSTING: Vercel | Cloudflare Pages | Netlify | Railway | otro
+- HOSTING: Vercel | Cloudflare Pages | Netlify | Railway | other
 
-Para cada decisión, explica brevemente por qué.
+For each decision, briefly explain why.
 
-Reglas:
-- Para LANE: ya se eligió al configurar el proyecto. Confirma que es correcto para este caso. Si detectas un problema claro, señálalo, pero no cambies el LANE sin justificación fuerte.
-- Si la app es personal y no necesita sync real, considera LOCAL_ONLY.
-- Si la app es multi-dispositivo o compartida, considera SUPABASE o FIREBASE.
-- Si es panel/reportes, favorece VIEW_ONLY.
-- Si es lista/tracker compartido, favorece COLLABORATIVE.
-- Si no hay necesidad clara de IA, recomienda AI_FEATURES=none.
-- Para HOSTING: Vercel para Web/Web SSR, Railway/Fly.io para Backend / Services, EAS para Mobile. Ajustar si hay restricciones.`,
+Rules:
+- For LANE: it was already chosen during project setup. Confirm that it is correct for this case. If you detect a clear problem, call it out, but do not change the LANE without strong justification.
+- If the app is personal and does not need real sync, consider LOCAL_ONLY.
+- If the app is multi-device or shared, consider SUPABASE or FIREBASE.
+- If it is a dashboard/reporting surface, favor VIEW_ONLY.
+- If it is a shared list/tracker, favor COLLABORATIVE.
+- If there is no clear need for AI, recommend AI_FEATURES=none.
+- For HOSTING: Vercel for Web/Web SSR, Railway/Fly.io for Backend / Services, EAS for Mobile. Adjust if constraints require it.`,
 
-    7: `Ahora convierte todo lo anterior en 2 outputs listos para usar:
+    7: `Now convert everything above into 2 ready-to-use outputs:
 
 Output A:
-Un bloque para pegar en discipline.md con:
+A block to paste into discipline.md with:
 - PROFILE
 - BACKEND_PROVIDER
 - AUTH_MODE
@@ -190,79 +190,79 @@ Un bloque para pegar en discipline.md con:
 - AI_FEATURES
 - PUSH_PLUGIN
 - HOSTING
-- modelo de datos resumido
-- reglas clave de acceso
-- reglas clave de sync
-- reglas clave de notificaciones
+- summarized data model
+- key access rules
+- key sync rules
+- key notification rules
 
 Output B:
-Un task_plan.md inicial con:
+An initial task_plan.md with:
 - Slice 0
 - Slice 1
 - Slice 2
 - Slice 3
 - Slice 4
 
-Cada slice debe incluir:
+Each slice must include:
 - Goal
 - Scope IN
 - Scope OUT
 - Acceptance Criteria
-- Riesgos
+- Risks
 - Definition of Done
 
-Reglas:
-- Los slices deben ser verticales y pequeños.
-- Cada slice debe poder hacerse en 0.5 a 2 días.
-- Slice 0 DEBE incluir:
-  - Instalar SDK del provider elegido (ej: npm install @supabase/supabase-js o npm install firebase)
-  - Configurar .env desde el .env.example correspondiente
-  - Ejecutar npm run backend:smoke
-  - Si AI_FEATURES=enabled: instalar LLM SDK(s) y ejecutar npm run ai:smoke
-  - Aplicar migración core si el backend lo requiere`,
+Rules:
+- Slices must be vertical and small.
+- Each slice should fit in 0.5 to 2 days.
+- Slice 0 MUST include:
+  - Install the chosen provider SDK (examples: npm install @supabase/supabase-js or npm install firebase)
+  - Configure .env from the matching .env.example
+  - Run npm run backend:smoke
+  - If AI_FEATURES=enabled: install LLM SDK(s) and run npm run ai:smoke
+  - Apply the core migration if the backend requires it`,
 
-    8: `Revisa todos los outputs que generamos y busca inconsistencias.
+    8: `Review all outputs we generated and look for inconsistencies.
 
-Verifica:
-1. ¿Todas las entidades del modelo de datos están respaldadas por al menos una user story P0 o P1?
-2. ¿Todas las pantallas del PRD tienen estados UI definidos (loading/empty/error)?
-3. ¿Las user stories P0 cubren el alcance MVP del PRD y no se exceden?
-4. ¿El modelo de datos es consistente con el COLLAB_MODE y SYNC_MODE elegidos?
-5. ¿Si es SHARED_SYNC, todas las entidades de negocio tienen space_id?
-6. ¿Los eventos/notificaciones corresponden a acciones reales del modelo de datos?
-7. ¿Hay entidades huérfanas (definidas pero no usadas en ninguna story)?
-8. ¿Hay stories que referencian pantallas o datos que no existen en el modelo?
-9. ¿El Slice 0 tiene todos los pasos de setup necesarios según el BACKEND_PROVIDER?
+Verify:
+1. Are all data model entities backed by at least one P0 or P1 user story?
+2. Do all PRD screens have UI states defined (loading/empty/error)?
+3. Do the P0 user stories cover the MVP scope without exceeding it?
+4. Is the data model consistent with the chosen COLLAB_MODE and SYNC_MODE?
+5. If it is SHARED_SYNC, do all business entities have space_id?
+6. Do events/notifications correspond to real actions in the data model?
+7. Are there orphan entities (defined but unused by any story)?
+8. Are there stories that reference screens or data that do not exist in the model?
+9. Does Slice 0 include all setup steps required by BACKEND_PROVIDER?
 
-Si encuentras problemas, lista cada uno con:
-- qué output tiene el problema
-- cuál es la inconsistencia
-- corrección sugerida`,
+If you find problems, list each one with:
+- which output has the problem
+- what the inconsistency is
+- suggested correction`,
 
-    9: `Ahora genera un único bloque llamado STEP_2_ARCHITECTURE_PACKET.
+    9: `Now generate one block called STEP_2_ARCHITECTURE_PACKET.
 
-Debe ser autocontenido y listo para pegar en el Paso 2.
+It must be self-contained and ready to paste into Step 2.
 
-Incluye, en este orden:
+Include, in this order:
 
 1. PRODUCT SUMMARY
 - North Star
-- problema principal
-- solución propuesta
-- alcance MVP
-- fuera de alcance
+- main problem
+- proposed solution
+- MVP scope
+- out of scope
 
 2. USERS
-- usuarios objetivo
-- si es de uso propio, compartida, multiusuario o futuro público
+- target users
+- whether it is personal, shared, multi-user, or future public use
 
 3. P0 STORIES
-- solo las stories P0 más importantes
+- only the most important P0 stories
 
 4. DATA MODEL SUMMARY
-- entidades mínimas
-- relaciones clave
-- si aplica: spaces, memberships, roles, space_id
+- minimum entities
+- key relationships
+- if applicable: spaces, memberships, roles, space_id
 
 5. ARCHITECTURE SWITCHES
 - LANE
@@ -276,57 +276,57 @@ Incluye, en este orden:
 - HOSTING
 
 6. RISKS / ASSUMPTIONS
-- máximo 8
+- maximum 8
 
 7. MVP BOUNDARY
-- qué NO construir todavía
+- what NOT to build yet
 
-Reglas:
-- Debe caber en un solo bloque pegable.
-- No expliques teoría.
-- No repitas texto innecesario.
-- Formato claro para que un modelo de arquitectura lo pueda consumir directamente.`,
+Rules:
+- It must fit in one pasteable block.
+- Do not explain theory.
+- Do not repeat unnecessary text.
+- Use a clear format that an architecture model can consume directly.`,
 
-    10: `Si AI_FEATURES=enabled, ahora genera un único bloque llamado STEP_2_5_AI_PACKET.
+    10: `If AI_FEATURES=enabled, now generate one block called STEP_2_5_AI_PACKET.
 
-Debe dejar cada feature IA P0 lista para trabajar en AI Studio sin reconstruir contexto.
+It must make each P0 AI feature ready to work on in AI Studio without rebuilding context.
 
-Para cada feature incluye:
+For each feature include:
 
 1. FEATURE_NAME
 2. USER_VALUE
 3. TRIGGER
 4. INPUTS
-- qué datos entran
-- de dónde vienen
-- tamaño o forma esperada
+- what data goes in
+- where it comes from
+- expected size or shape
 5. OUTPUTS
-- qué campos debe producir
-- si requiere JSON estructurado
+- what fields it must produce
+- whether it requires structured JSON
 6. UX_SURFACE
-- en qué pantalla o flujo aparece
+- which screen or flow it appears in
 7. FALLBACK_BEHAVIOR
-- qué pasa si el modelo falla o devuelve output inválido
+- what happens if the model fails or returns invalid output
 8. DATA_SENSITIVITY
-- si toca datos personales, de personas cercanas o sensibles
+- whether it touches personal data, close-person data, or sensitive data
 9. PROVIDER_PREFERENCE
-- gemini | openai | anthropic | por decidir
+- gemini | openai | anthropic | undecided
 10. EVAL_HINTS
-- 3 a 5 casos que sí o sí habría que evaluar
+- 3 to 5 cases that must be evaluated
 11. MVP BOUNDARY
-- qué parte IA sí entra en MVP y qué se pospone
+- which AI part is in the MVP and what is postponed
 
-Reglas:
-- No generes este packet si AI_FEATURES=none.
-- No inventes features IA nuevas.
-- No escribas prompts finales ni schemas todavía.
-- Debe quedar en formato fácil de pegar en el Paso 2.5.`,
+Rules:
+- Do not generate this packet if AI_FEATURES=none.
+- Do not invent new AI features.
+- Do not write final prompts or schemas yet.
+- It must be easy to paste into Step 2.5.`,
 
-    11: `Ahora genera un único bloque llamado STEP_3_STITCH_PACKET.
+    11: `Now generate one block called STEP_3_STITCH_PACKET.
 
-Debe dejar listas las pantallas P0 para Stitch sin que yo tenga que rellenar nada a mano.
+It must make the P0 screens ready for Stitch without requiring manual filling.
 
-Para cada pantalla P0 incluye exactamente:
+For each P0 screen include exactly:
 
 - SCREEN_NAME
 - USER
@@ -334,79 +334,79 @@ Para cada pantalla P0 incluye exactamente:
 - MUST_SHOW
 - PRIMARY_ACTION
 - SECONDARY_ACTIONS
-- ROLE_VARIANTS (si aplica)
+- ROLE_VARIANTS (if applicable)
 - REQUIRED_STATES: normal, loading, empty, error
 
-Reglas:
-- Solo incluir pantallas P0 del MVP.
-- No inventar pantallas nuevas.
-- Debe estar en formato fácil de copiar pantalla por pantalla.
-- Debe poder pegarse casi directo en Stitch.
-- Mobile-first siempre.`,
+Rules:
+- Include only P0 screens from the MVP.
+- Do not invent new screens.
+- It must be easy to copy screen by screen.
+- It should paste almost directly into Stitch.
+- Always mobile-first.`,
 
-    12: `Ahora genera un único bloque llamado STEP_4_EXECUTION_PACKET.
+    12: `Now generate one block called STEP_4_EXECUTION_PACKET.
 
-Debe ser autocontenido y dejar el Paso 4 casi listo, aunque luego el Paso 2 podrá validarlo y reemplazarlo.
+It must be self-contained and leave Step 4 almost ready, even though Step 2 may later validate and replace it.
 
-Incluye, en este orden:
+Include, in this order:
 
 1. PRODUCT SUMMARY
-- objetivo del producto
-- usuario principal
-- caso de uso principal
+- product goal
+- main user
+- main use case
 
 2. MVP BOUNDARY
-- qué sí entra
-- qué no entra todavía
+- what is included
+- what is not included yet
 
 3. ARCHITECTURE LOCKS
-- switches de arquitectura ya elegidos
-- restricciones no negociables del sistema
+- architecture switches already chosen
+- non-negotiable system constraints
 
 4. DATA / ACCESS / SYNC CONTRACTS
-- entidades clave
-- relaciones clave
-- access rules mínimas
-- sync rules mínimas
+- key entities
+- key relationships
+- minimum access rules
+- minimum sync rules
 
 5. SLICE DRAFT
-- Slice 0 a Slice 4
-- goal breve
-- scope tentativo
-- dependencias obvias
+- Slice 0 to Slice 4
+- short goal
+- tentative scope
+- obvious dependencies
 
 6. BOOTSTRAP REQUIREMENTS
-- qué necesita existir primero para arrancar la app
+- what must exist first to start the app
 
 7. UI SURFACE SUMMARY
-- nombres de pantallas P0
+- P0 screen names
 
 8. AI SURFACE SUMMARY
-- features IA P0 si existen
+- P0 AI features, if any
 
 9. RISKS / EDGE CASES
-- máximo 8
+- maximum 8
 
 10. IMPLEMENTATION GUARDRAILS
-- qué no debe reinventarse después
-- qué no debe crecer antes de tiempo
+- what must not be reinvented later
+- what must not grow prematurely
 
-Reglas:
-- No escribas código.
-- No expliques teoría.
-- No repitas el PRD entero.
-- Debe ser consumible por un modelo que expandirá slices.`,
+Rules:
+- Do not write code.
+- Do not explain theory.
+- Do not repeat the entire PRD.
+- It must be consumable by a model that will expand slices.`,
 
-    13: `Ahora genera dos bloques finales con estos nombres exactos:
+    13: `Now generate two final blocks with these exact names:
 
 1. DISCIPLINE_MD_READY_BLOCK
 2. TASK_PLAN_READY_BLOCK
 
-Reglas:
-- Deben quedar listos para pegar en el repo template.
-- No expliques nada fuera de los bloques.
-- DISCIPLINE_MD_READY_BLOCK debe incluir switches, data model resumido, access rules, sync rules y notification rules.
-- TASK_PLAN_READY_BLOCK debe incluir Slice 0 a Slice 4.`,
+Rules:
+- They must be ready to paste into the repo template.
+- Do not explain anything outside the blocks.
+- DISCIPLINE_MD_READY_BLOCK must include switches, summarized data model, access rules, sync rules, and notification rules.
+- TASK_PLAN_READY_BLOCK must include Slice 0 to Slice 4.`,
   };
 
   return prompts[number] || '';

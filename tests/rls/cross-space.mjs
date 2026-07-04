@@ -88,12 +88,12 @@ try {
   const clientA = authedClient(userA.token)
   const clientB = authedClient(userB.token)
 
-  // 1) user B must NOT read user A's notifications (RLS filters silently → empty, not error).
+  // 1) user B must NOT read user A's notifications (RLS filters silently -> empty, not error).
   const readB = await clientB.from('notifications').select('*').eq('space_id', spaceId)
   if (readB.error) failures.push(`B read returned an error instead of empty set: ${readB.error.message}`)
   if ((readB.data ? readB.data.length : 0) > 0) failures.push(`LEAK: user B read ${readB.data.length} of user A's notifications.`)
 
-  // 2) user A SÍ reads their own (sanity: policy is not deny-all).
+  // 2) user A DOES read their own (sanity: policy is not deny-all).
   const readA = await clientA.from('notifications').select('*').eq('space_id', spaceId)
   if (readA.error) failures.push(`A could not read own notifications: ${readA.error.message}`)
   if ((readA.data ? readA.data.length : 0) < 1) failures.push('user A could not read their own notification (policy is deny-all?).')

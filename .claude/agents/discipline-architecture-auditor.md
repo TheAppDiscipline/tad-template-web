@@ -51,7 +51,7 @@ Return **only** the JSON envelope below as your final message: no prose, no mark
 - `status`: `PASS` = no findings; `WARN` = only moderate/minor findings; `FAIL` = at least one critical finding.
 - `blocking` is always `false`: this subagent flags; the human or main agent decides.
 - `location` and `fix` may be `null` (e.g. a project-wide deps-per-slice ratio has no single line, and some observations have no direct fix).
-- Mapping: direct SDK import outside the adapter, or UI importing server-only code, → `critical`. Premature abstraction, speculative flag, or high deps-per-slice → `moderate`. Duplicated logic or a large mixed-concern file → `moderate` or `minor`. `rule` is a check name (`adapter-boundary`, `layering`, `premature-abstraction`, `deps-per-slice`, `duplication`); `location` is the file and line, or `null` for project-wide observations.
+- Mapping: direct SDK import outside the adapter, or UI importing server-only code, -> `critical`. Premature abstraction, speculative flag, or high deps-per-slice -> `moderate`. Duplicated logic or a large mixed-concern file -> `moderate` or `minor`. `rule` is a check name (`adapter-boundary`, `layering`, `premature-abstraction`, `deps-per-slice`, `duplication`); `location` is the file and line, or `null` for project-wide observations.
 
 ## Does not
 

@@ -9,7 +9,7 @@
  *   - *.test.*, *.spec.*, tests/** (test fixtures)
  *   - comments
  *
- * Enforces Discipline Loop NN #17.4 (Security Baseline: HTTPS obligatorio en produccion).
+ * Enforces Discipline Loop NN #17.4 (Security Baseline: HTTPS required in production).
  *
  * Exit 0 = pass, Exit 1 = production HTTP reference detected.
  */
@@ -136,5 +136,5 @@ for (const v of violations) {
   console.log('');
 }
 console.log('Fix: replace http:// with https:// or move to .env / localhost-only paths.');
-console.log('Reference: Discipline Loop NN #17.4 Security Baseline (HTTPS obligatorio en produccion).');
+console.log('Reference: Discipline Loop NN #17.4 Security Baseline (HTTPS required in production).');
 process.exit(1);

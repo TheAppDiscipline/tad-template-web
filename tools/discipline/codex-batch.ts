@@ -233,7 +233,7 @@ async function main() {
           const taskId = await createCodexTask(task.context);
           task.taskId = taskId;
           task.status = 'created';
-          disciplineInfo(`✓ Slice ${task.slice.number} (${task.slice.name}): task created → ${taskId}`);
+          disciplineInfo(`✓ Slice ${task.slice.number} (${task.slice.name}): task created -> ${taskId}`);
         } catch (err) {
           task.status = 'error';
           task.error = err instanceof Error ? err.message : String(err);
@@ -252,7 +252,7 @@ async function main() {
   if (created.length > 0) {
     console.log('\nCreated tasks:');
     for (const t of created) {
-      console.log(`  Slice ${t.slice.number} (${t.slice.name}) → ${t.taskId}`);
+      console.log(`  Slice ${t.slice.number} (${t.slice.name}) -> ${t.taskId}`);
     }
   }
 

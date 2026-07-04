@@ -1,4 +1,4 @@
-// Canonical anchors from note 37 — Anclas del Repo
+// Canonical anchors from note 37 - Repo Anchors
 
 export const DISCIPLINE_MD_ANCHORS = [
   '## 0) Profile',

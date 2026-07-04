@@ -1,126 +1,126 @@
 ---
 name: discipline-init
-description: "One-shot bootstrap for a new Discipline Loop project. Clones the lane template, runs npm install, verifies dependencies, initializes discipline.md with a chosen profile, and produces the first paste-ready. Triggers on /discipline-init <lane>, 'init project', 'crear proyecto'."
+description: "One-shot bootstrap for a new Discipline Loop project. Clones the lane template, runs npm install, verifies dependencies, initializes discipline.md with a chosen profile, and produces the first paste-ready output. Triggers on /discipline-init <lane>, 'init project', 'start template', 'bootstrap a new app'."
 ---
 
-# /discipline-init - Bootstrap one-shot de un proyecto Discipline Loop
+# /discipline-init - One-shot bootstrap of a Discipline Loop project
 
-Este skill es el "Día 0": clona el repo template del lane elegido, instala dependencias, verifica que todo arranca, y deja al usuario listo para correr `/discipline-step0a` (validar idea) o `/discipline-step1` (PRD) según donde esté en el pipeline.
+This skill is "Day 0": it clones the template repo for the chosen lane, installs dependencies, verifies everything boots, and leaves the user ready to run `/discipline-step0a` (validate the idea) or `/discipline-step1` (PRD) depending on where they are in the pipeline.
 
-NOTA: el skill no decide el lane por el usuario. Si dudas qué lane usar, primero corre `/discipline-step0a` (que produce IDEA_VALIDATION_PACKET) y/o consulta la guía de elección de lane del vault. Después invoca este skill con el lane confirmado.
+NOTE: the skill does not pick the lane for the user. If you are unsure which lane to use, first run `/discipline-step0a` (which produces IDEA_VALIDATION_PACKET) and/or consult the lane selection guide in The App Discipline vault (sold separately). Then invoke this skill with the confirmed lane.
 
-## Lo que el usuario ve
+## What the user sees
 
-1. El skill confirma el lane (`web` / `mobile` / `desktop` / `extension`).
-2. Pregunta nombre del proyecto y profile inicial (default `FAMILY_SYNC` por NN #6).
-3. Clona el template oficial desde GitHub al directorio elegido.
-4. Corre `npm install` y verifica que no hay errores de instalación.
-5. Verifica versión Node ≥ 20, Git ≥ 2.40 (según la guía de Setup para No Programadores del vault).
-6. Inicializa `discipline.md §0` con switches según el profile elegido (vía `discipline:hydrate` si el script existe).
-7. Ofrece correr `npm run dev` para verificar arranque.
-8. Sugiere siguiente comando: `/discipline-step0a` (si idea no validada) o `/discipline-step1` (si ya validada).
+1. The skill confirms the lane (`web` / `mobile` / `desktop` / `extension`).
+2. It asks for the project name and initial profile (default `FAMILY_SYNC` per NN #6).
+3. It clones the official template from GitHub into the chosen directory.
+4. It runs `npm install` and verifies there are no install errors.
+5. It checks Node >= 22, Git >= 2.40 (per the non-programmer setup guide in the vault, sold separately).
+6. It initializes `discipline.md §0` with switches based on the chosen profile (via `discipline:hydrate` if the script exists).
+7. It offers to run `npm run dev` to verify the app boots.
+8. It suggests the next command: `/discipline-step0a` (if the idea is not validated) or `/discipline-step1` (if it already is).
 
-## Prerrequisitos
+## Prerequisites
 
-- Node.js >= 20 instalado (verificar con `node --version`).
-- Git instalado (verificar con `git --version`).
-- Conexión a internet (necesaria para clonar template).
-- Para `mobile` lane: opcional `npm install -g eas-cli` para deploys posteriores.
-- Para `desktop` lane: opcional Rust toolchain instalado (Tauri necesita `cargo` para builds nativos).
+- Node.js >= 22 installed (verify with `node --version`).
+- Git installed (verify with `git --version`).
+- Internet connection (needed to clone the template).
+- For the `mobile` lane: optionally `npm install -g eas-cli` for later deploys.
+- For the `desktop` lane: optionally the Rust toolchain installed (Tauri needs `cargo` for native builds).
 
 ---
 
-## Implementacion interna
+## Internal implementation
 
-### Fase 0: Verificar prerequisitos
+### Phase 0: Verify prerequisites
 
-Correr y capturar:
+Run and capture:
 ```bash
-node --version    # debe ser >= 20
-git --version     # debe ser >= 2.40
-npm --version     # debería existir junto con node
+node --version    # must be >= 22
+git --version     # must be >= 2.40
+npm --version     # should exist alongside node
 ```
 
-Si node < 20 o git ausente:
+If node < 22 or git is missing:
 ```
-Prerequisitos faltantes:
-- <lista>
+Missing prerequisites:
+- <list>
 
-Antes de continuar, instala lo que falta:
-1. Node.js >= 20: https://nodejs.org/en/download
+Before continuing, install what is missing:
+1. Node.js >= 22: https://nodejs.org/en/download
 2. Git: https://git-scm.com/downloads
 
-Si eres no-programador, ver las instrucciones paso a paso de Setup para No Programadores en el vault.
+If you are a non-programmer, see the step-by-step non-programmer setup guide in the vault (sold separately).
 ```
 
-Detener si falta algo.
+Stop if anything is missing.
 
-### Fase 1: Recoger inputs
+### Phase 1: Gather inputs
 
-Pedir al usuario:
-- **Lane** (web / mobile / desktop / extension). Si no se pasó como argumento, preguntar.
-- **Nombre del proyecto** (slug-friendly, ej: `mi-app`).
-- **Directorio destino** (default: directorio actual + nombre de proyecto).
-- **Profile inicial** (default FAMILY_SYNC; opciones: LITE, FAMILY_SYNC, LAUNCH, PROD). Si LITE, ofrecer también `BACKEND_PROVIDER=LOCAL_ONLY`.
+Ask the user for:
+- **Lane** (web / mobile / desktop / extension). If it was not passed as an argument, ask.
+- **Project name** (slug-friendly, e.g. `my-app`).
+- **Target directory** (default: current directory + project name).
+- **Initial profile** (default FAMILY_SYNC; options: LITE, FAMILY_SYNC, LAUNCH, PROD). If LITE, also offer `BACKEND_PROVIDER=LOCAL_ONLY`.
 
-Validar:
-- Lane es uno de los 4 oficiales.
-- Nombre slug-friendly (regex `/^[a-z0-9-]+$/`).
-- Directorio destino no existe o está vacío.
+Validate:
+- Lane is one of the 4 official lanes.
+- Name is slug-friendly (regex `/^[a-z0-9-]+$/`).
+- Target directory does not exist or is empty.
 
-### Fase 2: Mapear lane a template URL
+### Phase 2: Map lane to template URL
 
-| Lane | URL del template | Nota |
+| Lane | Template URL | Note |
 |---|---|---|
-| `web` | `https://github.com/TheAppDiscipline/tad-template-web.git` | React + Vite + TS, default si dudas |
+| `web` | `https://github.com/TheAppDiscipline/tad-template-web.git` | React + Vite + TS, default if unsure |
 | `mobile` | `https://github.com/TheAppDiscipline/tad-template-mobile.git` | Expo + React Native + TS |
 | `desktop` | `https://github.com/TheAppDiscipline/tad-template-desktop.git` | Tauri v2 + React + Vite |
 | `extension` | `https://github.com/TheAppDiscipline/tad-template-extension.git` | WXT + React + TS, MV3 |
 
-### Fase 3: Clonar template
+### Phase 3: Clone the template
 
 ```bash
 git clone --depth 1 <template-url> <project-dir>
 cd <project-dir>
-rm -rf .git    # quitar historia del template
+rm -rf .git    # remove the template's history
 git init
 git add .
 git commit -m "Initial commit from tad-template-<lane>"
 ```
 
-Si falla el clone (network, repo private):
-- Para repos privados, sugerir `gh auth login` o `git config --global credential.helper`.
-- Para problemas de network, sugerir `git clone https://...` con `--config http.proxy=` si aplica.
+If the clone fails (network, private repo):
+- For private repos, suggest `gh auth login` or `git config --global credential.helper`.
+- For network problems, suggest `git clone https://...` with `--config http.proxy=` if it applies.
 
-### Fase 4: Instalar dependencias
+### Phase 4: Install dependencies
 
 ```bash
 cd <project-dir>
 npm install
 ```
 
-Capturar warnings y errores. Si npm install falla:
-- Limpiar cache: `npm cache clean --force` y reintentar.
-- Si persiste, mostrar error y referir al usuario a la sección de Errores Comunes del Gate (Windows / entorno local) del vault o el equivalente del SO.
+Capture warnings and errors. If npm install fails:
+- Clean the cache: `npm cache clean --force` and retry.
+- If it persists, show the error and point the user to the common gate errors guide (Windows / local environment section) in the vault (sold separately), or the equivalent for their OS.
 
-Verificar que `tools/discipline/` existe y `package.json` tiene scripts `discipline:*`. Si no, el clone falló o el template está corrupto.
+Verify that `tools/discipline/` exists and that `package.json` has `discipline:*` scripts. If not, the clone failed or the template is corrupt.
 
-### Fase 5: Inicializar discipline.md con profile
+### Phase 5: Initialize discipline.md with the profile
 
-Correr:
+Run:
 ```bash
 npm run discipline:hydrate
 ```
 
-Si el script existe (todos los templates oficiales lo tienen post-Wave 3.1), genera `discipline.md` con switches default. Después aplicar patch para ajustar profile si es distinto del default:
+If the script exists (all official templates have it post-Wave 3.1), it generates `discipline.md` with the default switches. Then apply a patch to adjust the profile if it differs from the default:
 
 ```bash
-# Solo si profile != FAMILY_SYNC (default del template)
+# Only if profile != FAMILY_SYNC (the template default)
 echo "<patch block to set PROFILE=<profile>>" > .discipline/patches/pending/init-profile.md
 npm run discipline:patch
 ```
 
-Si `discipline:hydrate` no existe (template antiguo), crear `discipline.md` minimal manualmente con switches:
+If `discipline:hydrate` does not exist (old template), create a minimal `discipline.md` manually with switches:
 
 ```markdown
 # discipline.md
@@ -136,83 +136,83 @@ SYNC_MODE=<fast_ui|server_authoritative|none>
 AI_FEATURES=<enabled|none>
 ```
 
-### Fase 6: Verificar arranque (opcional)
+### Phase 6: Verify boot (optional)
 
-Ofrecer al usuario:
+Offer the user:
 ```
-¿Quieres verificar que arranca? Esto corre `npm run dev` durante 10 segundos para confirmar que el bundler genera la app sin errores. (Y/N)
+Do you want to verify that it boots? This runs `npm run dev` for 10 seconds to confirm the bundler builds the app without errors. (Y/N)
 ```
 
-Si Y, ejecutar `npm run dev &` en background, esperar 10s, verificar:
-- Web/Desktop: HTTP 200 en localhost:5173 o equivalente.
-- Mobile: Expo CLI imprime QR sin errores.
-- Extension: WXT imprime "ready" sin errores.
+If Y, run `npm run dev &` in the background, wait 10s, and verify:
+- Web/Desktop: HTTP 200 on localhost:5173 or equivalent.
+- Mobile: Expo CLI prints the QR without errors.
+- Extension: WXT prints "ready" without errors.
 
-Detener el dev server. Reportar resultado.
+Stop the dev server. Report the result.
 
-### Fase 7: Resumen y siguiente paso
+### Phase 7: Summary and next step
 
 ```
-Proyecto Discipline Loop inicializado en <directorio>.
+Discipline Loop project initialized in <directory>.
 
 Lane: <lane>
 Profile: <profile>
 Switches: <BACKEND, AUTH, SYNC, AI>
 
-Estructura creada:
+Structure created:
 - .discipline/ (packets, patches, paste-ready)
-- .claude/ (skills bundled, settings)
+- .claude/ (bundled skills, settings)
 - discipline.md, task_plan.md, findings.md, progress.md
 - tools/, src/, tests/
 
-Verificación:
+Verification:
 - ✓ Node <version>
 - ✓ Git <version>
-- ✓ npm install completo (<N> paquetes)
-- ✓ tools/discipline/ presente
-<si verificación de arranque corrió:>
-- ✓ npm run dev arranca sin errores
+- ✓ npm install complete (<N> packages)
+- ✓ tools/discipline/ present
+<if the boot verification ran:>
+- ✓ npm run dev boots without errors
 
-Siguiente paso recomendado:
-<si IDEA_VALIDATION_PACKET no existe:>
-1. Validar la idea: `/discipline-step0a` (10-30 min, usa WebSearch real)
-2. Si GO, generar PRD: `/discipline-step1` (30-60 min)
+Recommended next step:
+<if IDEA_VALIDATION_PACKET does not exist:>
+1. Validate the idea: `/discipline-step0a` (10-30 min, uses real WebSearch)
+2. If GO, generate the PRD: `/discipline-step1` (30-60 min)
 
-<si ya tienes idea validada:>
-1. Generar PRD: `/discipline-step1` con tu idea como input.
+<if you already have a validated idea:>
+1. Generate the PRD: `/discipline-step1` with your idea as input.
 
-Para diagnostico del proyecto en cualquier momento: `/discipline-doctor`.
-Catalogo completo de skills: ver la Biblioteca de Skills Discipline Loop en el vault.
+For project diagnostics at any time: `/discipline-doctor`.
+Full skills catalog: see the Discipline Loop skills library in the vault (sold separately).
 
-Bienvenido a Discipline Loop.
+Welcome to Discipline Loop.
 ```
 
-### Fase 8: Logging
+### Phase 8: Logging
 
-Registrar en `findings.md §Audits`:
+Record in `findings.md §Audits`:
 ```markdown
-- <fecha> · /discipline-init · lane=<lane> · profile=<profile> · template=<url> · node=<version>
+- <date> · /discipline-init · lane=<lane> · profile=<profile> · template=<url> · node=<version>
 ```
 
 ---
 
-## Manejo de errores
+## Error handling
 
-- `git clone` falla: ver Fase 3.
-- `npm install` falla: ver Fase 4.
-- Directorio destino ya existe y no está vacío: preguntar si sobreescribir, abortar, o cambiar nombre.
-- Network sin internet: detectar via `ping github.com` o equivalente; advertir usuario.
-- Profile invalido: rechazar y mostrar opciones validas.
-- Lane invalido: rechazar y mostrar los 4 lanes oficiales con descripcion corta.
+- `git clone` fails: see Phase 3.
+- `npm install` fails: see Phase 4.
+- Target directory already exists and is not empty: ask whether to overwrite, abort, or change the name.
+- No internet: detect via `ping github.com` or equivalent; warn the user.
+- Invalid profile: reject and show the valid options.
+- Invalid lane: reject and show the 4 official lanes with a short description.
 
 ---
 
-## Reglas criticas
+## Critical rules
 
-- No sobreescribir un repo existente sin confirmación explícita.
-- No commitear automáticamente más allá del initial commit.
-- No instalar deps opcionales (eas-cli, Rust) a menos que el usuario lo pida explícitamente.
-- No saltar verificación de Node/Git versions; saltarla genera errores misteriosos en pasos posteriores.
-- No asumir que el usuario quiere clonar el último main; ofrecer `--ref` o `--tag` para reproducibilidad si el usuario lo necesita.
-- Tiempo objetivo: 5-15 min total (3-5 clone + install + 30s hydrate + 10s verificación).
-- Para no-programadores, este skill puede ser su PRIMERA invocación. Sé extra explicativo en errores y siguientes pasos.
+- Do not overwrite an existing repo without explicit confirmation.
+- Do not commit automatically beyond the initial commit.
+- Do not install optional deps (eas-cli, Rust) unless the user explicitly asks.
+- Do not skip the Node/Git version check; skipping it produces mysterious errors in later steps.
+- Do not assume the user wants to clone the latest main; offer `--ref` or `--tag` for reproducibility if the user needs it.
+- Target time: 5-15 min total (3-5 clone + install + 30s hydrate + 10s verification).
+- For non-programmers, this skill may be their FIRST invocation. Be extra explanatory in errors and next steps.

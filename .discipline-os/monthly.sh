@@ -7,8 +7,8 @@ echo ""
 
 echo "=== 1/5 Backups verification ==="
 echo "Manual: open your backend provider dashboard (Supabase/Firebase/etc.)"
-echo "  → Database → Backups → confirm last successful backup is <24h old."
-echo "  → If it is older, investigate why (quota? provider outage?) before moving on."
+echo "  -> Database -> Backups -> confirm last successful backup is <24h old."
+echo "  -> If it is older, investigate why (quota? provider outage?) before moving on."
 echo ""
 
 echo "=== 2/5 Bundle audit ==="

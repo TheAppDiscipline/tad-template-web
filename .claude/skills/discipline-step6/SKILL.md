@@ -1,154 +1,154 @@
 ---
 name: discipline-step6
-description: "Automate Discipline Loop Step 6: deploy build candidate, verify with real usage, and produce POST_DEPLOY_FEEDBACK_PACKET. Triggers on /discipline-step6 or 'run step 6' / 'ejecutar paso 6'."
+description: "Automate Discipline Loop Step 6: deploy the build candidate, verify it with real usage, and produce POST_DEPLOY_FEEDBACK_PACKET. Triggers on /discipline-step6 or 'run step 6', 'deploy and verify', 'post-deploy feedback'."
 ---
 
-# /discipline-step6 - Automatizar Paso 6 del pipeline Discipline Loop
+# /discipline-step6 - Automate Step 6 of the Discipline Loop pipeline
 
-Este skill ejecuta el Paso 6 completo: verifica gates, ejecuta build y deploy segun el lane, corre verificacion automatizada si Playwright MCP esta disponible, captura feedback del operador, y produce el POST_DEPLOY_FEEDBACK_PACKET.
+This skill runs the full Step 6: it checks gates, runs the build and deploy for the lane, runs automated verification if the Playwright MCP is available, captures operator feedback, and produces the POST_DEPLOY_FEEDBACK_PACKET.
 
-Este skill es mas interactivo que los anteriores: ejecuta comandos reales y pide confirmacion del operador en varios puntos.
+This skill is more interactive than the previous ones: it runs real commands and asks the operator to confirm at several points.
 
-## Lo que el usuario ve
+## What the user sees
 
-1. El skill verifica que existan los inputs del Paso 5
-2. Corre gates y build
-3. Propone el comando de deploy segun lane y hosting
-4. Ejecuta verificacion post-deploy (Playwright si disponible, manual si no)
-5. Hace preguntas de feedback al operador
-6. Genera POST_DEPLOY_FEEDBACK_PACKET y patch blocks
-7. Ensambla paste-readies y reporta siguiente paso
+1. The skill verifies that the Step 5 inputs exist
+2. Runs gates and build
+3. Proposes the deploy command based on lane and hosting
+4. Runs post-deploy verification (Playwright if available, manual if not)
+5. Asks the operator feedback questions
+6. Generates POST_DEPLOY_FEEDBACK_PACKET and patch blocks
+7. Assembles the paste-readies and reports the next step
 
-## Prerrequisitos
+## Prerequisites
 
-- Paso 5 completado (`DEPLOY_READINESS_PACKET` en `.discipline/packets/`)
-- Build candidata lista (gates pasando)
+- Step 5 completed (`DEPLOY_READINESS_PACKET` in `.discipline/packets/`)
+- Build candidate ready (gates passing)
 - Node.js + npm
-- Credenciales de deploy configuradas segun lane (Vercel, EAS, Railway, etc.)
+- Deploy credentials configured for the lane (Vercel, EAS, Railway, etc.)
 
 ---
 
-## Implementacion interna
+## Internal implementation
 
-### Fase 0: Verificar inputs
+### Phase 0: Verify inputs
 
-Leer estos archivos. Si el obligatorio no existe, detenerse.
+Read these files. If the required one is missing, stop.
 
-**Obligatorio (uno de los dos):**
-1. `.discipline/paste-ready/paso-6-input.md` (preferido)
-2. `.discipline/packets/DEPLOY_READINESS_PACKET.md` (fuente directa)
+**Required (one of the two):**
+1. `.discipline/paste-ready/step-6-input.md` (preferred)
+2. `.discipline/packets/DEPLOY_READINESS_PACKET.md` (direct source)
 
-Si ninguno existe:
+If neither exists:
 ```
-Falta el DEPLOY_READINESS_PACKET. Completa los slices en Paso 5 primero.
+DEPLOY_READINESS_PACKET is missing. Complete the slices in Step 5 first.
 ```
 
-**Contexto del proyecto (leer siempre):**
-3. `discipline.md` — extraer: LANE, PROFILE, HOSTING, AUTH_MODE, BACKEND_PROVIDER, AI_FEATURES
+**Project context (always read):**
+3. `discipline.md` — extract: LANE, PROFILE, HOSTING, AUTH_MODE, BACKEND_PROVIDER, AI_FEATURES
 4. `task_plan.md`
 5. `findings.md`
 6. `progress.md`
 
-**Opcionales (leer si existen):**
-7. `.discipline/packets/STEP_4_EXECUTION_PACKET.md` — para verificar flujos esperados
-8. `.discipline/packets/UI_HANDOFF_PACKET.md` — para verificacion visual
+**Optional (read if they exist):**
+7. `.discipline/packets/STEP_4_EXECUTION_PACKET.md` — to verify expected flows
+8. `.discipline/packets/UI_HANDOFF_PACKET.md` — for visual verification
 
-### Fase 1: Pre-deploy
+### Phase 1: Pre-deploy
 
-**Sub-fase 1A: Gates**
+**Sub-phase 1A: Gates**
 
 ```bash
 npm run gate
 ```
 
-Si AI_FEATURES=enabled:
+If AI_FEATURES=enabled:
 ```bash
 npm run ai:smoke
 ```
 
-Si algun gate falla, detenerse:
+If any gate fails, stop:
 ```
-Gate fallido. Corrige los errores antes de deploy.
-<output del gate>
+Gate failed. Fix the errors before deploying.
+<gate output>
 ```
 
-Reportar: `✓ Pre-deploy: Gates OK`
+Report: `✓ Pre-deploy: Gates OK`
 
-**Sub-fase 1B: Build**
+**Sub-phase 1B: Build**
 
-Ejecutar build segun LANE:
+Run the build for the LANE:
 
-| LANE | Comando de build | Output esperado |
+| LANE | Build command | Expected output |
 |---|---|---|
-| WEB | `npm run build` | `dist/` sin errores |
-| WEB_SSR | `npm run build` | `.next/` sin errores |
-| MOBILE | Sin build local (EAS hace build en la nube) | N/A |
-| DESKTOP | `npm run tauri build` | Bundle nativo |
-| BACKEND | `npm run build` (si existe) | Build sin errores |
-| CLI | `npm run build` (si existe) | Build sin errores |
+| WEB | `npm run build` | `dist/` with no errors |
+| WEB_SSR | `npm run build` | `.next/` with no errors |
+| MOBILE | No local build (EAS builds in the cloud) | N/A |
+| DESKTOP | `npm run tauri build` | Native bundle |
+| BACKEND | `npm run build` (if it exists) | Build with no errors |
+| CLI | `npm run build` (if it exists) | Build with no errors |
 
-Si build falla, detenerse con output del error.
+If the build fails, stop and show the error output.
 
-Reportar: `✓ Pre-deploy: Build OK`
+Report: `✓ Pre-deploy: Build OK`
 
-**Sub-fase 1C: Checklist pre-deploy**
+**Sub-phase 1C: Pre-deploy checklist**
 
-Presentar checklist segun LANE. Pedir confirmacion del operador.
+Present the checklist for the LANE. Ask the operator to confirm.
 
-Para WEB:
+For WEB:
 ```
-Checklist pre-deploy (Web):
-- [ ] Build genera dist/ sin errores ni warnings criticos
-- [ ] manifest.webmanifest tiene nombre e iconos reales (no placeholder)
-- [ ] Service worker registrado en index.html o main.tsx
-- [ ] Variables de entorno apuntan a produccion
-- [ ] .env NO esta en el repo (verificar .gitignore)
+Pre-deploy checklist (Web):
+- [ ] Build produces dist/ with no errors or critical warnings
+- [ ] manifest.webmanifest has a real name and icons (not placeholders)
+- [ ] Service worker registered in index.html or main.tsx
+- [ ] Environment variables point to production
+- [ ] .env is NOT in the repo (check .gitignore)
 
-¿Todo listo? (si/no)
-```
-
-Para MOBILE:
-```
-Checklist pre-deploy (Mobile):
-- [ ] app.json tiene bundleIdentifier real
-- [ ] eas.json configurado con perfiles preview y production
-- [ ] Variables de entorno de produccion configuradas en EAS secrets
-- [ ] Iconos y splash screen reales (no placeholder)
-
-¿Todo listo? (si/no)
+All set? (yes/no)
 ```
 
-Para BACKEND:
+For MOBILE:
 ```
-Checklist pre-deploy (Backend / Services):
-- [ ] Dockerfile valido (si aplica)
-- [ ] GET /health responde 200
-- [ ] Variables de entorno de produccion configuradas en el hosting
-- [ ] CORS configurado con origins explicitos (no *)
+Pre-deploy checklist (Mobile):
+- [ ] app.json has a real bundleIdentifier
+- [ ] eas.json configured with preview and production profiles
+- [ ] Production environment variables configured in EAS secrets
+- [ ] Real icons and splash screen (not placeholders)
 
-¿Todo listo? (si/no)
-```
-
-Para WEB_SSR:
-```
-Checklist pre-deploy (Web SSR):
-- [ ] Build genera .next/ sin errores
-- [ ] Metadata (title, description) actualizados
-- [ ] Variables de entorno configuradas en Vercel/hosting
-- [ ] API routes responden correctamente
-
-¿Todo listo? (si/no)
+All set? (yes/no)
 ```
 
-Para DESKTOP y CLI: adaptar segun su deploy target.
+For BACKEND:
+```
+Pre-deploy checklist (Backend / Services):
+- [ ] Valid Dockerfile (if applicable)
+- [ ] GET /health returns 200
+- [ ] Production environment variables configured in the hosting
+- [ ] CORS configured with explicit origins (not *)
 
-No continuar si el operador dice "no". Preguntar que falta.
+All set? (yes/no)
+```
 
-### Fase 2: Deploy
+For WEB_SSR:
+```
+Pre-deploy checklist (Web SSR):
+- [ ] Build produces .next/ with no errors
+- [ ] Metadata (title, description) updated
+- [ ] Environment variables configured in Vercel/hosting
+- [ ] API routes respond correctly
 
-**Determinar comando de deploy.** Basandose en LANE y HOSTING de discipline.md:
+All set? (yes/no)
+```
 
-| LANE | HOSTING | Comando |
+For DESKTOP and CLI: adapt to their deploy target.
+
+Do not continue if the operator says "no". Ask what is missing.
+
+### Phase 2: Deploy
+
+**Determine the deploy command.** Based on LANE and HOSTING from discipline.md:
+
+| LANE | HOSTING | Command |
 |---|---|---|
 | WEB | Vercel | `npx vercel --prod` |
 | WEB | Cloudflare | `npx wrangler pages deploy dist` |
@@ -156,79 +156,79 @@ No continuar si el operador dice "no". Preguntar que falta.
 | WEB_SSR | Vercel | `npx vercel --prod` |
 | WEB_SSR | Cloudflare | `npx wrangler pages deploy .next` |
 | MOBILE | EAS | `eas build --profile production --platform all` |
-| DESKTOP | GitHub Releases | `npm run tauri build` + upload binaries (ver receta 36e) |
-| EXTENSION | Chrome Web Store + Firefox AMO | `npm run zip` → upload `.output/*-chrome.zip` a CWS ($5 one-time) + `.output/*-firefox.zip` a AMO (gratis). Review 1-5 dias primera vez. Ver receta 36 para Extension. |
-| BACKEND | Railway | `railway up` (default MVP; $5/mes hobby plan) |
-| BACKEND | Fly.io | `fly deploy` (solo edge multi-region con presupuesto; sin free tier desde 2024) |
+| DESKTOP | GitHub Releases | `npm run tauri build` + upload binaries (see recipe 36e) |
+| EXTENSION | Chrome Web Store + Firefox AMO | `npm run zip` -> upload `.output/*-chrome.zip` to CWS ($5 one-time) + `.output/*-firefox.zip` to AMO (free). Review takes 1-5 days the first time. See recipe 36 for Extension. |
+| BACKEND | Railway | `railway up` (default MVP; $5/mo hobby plan) |
+| BACKEND | Fly.io | `fly deploy` (only for edge multi-region with a budget; no free tier since 2024) |
 | CLI | npm | `npm publish` |
 | CLI | PyPI | `python -m twine upload dist/*` |
 
-**Pedir confirmacion antes de ejecutar:**
+**Ask for confirmation before running:**
 
 ```
-Voy a ejecutar el deploy:
-> <comando>
+I'm about to run the deploy:
+> <command>
 
-¿Proceder? (si/no)
+Proceed? (yes/no)
 ```
 
-Ejecutar solo si el operador confirma. Si dice "no", preguntar que prefiere hacer.
+Run only if the operator confirms. If they say "no", ask what they would prefer to do.
 
-Reportar resultado del deploy (exito o error con output).
+Report the deploy result (success, or error with output).
 
-**Sub-fase 2B: Verificacion post-deploy**
+**Sub-phase 2B: Post-deploy verification**
 
-Si Playwright MCP esta disponible y LANE tiene UI (WEB, MOBILE con webview, WEB_SSR, DESKTOP):
+If the Playwright MCP is available and the LANE has a UI (WEB, MOBILE with a webview, WEB_SSR, DESKTOP):
 
-Ejecutar verificacion automatizada. El prompt para Playwright depende del LANE:
+Run automated verification. The prompt for Playwright depends on the LANE:
 
-Para WEB:
+For WEB:
 ```
-Usa Playwright MCP para navegar a [URL de produccion].
-Verifica en orden:
-1. La pagina carga sin errores de consola
-2. Login funciona end-to-end (si AUTH_MODE != NONE)
-3. La accion core del MVP se completa
-4. Navegar a una ruta directa no da 404 (SPA routing)
-5. El estado empty se muestra correctamente
-```
-
-Para WEB_SSR:
-```
-Usa Playwright MCP para navegar a [URL].
-Verifica en orden:
-1. La pagina inicial carga con contenido SSR visible
-2. No hay errores de hidratacion en consola
-3. Login funciona end-to-end (si aplica)
-4. La accion core del MVP se completa
-5. /api/health responde 200
+Use the Playwright MCP to navigate to [production URL].
+Verify in order:
+1. The page loads with no console errors
+2. Login works end-to-end (if AUTH_MODE != NONE)
+3. The core MVP action completes
+4. Navigating to a direct route does not 404 (SPA routing)
+5. The empty state displays correctly
 ```
 
-Si Playwright no esta disponible, reportar:
+For WEB_SSR:
 ```
-Playwright MCP no disponible. Verificacion manual recomendada.
-```
-
-Reportar resultados de verificacion.
-
-### Fase 3: Capturar feedback
-
-Hacer estas preguntas al operador:
-
-```
-Feedback post-deploy:
-
-1. ¿El flujo principal funciono end-to-end? (login → accion core → resultado)
-2. ¿Encontraste algun problema? (bugs, errores, flujos rotos)
-3. ¿Hubo fricciones de UX? (confuso, lento, feo)
-4. ¿Surgieron ideas nuevas de features desde el uso real?
-5. ¿Preocupaciones de arquitectura? (performance, seguridad, datos)
-6. ¿Que deberia pasar ahora? (mas slices / fix bugs / ir a producto)
+Use the Playwright MCP to navigate to [URL].
+Verify in order:
+1. The initial page loads with SSR content visible
+2. No hydration errors in the console
+3. Login works end-to-end (if applicable)
+4. The core MVP action completes
+5. /api/health returns 200
 ```
 
-Esperar respuestas del operador.
+If Playwright is not available, report:
+```
+Playwright MCP not available. Manual verification recommended.
+```
 
-### Fase 4: Generar outputs
+Report the verification results.
+
+### Phase 3: Capture feedback
+
+Ask the operator these questions:
+
+```
+Post-deploy feedback:
+
+1. Did the main flow work end-to-end? (login -> core action -> result)
+2. Did you hit any problems? (bugs, errors, broken flows)
+3. Was there any UX friction? (confusing, slow, ugly)
+4. Did real usage surface any new feature ideas?
+5. Any architecture concerns? (performance, security, data)
+6. What should happen next? (more slices / fix bugs / go to product)
+```
+
+Wait for the operator's answers.
+
+### Phase 4: Generate outputs
 
 **POST_DEPLOY_FEEDBACK_PACKET:**
 
@@ -236,10 +236,10 @@ Esperar respuestas del operador.
 # POST_DEPLOY_FEEDBACK_PACKET
 
 STATUS: ready
-SOURCE_STEP: Paso 6
-GENERATED: <fecha>
+SOURCE_STEP: Step 6
+GENERATED: <date>
 DEPLOY_TYPE: <preview | production>
-DEPLOY_TARGET: <URL o destino>
+DEPLOY_TARGET: <URL or destination>
 
 ## Deploy summary
 - Lane: <LANE>
@@ -249,109 +249,109 @@ DEPLOY_TARGET: <URL o destino>
 - Playwright verification: <passed / skipped / issues found>
 
 ## Main flow status
-<respuesta a pregunta 1>
+<answer to question 1>
 
 ## Issues found
-<respuesta a pregunta 2, estructurada por severidad>
+<answer to question 2, structured by severity>
 
 ## UX frictions
-<respuesta a pregunta 3>
+<answer to question 3>
 
 ## Feature ideas
-<respuesta a pregunta 4>
+<answer to question 4>
 
 ## Architecture concerns
-<respuesta a pregunta 5>
+<answer to question 5>
 
 ## Recommended branch
-<basado en respuesta 6:>
-- Si "mas slices" o "fix bugs": Paso 4 feedback loop
-- Si "ir a producto": Paso 7 productizacion
+<based on answer 6:>
+- If "more slices" or "fix bugs": Step 4 feedback loop
+- If "go to product": Step 7 productization
 ```
 
-Guardar en: `.discipline/packets/POST_DEPLOY_FEEDBACK_PACKET.md`
+Save to: `.discipline/packets/POST_DEPLOY_FEEDBACK_PACKET.md`
 
-**Patch blocks (solo si el feedback cambia backlog o findings):**
+**Patch blocks (only if the feedback changes the backlog or findings):**
 
-Si hay issues, features nuevas o riesgos nuevos:
-- `TASK_PLAN_PATCH_BLOCK`: agregar items nuevos al backlog
-- `FINDINGS_APPEND_BLOCK`: documentar fricciones, riesgos, decisiones
+If there are issues, new features, or new risks:
+- `TASK_PLAN_PATCH_BLOCK`: add new items to the backlog
+- `FINDINGS_APPEND_BLOCK`: document frictions, risks, decisions
 
-Guardar en: `.discipline/patches/pending/`
+Save to: `.discipline/patches/pending/`
 
-### Fase 5: Post-procesamiento
+### Phase 5: Post-processing
 
-Aplicar patches si se generaron:
+Apply the patches if any were generated:
 ```bash
 npm run discipline:patch
 ```
 
-Determinar siguiente paso basandose en el "Recommended branch" del packet:
+Determine the next step based on the "Recommended branch" in the packet:
 
-Si es "Paso 4 feedback loop":
+If it is "Step 4 feedback loop":
 ```bash
 npm run discipline:assemble -- --step 4-feedback
 ```
 
-Si es "Paso 7 productizacion":
+If it is "Step 7 productization":
 ```bash
 npm run discipline:assemble -- --step 7
 ```
 
-Registrar en run-log:
+Log it in the run-log:
 ```bash
-npm run discipline:log -- --step 6 --tool "Claude" --notes "Automated via /discipline-step6. Deploy: <tipo>. Issues: <N>."
+npm run discipline:log -- --step 6 --tool "Claude" --notes "Automated via /discipline-step6. Deploy: <type>. Issues: <N>."
 ```
 
-### Fase 6: Resumen
+### Phase 6: Summary
 
-Mostrar al usuario:
+Show the user:
 
 ```
-Paso 6 completado.
+Step 6 complete.
 
-Deploy: <tipo> a <destino>
+Deploy: <type> to <destination>
 Gates: passed
 Build: clean
-Verificacion: <Playwright passed / manual>
+Verification: <Playwright passed / manual>
 
-Feedback capturado:
+Feedback captured:
 - Issues: <N>
-- Features nuevas: <N>
-- Fricciones: <N>
+- New features: <N>
+- Frictions: <N>
 
-Archivos generados:
+Files generated:
 - .discipline/packets/POST_DEPLOY_FEEDBACK_PACKET.md
-<si aplica:>
-- Patch blocks aplicados: <N>
+<if applicable:>
+- Patch blocks applied: <N>
 
-Siguiente paso:
-<segun branch recomendado>
-- /discipline-step4 (feedback loop) → .discipline/paste-ready/paso-4-feedback.md
-- /discipline-step7 (productizacion) → .discipline/paste-ready/paso-7-input.md
+Next step:
+<based on the recommended branch>
+- /discipline-step4 (feedback loop) -> .discipline/paste-ready/step-4-feedback.md
+- /discipline-step7 (productization) -> .discipline/paste-ready/step-7-input.md
 ```
 
 ---
 
-## Manejo de errores
+## Error handling
 
-- Si `DEPLOY_READINESS_PACKET` no existe: detenerse con "Completa los slices en Paso 5 primero."
-- Si gates fallan: detenerse. No deployar con gates rotos.
-- Si build falla: detenerse. Reportar output del error.
-- Si deploy falla: reportar error, no generar POST_DEPLOY_FEEDBACK_PACKET (no hubo deploy real).
-- Si Playwright no esta disponible: saltar verificacion automatizada, continuar con feedback manual.
-- Si el operador no responde todas las preguntas de feedback: generar el packet con lo disponible. Las preguntas sin respuesta se marcan como "N/A - no evaluado".
-- Si `npm run discipline:patch` o `discipline:assemble` fallan: reportar error y continuar. Los archivos ya estan en `.discipline/packets/`.
+- If `DEPLOY_READINESS_PACKET` does not exist: stop with "Complete the slices in Step 5 first."
+- If gates fail: stop. Do not deploy with broken gates.
+- If the build fails: stop. Report the error output.
+- If the deploy fails: report the error, do not generate POST_DEPLOY_FEEDBACK_PACKET (there was no real deploy).
+- If Playwright is not available: skip automated verification, continue with manual feedback.
+- If the operator does not answer all the feedback questions: generate the packet with what is available. Unanswered questions are marked "N/A - not evaluated".
+- If `npm run discipline:patch` or `discipline:assemble` fail: report the error and continue. The files are already in `.discipline/packets/`.
 
 ---
 
-## Reglas criticas
+## Critical rules
 
-- No deployar sin gates pasando. Nunca. Sin excepciones.
-- No deployar sin confirmacion explicita del operador. El skill propone, el operador aprueba.
-- No inventar feedback. El POST_DEPLOY_FEEDBACK_PACKET refleja lo que el operador dijo, no lo que Claude infiere.
-- No asumir el "recommended branch". Preguntar al operador que quiere hacer despues.
-- Playwright MCP es complementario, no sustituto de verificacion humana.
-- Los comandos de deploy dependen del LANE y HOSTING. Leer ambos de discipline.md, no asumir.
-- Si es el primer deploy del proyecto, incluir verificacion de platform skeleton (manifest, icons, etc.).
-- Registrar TODO en el run-log, incluyendo tipo de deploy, issues encontrados y branch siguiente.
+- Do not deploy without gates passing. Never. No exceptions.
+- Do not deploy without the operator's explicit confirmation. The skill proposes, the operator approves.
+- Do not invent feedback. The POST_DEPLOY_FEEDBACK_PACKET reflects what the operator said, not what Claude infers.
+- Do not assume the "recommended branch". Ask the operator what they want to do next.
+- The Playwright MCP is complementary, not a substitute for human verification.
+- The deploy commands depend on the LANE and HOSTING. Read both from discipline.md, do not assume.
+- If this is the project's first deploy, include verification of the platform skeleton (manifest, icons, etc.).
+- Log EVERYTHING in the run-log, including deploy type, issues found, and the next branch.

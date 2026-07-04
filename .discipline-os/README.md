@@ -1,6 +1,6 @@
 # .discipline-os/ — Maintenance Automation (Discipline Loop)
 
-Scripts to keep solo-builder maintenance from becoming "intention without habit". See vault note `83 - Mantenimiento Solo` for doctrine.
+Scripts to keep solo-builder maintenance from becoming "intention without habit". The doctrine behind them lives in The App Discipline vault (sold separately).
 
 ## Setup
 
@@ -28,7 +28,7 @@ Not auto-added to keep this library non-invasive. You decide which scripts your 
 
 ## Integration options
 
-- **Manual:** calendar reminder → run script → journal in `findings.md §Maintenance`.
+- **Manual:** calendar reminder -> run script -> journal in `findings.md §Maintenance`.
 - **GitHub Actions:** copy the `weekly` body into `.github/workflows/maintenance.yml` with `on: schedule: cron: '0 9 * * 1'` (Mondays 9am UTC).
 - **Pre-commit hook (discouraged for monthly/quarterly):** adds friction to every commit; not recommended.
 

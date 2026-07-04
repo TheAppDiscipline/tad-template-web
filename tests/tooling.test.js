@@ -189,7 +189,7 @@ test('App.tsx exports a valid app root and no longer ships the Vite counter demo
     assert.doesNotMatch(appSource, /count is/)
     // Stable invariant: App.tsx still exports a root component, without pinning a
     // specific shell. Replacing the default shell (per the in-file note) must not
-    // break the gate. See FINDING-01 (Track de Evidencia, Caso 1).
+    // break the gate. See FINDING-01 (Evidence Track, Case 1).
     assert.match(appSource, /export default App/)
 })
 

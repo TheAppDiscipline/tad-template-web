@@ -23,7 +23,7 @@ const projectRoot = resolveProjectRoot(args['project-dir']);
 const filePath = path.join(projectRoot, '.discipline', 'architecture-lock.yaml');
 
 if (!fs.existsSync(filePath)) {
-  disciplineError('.discipline/architecture-lock.yaml not found. Create it from Paso 2 before Gate B.');
+  disciplineError('.discipline/architecture-lock.yaml not found. Create it from Step 2 before Gate B.');
 }
 
 const data = yaml.load(fs.readFileSync(filePath, 'utf8')) as ArchitectureLock | null;

@@ -1,21 +1,21 @@
 #!/usr/bin/env tsx
 /**
- * audit-merge - paso DETERMINISTA del fan-out de verificacion (7.2).
+ * audit-merge - deterministic step of the verification fan-out (7.2).
  *
- * No invoca LLM. El skill /discipline-verify corre los 6 subagentes (eso si es
- * LLM, vive en Claude Code), el agente padre vuelca cada envelope a
- * `.discipline/audits/raw/<ts>/<agent>.json`, y este script:
- *   1. lee los envelopes,
- *   2. strippea fences ```json defensivamente,
- *   3. valida cada uno contra el contrato `discipline.agent_audit.v1` (ajv),
- *   4. computa el status global (FAIL > WARN > PASS),
- *   5. fusiona findings y escribe el reporte.
+ * Does not invoke an LLM. The /discipline-verify skill runs the 6 subagents (that part is
+ * LLM, living in Claude Code), the parent agent writes each envelope to
+ * `.discipline/audits/raw/<ts>/<agent>.json`, and this script:
+ *   1. reads the envelopes,
+ *   2. strips ```json fences defensively,
+ *   3. validates each one against the contract `discipline.agent_audit.v1` (ajv),
+ *   4. computes the global status (FAIL > WARN > PASS),
+ *   5. merges findings and writes the report.
  *
- * Es ADVISORY: un status global FAIL NO hace fallar el proceso (exit 0), salvo
- * que se pase --strict (gate avanzado opt-in para CI). Un envelope que NO cumple
- * schema SI falla (exit 2): es drift del contrato, no una opinion del auditor.
+ * It is ADVISORY: a global FAIL status does NOT fail the process (exit 0), unless
+ * --strict is passed (advanced opt-in gate for CI). An envelope that does NOT match
+ * the schema DOES fail (exit 2): it is contract drift, not an auditor opinion.
  *
- * Uso:
+ * Usage:
  *   tsx tools/discipline/audit-merge.ts --raw-dir <dir> [--out <file>] [--strict]
  */
 import { readFileSync, writeFileSync, readdirSync, existsSync, statSync, mkdirSync } from 'node:fs'
@@ -98,14 +98,14 @@ function fail(msg: string): never {
 }
 
 const args = parseArgs(process.argv.slice(2))
-if (!args.rawDir) fail('falta --raw-dir <dir> (carpeta con los envelopes <agent>.json)')
+if (!args.rawDir) fail('missing --raw-dir <dir> (folder with <agent>.json envelopes)')
 const rawDir = resolve(args.rawDir as string)
-if (!existsSync(rawDir) || !statSync(rawDir).isDirectory()) fail(`--raw-dir no existe o no es carpeta: ${rawDir}`)
+if (!existsSync(rawDir) || !statSync(rawDir).isDirectory()) fail(`--raw-dir does not exist or is not a folder: ${rawDir}`)
 
 const files = readdirSync(rawDir)
   .filter((f) => f.toLowerCase().endsWith('.json'))
   .sort()
-if (files.length === 0) fail(`no hay envelopes *.json en ${rawDir}`)
+if (files.length === 0) fail(`no *.json envelopes in ${rawDir}`)
 
 const ajv = new Ajv({ allErrors: true, strict: false })
 const validate = ajv.compile(ENVELOPE_SCHEMA)
@@ -119,35 +119,35 @@ for (const file of files) {
   try {
     parsed = JSON.parse(extractJson(readFileSync(full, 'utf8')))
   } catch (e) {
-    errors.push(`${file}: JSON invalido (${(e as Error).message})`)
+    errors.push(`${file}: invalid JSON (${(e as Error).message})`)
     continue
   }
   if (!validate(parsed)) {
     const detail = (validate.errors ?? [])
       .map((er) => `${er.instancePath || '/'} ${er.message}`)
       .join('; ')
-    errors.push(`${file}: no cumple discipline.agent_audit.v1 (${detail})`)
+    errors.push(`${file}: does not match discipline.agent_audit.v1 (${detail})`)
     continue
   }
   envelopes.push(parsed as Envelope)
 }
 
 if (errors.length > 0) {
-  console.error('audit-merge: envelopes invalidos (drift del contrato), no se fusiona:')
+  console.error('audit-merge: invalid envelopes (contract drift), not merging:')
   for (const e of errors) console.error(`  - ${e}`)
   process.exit(2)
 }
 
-// Status crudo de los envelopes presentes: FAIL > WARN > PASS.
+// Raw status from present envelopes: FAIL > WARN > PASS.
 const rawStatus: 'PASS' | 'WARN' | 'FAIL' = envelopes.some((e) => e.status === 'FAIL')
   ? 'FAIL'
   : envelopes.some((e) => e.status === 'WARN')
     ? 'WARN'
     : 'PASS'
 
-// Subagentes esperados que NO entregaron envelope (omitidos, no inventados).
-// Una auditoria parcial no debe verse como PASS limpio: sube el status a WARN
-// como minimo y queda explicito en `missing_agents`.
+// Expected subagents that did NOT provide an envelope (omitted, not invented).
+// A partial audit must not look like a clean PASS: raise the status to WARN
+// at minimum and make it explicit in `missing_agents`.
 const present = new Set(envelopes.map((e) => e.agent))
 const missing = (args.expected ?? []).filter((a) => !present.has(a))
 const globalStatus: 'PASS' | 'WARN' | 'FAIL' =
@@ -173,8 +173,8 @@ const report = {
   counts,
   findings: mergedFindings,
   summary:
-    `${globalStatus}: ${envelopes.length} agentes, ${counts.critical} critical, ${counts.moderate} moderate, ${counts.minor} minor` +
-    (missing.length > 0 ? `, ${missing.length} esperados faltantes` : '') +
+    `${globalStatus}: ${envelopes.length} agents, ${counts.critical} critical, ${counts.moderate} moderate, ${counts.minor} minor` +
+    (missing.length > 0 ? `, ${missing.length} missing expected` : '') +
     '.',
 }
 
@@ -184,12 +184,12 @@ const outPath = args.out
 mkdirSync(dirname(outPath), { recursive: true })
 writeFileSync(outPath, JSON.stringify(report, null, 2) + '\n', 'utf8')
 
-// Resumen legible (advisory).
+// Readable summary (advisory).
 console.log(`audit-merge: ${report.summary}`)
 for (const a of report.agents) console.log(`  - ${a.agent}: ${a.status} (${a.finding_count} findings)`)
-if (missing.length > 0) console.log(`  faltantes (esperados, sin envelope): ${missing.join(', ')}`)
-console.log(`  reporte: ${outPath}`)
-console.log('  (advisory: recomienda, no bloquea. Usa --strict para fallar en CI si global=FAIL o faltan esperados.)')
+if (missing.length > 0) console.log(`  missing (expected, no envelope): ${missing.join(', ')}`)
+console.log(`  report: ${outPath}`)
+console.log('  (advisory: recommends, does not block. Use --strict to fail in CI if global=FAIL or expected agents are missing.)')
 
 if (args.strict && (globalStatus === 'FAIL' || missing.length > 0)) process.exit(1)
 process.exit(0)

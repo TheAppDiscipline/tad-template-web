@@ -1,10 +1,10 @@
 import { defineConfig, devices } from '@playwright/test'
 
-// Config dedicado para tests de accesibilidad (tests/a11y/).
-// Separado del config principal (que usa testDir ./tests/e2e) para que
-// `npm run test:a11y` realmente ejecute estos specs y no sea un falso verde.
-// F3-F: el dev server (127.0.0.1:4173) lo maneja tools/run_visual_e2e.mjs, no el webServer
-// de Playwright (cuyo teardown se cuelga en Windows).
+// Dedicated config for accessibility tests (tests/a11y/).
+// Separate from the main config (which uses testDir ./tests/e2e) so that
+// `npm run test:a11y` actually runs these specs and is not a false green.
+// F3-F: the dev server (127.0.0.1:4173) is managed by tools/run_visual_e2e.mjs, not the webServer
+// from Playwright (whose teardown hangs on Windows).
 export default defineConfig({
   testDir: './tests/a11y',
   timeout: 30_000,

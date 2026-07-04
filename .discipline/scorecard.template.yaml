@@ -1,83 +1,83 @@
 # .discipline/scorecard.template.yaml
 #
-# PLANTILLA del scorecard de Gate D (Launch). El validador NO lee este archivo
-# (busca `.discipline/scorecard.yaml`), así que es un punto de arranque inerte.
+# Gate D (Launch) scorecard template. The validator does not read this file;
+# it looks for `.discipline/scorecard.yaml`, so this file is an inert starting point.
 #
-# Cuando prepares LAUNCH (PROFILE=LAUNCH en discipline.md):
-#   1. Copiá este archivo a `.discipline/scorecard.yaml`.
-#   2. Completá cada ítem: `status` (done | not_done | deferred | not_applicable).
-#      Para los CRÍTICOS en `done`, agregá `evidence` (URL, path o descripción verificable).
-#   3. Corré `npm run discipline:validate:launch` hasta que pase (0 errores).
+# When you prepare LAUNCH (PROFILE=LAUNCH in discipline.md):
+#   1. Copy this file to `.discipline/scorecard.yaml`.
+#   2. Fill each item with `status` (done | not_done | deferred | not_applicable).
+#      For critical items marked `done`, add `evidence` (URL, path, or verifiable note).
+#   3. Run `npm run discipline:validate:launch` until it passes with 0 errors.
 #
-# Schema y reglas completas: ver el vault (Launch vs PROD + Scorecard as Code).
+# Complete launch rules are part of The App Discipline vault, sold separately.
 #
-# Reglas que aplica el validador (resumen):
-#   - launch.critical `done` SIN `evidence` -> FAIL.
-#   - launch.critical `not_done` o `deferred` -> FAIL, salvo `blocking: false` (baja a warning).
-#       Para handoffs honestos (infra que todavía no existe en local: deploy público, Sentry,
-#       uptime, HSTS, etc.) usá `deferred` + `blocking: false` + `deferred_reason`.
-#       NUNCA marques `done` algo que no hiciste.
-#   - launch.recommended `deferred` necesita `deferred_reason` + `expires_on` futuro.
+# Validator rule summary:
+#   - launch.critical `done` without `evidence` -> FAIL.
+#   - launch.critical `not_done` or `deferred` -> FAIL, except `blocking: false` (warning).
+#       For honest handoffs (infrastructure that cannot exist locally yet: public deploy,
+#       Sentry, uptime, HSTS, etc.), use `deferred` + `blocking: false` + `deferred_reason`.
+#       Never mark something `done` if you did not actually do it.
+#   - launch.recommended `deferred` requires `deferred_reason` + future `expires_on`.
 #
-# Recién copiado, este scorecard FALLA Gate D a propósito (todo `not_done`): NO está roto.
-# Es el estado correcto hasta que completes cada ítem (status `done` + `evidence`) o lo
-# difieras explícitamente (`deferred` + `blocking: false` + `deferred_reason`).
+# Newly copied, this scorecard intentionally fails Gate D because every item is `not_done`.
+# That is the correct starting state until you complete each item with evidence or defer it
+# explicitly with `blocking: false` and a `deferred_reason`.
 
 meta:
-  project: ""                 # nombre de tu app
+  project: ""                 # your app name
   version: "1.0"
   profile_target: "LAUNCH"
   last_updated: ""            # YYYY-MM-DD
   next_review: ""             # YYYY-MM-DD
 
 # ---------------------------------------------------------------------------
-# Gate D — Launch. Ítems CRÍTICOS (bloquean el lanzamiento público).
+# Gate D - Launch. Critical items block public launch.
 # ---------------------------------------------------------------------------
 launch:
   critical:
     - id: L01
-      name: "Privacy Policy publicada + accesible desde /privacy"
+      name: "Privacy Policy published and reachable from /privacy"
       status: not_done
       evidence: null
       notes: null
 
     - id: L02
-      name: "Terms of Service publicado + accesible desde /terms"
+      name: "Terms of Service published and reachable from /terms"
       status: not_done
       evidence: null
 
     - id: L03
-      name: "Account deletion funcional end-to-end"
+      name: "Account deletion works end-to-end"
       status: not_done
       evidence: null
 
     - id: L04
-      name: "Sentry (o equivalente) recibiendo errores de prod"
+      name: "Sentry or equivalent receives production errors"
       status: not_done
       evidence: null
 
     - id: L05
-      name: "Uptime monitor activo con alerta configurada"
+      name: "Uptime monitor is active with an alert configured"
       status: not_done
       evidence: null
 
     - id: L06
-      name: "HTTPS obligatorio + CORS no '*' + secrets solo en server"
+      name: "HTTPS is required, CORS is not '*', and secrets stay server-side"
       status: not_done
       evidence: null
 
     - id: L06b
-      name: "HSTS header configurado en respuestas HTTPS"
+      name: "HSTS header is configured on HTTPS responses"
       status: not_done
       evidence: null
 
     - id: L07
-      name: "Rollback probado mínimo una vez"
+      name: "Rollback tested at least once"
       status: not_done
       evidence: null
 
     - id: L08
-      name: "Support channel activo + respuesta esperada comunicada"
+      name: "Support channel is active and expected response time is communicated"
       status: not_done
       evidence: null
 
@@ -86,51 +86,52 @@ launch:
       status: not_done
       evidence: null
 
-    # Condicionales: solo aplican si activás el switch en discipline.md.
-    # El validador los exige (CRÍTICO) cuando applies_when es verdadero.
+    # Conditional items apply only when the switch is enabled in discipline.md.
+    # The validator requires them as critical when applies_when is true.
     - id: L16
-      name: "Billing seguro: webhook firmado y verificado, acceso premium chequeado server-side, idempotencia de eventos, y bypass por localStorage probado en negativo"
+      name: "Secure billing: signed webhook verified, premium access checked server-side, event idempotency covered, and localStorage bypass tested negative"
       status: not_done
       evidence: null
       applies_when: "BILLING == true"
-      notes: "Solo si tu app cobra. Marcá `- BILLING: true` en discipline.md. Evidencia: PR/commit del webhook + test de idempotencia + test de bypass denegado."
+      notes: "Only if your app charges money. Set `- BILLING: true` in discipline.md. Evidence: webhook PR/commit, idempotency test, and denied-bypass test."
 
     - id: L17
-      name: "Storage privado verificado: usuario B (incógnito) NO abre el archivo privado de usuario A y el signed URL expira (npm run test:storage:privacy)"
+      name: "Private storage verified: user B in incognito cannot open user A's private file and the signed URL expires (npm run test:storage:privacy)"
       status: not_done
       evidence: null
       applies_when: "UPLOADS == true"
-      notes: "Solo si tu app sube archivos privados. Marcá `- UPLOADS: true` en discipline.md. Evidencia: salida de `npm run test:storage:privacy` + captura del intento denegado."
+      notes: "Only if your app uploads private files. Set `- UPLOADS: true` in discipline.md. Evidence: `npm run test:storage:privacy` output plus a denied-access screenshot."
 
   # -------------------------------------------------------------------------
-  # Ítems RECOMENDADOS (warning si faltan, no bloquean).
+  # Recommended items warn when missing, but do not block launch.
   # -------------------------------------------------------------------------
   recommended:
     - id: L09
-      name: "Analytics activación + retención semana 1"
+      name: "Analytics activation and week-1 retention are measured"
       status: not_done
 
     - id: L10
-      name: "Load test básico (50 usuarios simultáneos)"
+      name: "Basic load test completed with 50 concurrent users"
       status: not_done
 
     - id: L11
-      name: "Lighthouse Performance > 70 mobile"
+      name: "Lighthouse Performance > 70 on mobile"
       status: not_done
 
     - id: L13
-      name: "FAQ o docs públicos para 3 problemas comunes"
+      name: "FAQ or public docs cover 3 common problems"
       status: not_done
 
     - id: L14
-      name: "Status page o mecanismo de comunicación de incidentes"
+      name: "Status page or incident communication mechanism exists"
       status: not_done
 
     - id: L15
-      name: "Logs estructurados (JSON) en backend con user_id + request_id"
+      name: "Structured backend logs include user_id and request_id"
       status: not_done
 
 # ---------------------------------------------------------------------------
-# Gate E — PROD: agregá la sección `prod:` (critical + conditional) recién al
-# preparar PROFILE=PROD. Ver el vault (Launch vs PROD + Scorecard as Code) §3.
+# Gate E - PROD: add a `prod:` section (critical + conditional) only when you
+# prepare PROFILE=PROD. The complete production checklist is part of the full
+# The App Discipline vault, sold separately.
 # ---------------------------------------------------------------------------

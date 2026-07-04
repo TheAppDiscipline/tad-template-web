@@ -66,7 +66,7 @@ Return **only** the JSON envelope below as your final message: no prose, no mark
 - `status`: `PASS` = no findings; `WARN` = only moderate/minor findings; `FAIL` = at least one critical finding.
 - `blocking` is always `false`: this subagent is advisory; it recommends, the human decides whether to block.
 - `location` and `fix` may be `null` (a finding can be global or have no direct fix).
-- Mapping: service/secret key in client code (NN 17.1) → `critical`; secrets committed (NN 17.5) → `critical`; missing RLS on a new table (NN 17.3) → `critical`; missing server-side input validation (NN 17.2), CORS `*` (NN 17.6) or empty `catch` (NN 18) → `moderate`. Severities are lowercase.
+- Mapping: service/secret key in client code (NN 17.1) -> `critical`; secrets committed (NN 17.5) -> `critical`; missing RLS on a new table (NN 17.3) -> `critical`; missing server-side input validation (NN 17.2), CORS `*` (NN 17.6) or empty `catch` (NN 18) -> `moderate`. Severities are lowercase.
 
 ## Does not
 

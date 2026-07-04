@@ -25,7 +25,7 @@ function atomicWriteWithBackup(root: string, filePath: string, content: string):
     fs.copyFileSync(filePath, path.join(backupDir, backupName));
   }
 
-  // Atomic write: tmp → rename
+  // Atomic write: tmp -> rename
   const tmp = filePath + '.tmp';
   fs.writeFileSync(tmp, content, 'utf-8');
   fs.renameSync(tmp, filePath);
@@ -34,10 +34,10 @@ function atomicWriteWithBackup(root: string, filePath: string, content: string):
 export async function applyPatches(root: string, isDryRun = false): Promise<number> {
   const pendingDir = path.join(root, '.discipline', 'patches', 'pending');
   const appliedDir = path.join(root, '.discipline', 'patches', 'applied');
-  if (!fs.existsSync(pendingDir)) { disciplineInfo('No hay directorio .discipline/patches/pending/'); return 0; }
+  if (!fs.existsSync(pendingDir)) { disciplineInfo('No .discipline/patches/pending/ directory.'); return 0; }
 
   const files = fs.readdirSync(pendingDir).filter(f => f.endsWith('.md'));
-  if (files.length === 0) { disciplineInfo('No hay patches pendientes.'); return 0; }
+  if (files.length === 0) { disciplineInfo('No pending patches.'); return 0; }
 
   const patches = files.map(f => {
     const fullPath = path.join(pendingDir, f);
@@ -65,7 +65,7 @@ export async function applyPatches(root: string, isDryRun = false): Promise<numb
       const exists = fs.existsSync(targetPath);
       const anchorOk = exists ? !!findSectionBounds(normalizeLineEndings(fs.readFileSync(targetPath, 'utf-8')).split('\n'), patch.anchor) : false;
       const status = !exists ? 'FAIL (file missing)' : !anchorOk ? 'FAIL (anchor not found)' : 'OK';
-      disciplineInfo(`  [${status}] ${patch.name} → ${patch.targetFile} (${patch.patchMode} at "${patch.anchor}")`);
+      disciplineInfo(`  [${status}] ${patch.name} -> ${patch.targetFile} (${patch.patchMode} at "${patch.anchor}")`);
     }
     disciplineInfo(`\n[DRY-RUN] ${patches.length} patch(es) previewed. No changes made.`);
     return 0;
@@ -119,11 +119,11 @@ export async function applyPatches(root: string, isDryRun = false): Promise<numb
       });
 
       applied++;
-      disciplineInfo(`Applied: ${patch.name} → ${patch.targetFile} (${patch.patchMode} at "${patch.anchor}")`);
+      disciplineInfo(`Applied: ${patch.name} -> ${patch.targetFile} (${patch.patchMode} at "${patch.anchor}")`);
 
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      disciplineError(`Patch failed: ${patch.name} → ${msg}`);
+      disciplineError(`Patch failed: ${patch.name} -> ${msg}`);
 
       // Rollback all previously applied patches in this batch
       if (backupMap.length > 0) {
@@ -153,8 +153,8 @@ export async function applyPatches(root: string, isDryRun = false): Promise<numb
   return applied;
 }
 
-// Solo ejecutar como CLI cuando se invoca directamente (npm run discipline:patch).
-// Cuando se importa desde otro modulo (ej: watch.ts), no auto-ejecutar.
+// Only execute as CLI when invoked directly (npm run discipline:patch).
+// When imported from another module (for example watch.ts), do not auto-execute.
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
   applyPatches(projectRoot, dryRun).catch(e => disciplineError(e.message));

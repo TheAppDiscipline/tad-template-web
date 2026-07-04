@@ -43,11 +43,11 @@ function detectFeedbackBranch(root: string): StepId | null {
 
   const content = fs.readFileSync(packetPath, 'utf-8');
 
-  if (/(recommended branch|branch recomendado)[\s\S]{0,120}(paso 4|step 4|feedback loop|mini-fix|mini fix)/i.test(content)) {
+  if (/recommended branch[\s\S]{0,120}(step 4|feedback loop|mini-fix|mini fix)/i.test(content)) {
     return '4-feedback';
   }
 
-  if (/(recommended branch|branch recomendado)[\s\S]{0,120}(paso 7|step 7|product|producto|hardening)/i.test(content)) {
+  if (/recommended branch[\s\S]{0,120}(step 7|product|hardening)/i.test(content)) {
     return '7';
   }
 
@@ -132,8 +132,8 @@ export async function handlePacket(root: string, filePath: string) {
     }
   }
 
-  // QW-2 audit, auto-loggear cada packet procesado en run-log.md (NN #5).
-  // No falla si logRun lanza, solo registra warning para no detener el watcher.
+  // QW-2 audit, auto-log each processed packet in run-log.md (NN #5).
+  // Does not fail if logRun throws; only logs a warning to avoid stopping the watcher.
   try {
     await logRun(root, {
       step: 'watch',
@@ -200,9 +200,9 @@ export function startWatcher(root: string) {
   });
 }
 
-// --once: health/smoke pass para proyectos recien clonados. Crea el directorio
-// de packets si falta, reporta estado y sale 0. NO abre browser, NO copia al
-// clipboard y NO se queda observando. Pensado para CI / Release Preflight.
+// --once: health/smoke pass for freshly cloned projects. Creates the
+// packets directory if missing, reports status, and exits 0. Does NOT open a browser, does NOT copy to
+// the clipboard, and does NOT keep watching. Intended for CI / Release Preflight.
 function runOnce(root: string) {
   const packetsDir = path.join(root, '.discipline', 'packets');
   if (!fs.existsSync(packetsDir)) fs.mkdirSync(packetsDir, { recursive: true });

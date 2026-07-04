@@ -1,70 +1,70 @@
 ---
 name: discipline-verify
-description: "Opt-in advanced verification fan-out. Runs the Discipline Loop audit subagents in parallel (rls, security, scope, a11y, architecture, legal/product), collects their JSON envelopes, and merges them deterministically into one advisory report. NOT part of npm run gate; requires Claude Code (LLM, costs tokens). Triggers on /discipline-verify, 'fan-out verify', 'verificacion avanzada'."
+description: "Opt-in advanced verification fan-out. Runs the Discipline Loop audit subagents in parallel (rls, security, scope, a11y, architecture, legal/product), collects their JSON envelopes, and merges them deterministically into one advisory report. NOT part of npm run gate; requires Claude Code (LLM, costs tokens). Triggers on /discipline-verify, 'fan-out verify', 'run the audit subagents', 'advanced verification'."
 ---
 
-# /discipline-verify - Fan-out de verificacion (advisory, opt-in)
+# /discipline-verify - Verification fan-out (advisory, opt-in)
 
-Corre los subagentes de auditoria del Discipline Loop **en paralelo** y fusiona sus resultados en un solo reporte. Es **verificacion opt-in / gate avanzado**, NO el gate base: `npm run gate` sigue determinista y LLM-free, y este skill no lo toca.
+Run the Discipline Loop audit subagents **in parallel** and merge their results into a single report. This is **opt-in verification / an advanced gate**, NOT the base gate: `npm run gate` stays deterministic and LLM-free, and this skill does not touch it.
 
-> **Advisory, no auto-bloqueo.** El reporte recomienda; el humano decide. Ningun subagente bloquea por si mismo. `blocking` es siempre `false`.
+> **Advisory, no auto-blocking.** The report recommends; the human decides. No subagent blocks on its own. `blocking` is always `false`.
 
-## Costo y dependencia (leer antes de correr)
+## Cost and dependency (read before running)
 
-- **Requiere Claude Code** (runtime de subagentes). No corre como script de shell ni en un comprador sin agente.
-- **Cuesta tokens:** hasta 6 subagentes (5 en modelo `haiku`, 1 en `sonnet` para arquitectura; security-reviewer es `sonnet`). Corre el subconjunto aplicable al slice, no siempre los 6.
-- La **fusion y validacion** del resultado SI es determinista (`tools/discipline/audit-merge.ts`), sin LLM.
+- **Requires Claude Code** (the subagent runtime). It does not run as a shell script, nor on a buyer's machine without an agent.
+- **Costs tokens:** up to 6 subagents (5 on the `haiku` model, 1 on `sonnet` for architecture; security-reviewer is `sonnet`). Run the subset that applies to the slice, not always all 6.
+- The **merge and validation** of the result IS deterministic (`tools/discipline/audit-merge.ts`), with no LLM.
 
-## Que hace (pasos para el agente)
+## What it does (steps for the agent)
 
-1. **Elige el timestamp** `TS` con formato `YYYYMMDD-HHMMSS` (UTC) y crea la carpeta `.discipline/audits/raw/<TS>/`.
-2. **Elige los subagentes aplicables** segun lo que toco el slice (por defecto, todos los que apliquen):
-   - `discipline-scope-guard` y `discipline-security-reviewer`: casi siempre al cerrar un slice.
-   - `discipline-rls-auditor`: si hubo cambios en `supabase/migrations/`.
-   - `discipline-a11y-checker`: si hubo cambios de UI (`src/**/*.tsx` o estilos).
-   - `discipline-architecture-auditor`: si se agregaron deps, modulos o se toco `src/lib/backend/**`.
-   - `discipline-legal-product-auditor`: si el profile es LAUNCH o PROD, o al productizar.
-3. **Invocalos EN PARALELO** con el tool `Agent()` (varias llamadas en un mismo turno). Un solo writer por slice: este fan-out es solo de VERIFICACION, no escribe codigo de producto.
-4. **Guarda cada envelope** que devuelve un subagente, tal cual, en `.discipline/audits/raw/<TS>/<agent>.json` (un archivo por subagente; el nombre del archivo debe ser el `agent` del envelope). El agente padre escribe estos archivos porque los subagentes no tienen herramienta de escritura uniforme.
-5. **Fusiona deterministicamente**, pasando en `--expected` la lista EXACTA de subagentes que decidiste correr en el paso 2 (separados por coma):
-   ```bash
-   npm run discipline:audit-merge -- \
-     --raw-dir .discipline/audits/raw/<TS> \
-     --expected discipline-scope-guard,discipline-security-reviewer,...
-   ```
-   Esto valida cada envelope contra `discipline.agent_audit.v1`, strippea fences defensivamente, computa el status global y escribe `.discipline/audits/<TS>-fanout.json` + un resumen legible.
-   **`--expected` es importante:** si un subagente que ibas a correr no entrego envelope (fallo u omitido), el merge lo lista en `missing_agents`, sube el status global a `WARN` como minimo, y la auditoria NO se reporta como `PASS` limpio. Sin `--expected`, el merge no puede saber que falto.
-6. **Presenta el resumen** al usuario: status global (`PASS | WARN | FAIL`), conteos por severidad, y los findings `critical` primero. Recuerda que es advisory.
+1. **Pick the timestamp** `TS` in the format `YYYYMMDD-HHMMSS` (UTC) and create the folder `.discipline/audits/raw/<TS>/`.
+2. **Pick the applicable subagents** based on what the slice touched (by default, all that apply):
+    - `discipline-scope-guard` and `discipline-security-reviewer`: almost always when closing a slice.
+    - `discipline-rls-auditor`: if there were changes in `supabase/migrations/`.
+    - `discipline-a11y-checker`: if there were UI changes (`src/**/*.tsx` or styles).
+    - `discipline-architecture-auditor`: if deps or modules were added, or `src/lib/backend/**` was touched.
+    - `discipline-legal-product-auditor`: if the profile is LAUNCH or PROD, or when productizing.
+3. **Invoke them IN PARALLEL** with the `Agent()` tool (several calls in a single turn). One writer per slice: this fan-out is VERIFICATION only, it does not write product code.
+4. **Save each envelope** a subagent returns, verbatim, to `.discipline/audits/raw/<TS>/<agent>.json` (one file per subagent; the filename must be the `agent` from the envelope). The parent agent writes these files because the subagents do not have a uniform write tool.
+5. **Merge deterministically**, passing to `--expected` the EXACT list of subagents you decided to run in step 2 (comma-separated):
+    ```bash
+    npm run discipline:audit-merge -- \
+        --raw-dir .discipline/audits/raw/<TS> \
+        --expected discipline-scope-guard,discipline-security-reviewer,...
+    ```
+    This validates each envelope against `discipline.agent_audit.v1`, strips fences defensively, computes the global status, and writes `.discipline/audits/<TS>-fanout.json` plus a readable summary.
+    **`--expected` matters:** if a subagent you were going to run did not deliver an envelope (failed or was skipped), the merge lists it under `missing_agents`, raises the global status to at least `WARN`, and the audit is NOT reported as a clean `PASS`. Without `--expected`, the merge cannot know that one is missing.
+6. **Present the summary** to the user: global status (`PASS | WARN | FAIL`), counts by severity, and the `critical` findings first. Remember that it is advisory.
 
-## Status global
+## Global status
 
-- `FAIL` si algun subagente devolvio `FAIL` (>=1 finding `critical`).
-- `WARN` si ninguno `FAIL` pero alguno `WARN` (solo `moderate`/`minor`).
-- `PASS` si todos `PASS`.
+- `FAIL` if any subagent returned `FAIL` (>= 1 `critical` finding).
+- `WARN` if none `FAIL` but some `WARN` (only `moderate`/`minor`).
+- `PASS` if all `PASS`.
 
-## Degradacion (sin LLM / errores)
+## Degradation (no LLM / errors)
 
-- Si no hay Claude Code, este skill no puede correr: los subagentes son del runtime LLM. Di esto claro; no finjas un resultado.
-- Si un subagente falla o no devuelve un envelope, NO inventes uno: omite su archivo. Como pasaste `--expected`, el merge lo marcara en `missing_agents` y subira el status a `WARN`, asi la auditoria parcial queda visible en vez de leerse como `PASS`.
-- Si un envelope no cumple `discipline.agent_audit.v1`, `audit-merge` **falla claro (exit 2)** y no fusiona: es drift del contrato, hay que arreglar el subagente, no ignorarlo.
+- If there is no Claude Code, this skill cannot run: the subagents belong to the LLM runtime. Say this clearly; do not fake a result.
+- If a subagent fails or does not return an envelope, do NOT invent one: skip its file. Since you passed `--expected`, the merge will mark it under `missing_agents` and raise the status to `WARN`, so the partial audit stays visible instead of reading as `PASS`.
+- If an envelope does not conform to `discipline.agent_audit.v1`, `audit-merge` **fails clearly (exit 2)** and does not merge: that is contract drift, you have to fix the subagent, not ignore it.
 
-## Uso en CI (opt-in)
+## CI use (opt-in)
 
-Para un gate avanzado opcional en CI, corre el merge con `--strict`: sale con codigo != 0 si el status global es `FAIL`. Sigue sin formar parte de `npm run gate`.
+For an optional advanced gate in CI, run the merge with `--strict`: it exits with a code != 0 if the global status is `FAIL`. It still is not part of `npm run gate`.
 
 ```bash
 npm run discipline:audit-merge -- --raw-dir .discipline/audits/raw/<TS> --strict
 ```
 
-## Prerrequisitos
+## Prerequisites
 
-- Repo con `.discipline/` y los subagentes en `.claude/agents/discipline-*.md`.
-- Claude Code disponible (los subagentes corren via `Agent()`).
-- `tools/discipline/audit-merge.ts` presente (paso determinista de fusion).
+- Repo with `.discipline/` and the subagents in `.claude/agents/discipline-*.md`.
+- Claude Code available (the subagents run via `Agent()`).
+- `tools/discipline/audit-merge.ts` present (the deterministic merge step).
 
-## No hace
+## Does not do
 
-- No forma parte de `npm run gate` ni lo modifica.
-- No aplica fixes ni escribe codigo de producto.
-- No bloquea por si mismo (advisory); el `--strict` para CI es decision explicita del usuario.
-- No garantiza "calidad" ni "compliance": agrega recomendaciones de auditores, nada mas.
+- Not part of `npm run gate` and does not modify it.
+- Does not apply fixes or write product code.
+- Does not block on its own (advisory); the `--strict` for CI is an explicit user decision.
+- Does not guarantee "quality" or "compliance": it adds auditor recommendations, nothing more.

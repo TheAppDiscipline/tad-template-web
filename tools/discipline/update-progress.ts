@@ -81,8 +81,8 @@ function detectNextSlice(taskPlan: string, current: number): string | null {
   return slices.find(s => s.num > current)?.name || null;
 }
 
-// Solo ejecutar como CLI cuando se invoca directamente (npm run discipline:progress).
-// Cuando se importa desde otro modulo (ej: watch.ts), no auto-ejecutar.
+// Only execute as CLI when invoked directly (npm run discipline:progress).
+// When imported from another module (for example watch.ts), do not auto-execute.
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
   updateProgress(projectRoot).catch(e => disciplineError(e.message));

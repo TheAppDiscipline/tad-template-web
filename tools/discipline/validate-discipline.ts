@@ -43,7 +43,7 @@ export function validateDiscipline(root: string): ValidationIssue[] {
   const pendingDir = path.join(root, '.discipline', 'patches', 'pending');
   if (fs.existsSync(pendingDir)) {
     const pending = fs.readdirSync(pendingDir).filter(f => f.endsWith('.md'));
-    if (pending.length > 0) issues.push({ severity: 'error', message: `${pending.length} patch(es) pendiente(s)`, detail: 'npm run discipline:patch' });
+    if (pending.length > 0) issues.push({ severity: 'error', message: `${pending.length} pending patch(es)`, detail: 'npm run discipline:patch' });
   }
 
   checkAnchors(root, 'discipline.md', [...DISCIPLINE_MD_ANCHORS], issues);
@@ -53,7 +53,7 @@ export function validateDiscipline(root: string): ValidationIssue[] {
 
   for (const dir of ['.discipline/packets', '.discipline/patches/pending', '.discipline/patches/applied', '.discipline/paste-ready']) {
     if (!fs.existsSync(path.join(root, dir))) {
-      issues.push({ severity: 'error', message: `Directorio faltante: ${dir}`, detail: 'npm run discipline:hydrate' });
+      issues.push({ severity: 'error', message: `Missing directory: ${dir}`, detail: 'npm run discipline:hydrate' });
     }
   }
 
@@ -137,14 +137,14 @@ function checkProgressLength(root: string, issues: ValidationIssue[]) {
 function checkAnchors(root: string, fileName: string, expected: string[], issues: ValidationIssue[]) {
   const fp = path.join(root, fileName);
   if (!fs.existsSync(fp)) {
-    issues.push({ severity: 'error', message: `Archivo no encontrado: ${fileName}`, detail: 'npm run discipline:hydrate' });
+    issues.push({ severity: 'error', message: `File not found: ${fileName}`, detail: 'npm run discipline:hydrate' });
     return;
   }
 
   const content = fs.readFileSync(fp, 'utf-8');
   for (const anchor of expected) {
     if (!content.includes(anchor)) {
-      issues.push({ severity: 'warning', message: `Anchor faltante en ${fileName}: "${anchor}"`, file: fileName });
+      issues.push({ severity: 'warning', message: `Missing anchor in ${fileName}: "${anchor}"`, file: fileName });
     }
   }
 }
@@ -169,7 +169,7 @@ function checkPacketSemantics(root: string, issues: ValidationIssue[]) {
       issues.push({
         severity: 'error',
         file: fileName,
-        message: `${packetName} debe tener STATUS: ${rules.status}`,
+        message: `${packetName} must have STATUS: ${rules.status}`,
       });
     }
 
@@ -178,7 +178,7 @@ function checkPacketSemantics(root: string, issues: ValidationIssue[]) {
         issues.push({
           severity: 'error',
           file: fileName,
-          message: `${packetName} incompleto: falta ${heading}`,
+          message: `${packetName} incomplete: missing ${heading}`,
         });
       }
     }
@@ -214,11 +214,11 @@ export function showStatus(root: string): void {
 
   console.log('\n=== Discipline Loop Pipeline Status ===\n');
   if (config) {
-    console.log(`Proyecto: ${config.projectName}\nLane: ${config.lane} | Profile: ${config.profile} | Backend: ${config.backendProvider}\n`);
+    console.log(`Project: ${config.projectName}\nLane: ${config.lane} | Profile: ${config.profile} | Backend: ${config.backendProvider}\n`);
   }
 
   const packetsDir = path.join(root, '.discipline', 'packets');
-  console.log('Packets presentes:');
+  console.log('Present packets:');
   if (fs.existsSync(packetsDir)) {
     const files = fs.readdirSync(packetsDir).filter(fileName => fileName.endsWith('.md'));
     for (const name of ALL_PACKET_NAMES) {
@@ -229,8 +229,8 @@ export function showStatus(root: string): void {
 
   const pendingDir = path.join(root, '.discipline', 'patches', 'pending');
   const appliedDir = path.join(root, '.discipline', 'patches', 'applied');
-  console.log(`\nPatches pendientes: ${fs.existsSync(pendingDir) ? fs.readdirSync(pendingDir).filter(fileName => fileName.endsWith('.md')).length : 0}`);
-  console.log(`Patches aplicados: ${fs.existsSync(appliedDir) ? fs.readdirSync(appliedDir).filter(fileName => fileName.endsWith('.md')).length : 0}`);
+  console.log(`\nPending patches: ${fs.existsSync(pendingDir) ? fs.readdirSync(pendingDir).filter(fileName => fileName.endsWith('.md')).length : 0}`);
+  console.log(`Applied patches: ${fs.existsSync(appliedDir) ? fs.readdirSync(appliedDir).filter(fileName => fileName.endsWith('.md')).length : 0}`);
 
   const progressPath = path.join(root, 'progress.md');
   if (fs.existsSync(progressPath)) {
@@ -242,10 +242,10 @@ export function showStatus(root: string): void {
   const issues = validateDiscipline(root);
   const errors = issues.filter(issue => issue.severity === 'error');
   if (errors.length > 0) {
-    console.log(`\nErrores (${errors.length}):`);
+    console.log(`\nErrors (${errors.length}):`);
     errors.forEach(error => console.log(`  [ERROR] ${error.message}${error.detail ? ` - ${error.detail}` : ''}`));
   } else {
-    console.log('\nEstado: OK');
+    console.log('\nStatus: OK');
   }
   console.log('');
 }
@@ -257,7 +257,7 @@ if (statusMode) {
   issues.filter(issue => issue.severity === 'warning').forEach(issue => console.warn(`[WARN] ${issue.message}`));
   issues.filter(issue => issue.severity === 'error').forEach(issue => console.error(`[ERROR] ${issue.message}${issue.detail ? ` - ${issue.detail}` : ''}`));
   if (issues.filter(issue => issue.severity === 'error').length === 0) {
-    disciplineInfo(`Validacion OK. ${issues.filter(issue => issue.severity === 'warning').length} warning(s).`);
+    disciplineInfo(`Validation OK. ${issues.filter(issue => issue.severity === 'warning').length} warning(s).`);
   } else {
     process.exit(1);
   }

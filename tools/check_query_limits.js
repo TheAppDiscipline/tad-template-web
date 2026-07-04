@@ -7,7 +7,7 @@
  *
  * This is a SEMI warning (fuzzy heuristic with --strict option).
  *
- * Enforces Discipline Loop NN #23.1 (Query Discipline: listas con limit, sin N+1).
+ * Enforces Discipline Loop NN #23.1 (Query Discipline: lists with limit, no N+1).
  */
 
 import fs from 'node:fs';

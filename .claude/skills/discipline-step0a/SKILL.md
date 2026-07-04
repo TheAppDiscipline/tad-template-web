@@ -1,275 +1,275 @@
 ---
 name: discipline-step0a
-description: "Automate Discipline Loop Step 0a: validate app idea with REAL web search competitor research (not invented), structured viability evaluation, and GO/NO-GO decision with evidence. Triggers on /discipline-step0a or 'validate idea' / 'validar idea'."
+description: "Automate Discipline Loop Step 0a: validate an app idea with REAL web-search competitor research (not invented), a structured viability evaluation, and an evidence-backed GO/NO-GO decision. Triggers on /discipline-step0a, 'validate idea', 'idea packet', or 'is this idea worth building'."
 ---
 
-# /discipline-step0a - Automatizar Paso 0a del pipeline Discipline Loop
+# /discipline-step0a - Automate Step 0a of the Discipline Loop pipeline
 
-Este skill ejecuta el Paso 0a completo: evalua la idea de app con investigacion de mercado real, analisis de competidores, evaluacion estructurada, y decision GO/NO-GO. Si es GO, produce el IDEA_VALIDATION_PACKET para alimentar el Paso 1.
+This skill runs the complete Step 0a: it evaluates the app idea with real market research, competitor analysis, a structured evaluation, and a GO/NO-GO decision. If the result is GO, it produces the IDEA_VALIDATION_PACKET to feed into Step 1.
 
-Usa WebSearch para investigacion de mercado real. No requiere otras herramientas externas.
+It uses WebSearch for real market research. It does not require any other external tools.
 
-## Lo que el usuario ve
+## What the user sees
 
-1. El skill pide que describa su idea de app
-2. Hace hasta 3 preguntas de clarificacion si la idea tiene vacios
-3. Investiga competidores con busqueda web real
-4. Evalua viabilidad con criterios estructurados
-5. Da una recomendacion GO o NO-GO con evidencia
-6. Si GO: genera IDEA_VALIDATION_PACKET
+1. The skill asks the user to describe their app idea
+2. It asks up to 3 clarifying questions if the idea has gaps
+3. It researches competitors with real web search
+4. It evaluates viability against structured criteria
+5. It gives a GO or NO-GO recommendation with evidence
+6. If GO: it generates the IDEA_VALIDATION_PACKET
 
-## Prerrequisitos
+## Prerequisites
 
-- Una idea de app (en lenguaje natural)
-- WebSearch disponible (Claude Code lo incluye por defecto)
-- No requiere Node.js ni repo existente (este paso es pre-template)
+- An app idea (in natural language)
+- WebSearch available (Claude Code includes it by default)
+- Does not require Node.js or an existing repo (this step is pre-template)
 
 ---
 
-## Implementacion interna
+## Internal implementation
 
-### Fase 0: Obtener la idea
+### Phase 0: Get the idea
 
-No hay inputs de archivos obligatorios. Este es el primer paso del pipeline.
+There are no required file inputs. This is the first step of the pipeline.
 
-**Si existe un proyecto previo:** leer `discipline.md` y `.discipline/packets/IDEA_VALIDATION_PACKET.md` por si ya hay una validacion previa que quiera actualizarse.
+**If a prior project exists:** read `discipline.md` and `.discipline/packets/IDEA_VALIDATION_PACKET.md` in case there is an earlier validation the user wants to update.
 
-**Si no hay descripcion previa, pedir:**
-
-```
-Describeme tu idea de app:
-
-- ¿Que problema resuelve?
-- ¿Quien tiene este problema?
-- ¿Como lo resuelven hoy?
-
-Ejemplo: "Una app para freelancers con 3+ clientes que trackean horas 
-manualmente en spreadsheets. Pierden 30min/dia cambiando entre clientes 
-y herramientas de facturacion."
-```
-
-**Evaluar si la descripcion cubre los 4 ejes:**
-
-1. **Problema**: ¿Queda claro que dolor resuelve?
-2. **Usuario**: ¿Queda claro quien la usa y si hay roles distintos?
-3. **Acciones clave**: ¿Queda claro que puede hacer el usuario?
-4. **Datos**: ¿Queda claro que informacion se guarda?
-
-Si faltan 1 o mas ejes, hacer hasta 3 preguntas de clarificacion en un solo mensaje. No preguntar una por una.
+**If there is no prior description, ask:**
 
 ```
-Antes de investigar, necesito aclarar:
+Describe your app idea:
 
-1. ¿El tracker es solo para ti o para un equipo?
-2. ¿Necesitas facturar directamente desde la app o solo trackear horas?
+- What problem does it solve?
+- Who has this problem?
+- How do they solve it today?
 
-Con eso tengo lo que necesito.
+Example: "An app for freelancers with 3+ clients who track hours 
+manually in spreadsheets. They lose 30 min/day switching between clients 
+and invoicing tools."
 ```
 
-Reglas:
-- Maximo 3 preguntas
-- Solo preguntar lo que no se puede asumir razonablemente
-- No preguntar sobre tecnologia (eso se decide despues)
-- Priorizar preguntas que afectan viabilidad
+**Evaluate whether the description covers the 4 axes:**
 
-### Fase 1: Investigacion y evaluacion
+1. **Problem**: Is it clear what pain it solves?
+2. **User**: Is it clear who uses it and whether there are distinct roles?
+3. **Key actions**: Is it clear what the user can do?
+4. **Data**: Is it clear what information gets stored?
 
-**Sub-fase 1A: Evaluar problema y severidad**
+If 1 or more axes are missing, ask up to 3 clarifying questions in a single message. Do not ask them one at a time.
 
-Extraer de la descripcion:
-1. Problema en 1 oracion (no vago, no "gestionar mejor")
-2. Usuario especifico (no "cualquiera", no "todo el mundo")
-3. Severidad (1-10):
-   - 1-4: la gente convive sin molestarse
-   - 5-7: usa workarounds activamente
-   - 8-10: busca solucion activamente, pagaria
+```
+Before I research, I need to clarify:
 
-**Sub-fase 1B: Investigacion de mercado (WebSearch)**
+1. Is the tracker just for you or for a team?
+2. Do you need to invoice directly from the app, or only track hours?
 
-Buscar 5 soluciones existentes. Usar estas consultas de busqueda:
+With that I have what I need.
+```
 
-1. "[problema] app" o "[problema] software"
-2. "[problema] [usuario tipo] tool"
-3. "best [categoria] app 2026"
-4. Site-specific: "site:producthunt.com [categoria]", "site:alternativeto.net [categoria]"
+Rules:
+- At most 3 questions
+- Only ask what cannot be reasonably assumed
+- Do not ask about technology (that gets decided later)
+- Prioritize questions that affect viability
 
-Para cada competidor encontrado, documentar:
+### Phase 1: Research and evaluation
 
-| Competidor | Que resuelve | Precio | Debilidad / gap |
+**Sub-phase 1A: Evaluate the problem and severity**
+
+Extract from the description:
+1. Problem in 1 sentence (not vague, not "manage it better")
+2. Specific user (not "anyone", not "everyone")
+3. Severity (1-10):
+   - 1-4: people live with it and are not bothered
+   - 5-7: they actively use workarounds
+   - 8-10: they actively look for a solution and would pay
+
+**Sub-phase 1B: Market research (WebSearch)**
+
+Look for 5 existing solutions. Use these search queries:
+
+1. "[problem] app" or "[problem] software"
+2. "[problem] [user type] tool"
+3. "best [category] app 2026"
+4. Site-specific: "site:producthunt.com [category]", "site:alternativeto.net [category]"
+
+For each competitor found, document:
+
+| Competitor | What it solves | Price | Weakness / gap |
 |---|---|---|---|
-| Nombre 1 | ... | Gratis / $X/mes | No cubre X |
-| Nombre 2 | ... | $X/mes | Demasiado complejo para Y |
+| Name 1 | ... | Free / $X/mo | Does not cover X |
+| Name 2 | ... | $X/mo | Too complex for Y |
 | ... | ... | ... | ... |
 
-Si no se encuentran 5 competidores, documentar cuantos se encontraron y por que el mercado parece poco atendido.
+If 5 competitors are not found, document how many were found and why the market appears underserved.
 
-**Sub-fase 1C: Analisis de gaps**
+**Sub-phase 1C: Gap analysis**
 
-Basandose en los competidores encontrados:
-1. ¿Que NO cubre ningun competidor bien?
-2. ¿Hay un segmento de usuarios desatendido?
-3. ¿Hay un caso de uso especifico que nadie resuelve?
+Based on the competitors found:
+1. What does NO competitor cover well?
+2. Is there an underserved segment of users?
+3. Is there a specific use case that nobody solves?
 
-**Sub-fase 1D: Evaluar diferenciador**
+**Sub-phase 1D: Evaluate the differentiator**
 
-El diferenciador del usuario debe ser concreto, no "mejor UX". Ejemplos validos:
-- "funciona offline" (cuando ningun competidor lo hace)
-- "10x mas barato" (cuando los competidores cobran mucho)
-- "especializado para [nicho]" (cuando los competidores son genericos)
-- "integra con [herramienta]" (cuando hay un gap de integracion)
+The user's differentiator must be concrete, not "better UX". Valid examples:
+- "works offline" (when no competitor does)
+- "10x cheaper" (when competitors charge a lot)
+- "specialized for [niche]" (when competitors are generic)
+- "integrates with [tool]" (when there is an integration gap)
 
-Si el diferenciador del usuario es vago, señalarlo y sugerir alternativas basadas en los gaps encontrados.
+If the user's differentiator is vague, flag it and suggest alternatives based on the gaps found.
 
-**Sub-fase 1E: Hipotesis MVP**
+**Sub-phase 1E: MVP hypothesis**
 
-Formular: "Si construyo [X minimo], [usuario] hara [Y] en vez de [alternativa actual]."
+Formulate: "If I build [minimal X], [user] will do [Y] instead of [current alternative]."
 
-Definir los 3 slices maximos para probar la hipotesis:
-1. Slice 0: bootstrap (siempre)
-2. Slice 1: accion core
-3. Slice 2: diferenciador clave
+Define the 3 maximum slices to test the hypothesis:
+1. Slice 0: bootstrap (always)
+2. Slice 1: core action
+3. Slice 2: key differentiator
 
-Si la hipotesis necesita mas de 3 slices para probarse, el MVP es demasiado grande.
+If the hypothesis needs more than 3 slices to be tested, the MVP is too big.
 
-**Sub-fase 1F: Decision GO / NO-GO**
+**Sub-phase 1F: GO / NO-GO decision**
 
-Aplicar los criterios:
+Apply the criteria:
 
-**GO si:**
-- [ ] Problema claro (1 oracion, no vago)
-- [ ] Usuario especifico identificado
-- [ ] Severidad >= 5
-- [ ] Diferenciador real y concreto
-- [ ] MVP demostrable en <= 3 slices
-- [ ] (Si vende) Puede nombrar 3 personas que pagarian
+**GO if:**
+- [ ] Clear problem (1 sentence, not vague)
+- [ ] Specific user identified
+- [ ] Severity >= 5
+- [ ] Real, concrete differentiator
+- [ ] MVP demonstrable in <= 3 slices
+- [ ] (If selling) Can name 3 people who would pay
 
-**NO-GO si:**
-- Problema difuso o poco claro
-- Severidad < 5
-- 3+ competidores maduros sin gap claro
-- MVP requiere > 5 slices
-- Diferenciador es solo "mejor UX" o "mas bonito"
+**NO-GO if:**
+- Problem is fuzzy or unclear
+- Severity < 5
+- 3+ mature competitors with no clear gap
+- MVP requires > 5 slices
+- Differentiator is only "better UX" or "prettier"
 
-### Fase 2: Generar output
+### Phase 2: Generate output
 
-**Si GO:**
+**If GO:**
 
-Generar `.discipline/packets/IDEA_VALIDATION_PACKET.md`:
+Generate `.discipline/packets/IDEA_VALIDATION_PACKET.md`:
 
 ```markdown
 # IDEA_VALIDATION_PACKET
 
 STATUS: ready
-SOURCE_STEP: Paso 0a
-GENERATED: <fecha>
+SOURCE_STEP: Step 0a
+GENERATED: <date>
 
-## Problema
-<1 oracion clara>
+## Problem
+<1 clear sentence>
 
-## Usuario objetivo
-<persona especifica>
+## Target user
+<specific persona>
 
-## Severidad
-<1-10 con justificacion>
+## Severity
+<1-10 with justification>
 
-## Soluciones existentes
-| Competidor | Que resuelve | Precio | Debilidad |
+## Existing solutions
+| Competitor | What it solves | Price | Weakness |
 |---|---|---|---|
 | ... | ... | ... | ... |
 
-## Gap identificado
-<que no cubre ningun competidor>
+## Identified gap
+<what no competitor covers>
 
-## Diferenciador
-<concreto y verificable>
+## Differentiator
+<concrete and verifiable>
 
-## MVP: hipotesis central
-"Si construyo [X], [usuario] hara [Y] en vez de [Z]."
+## MVP: central hypothesis
+"If I build [X], [user] will do [Y] instead of [Z]."
 
-## MVP: slices maximos
+## MVP: maximum slices
 1. <slice 0: bootstrap>
 2. <slice 1: core>
-3. <slice 2: diferenciador>
+3. <slice 2: differentiator>
 
 ## Decision
-GO - <fecha>
+GO - <date>
 
-## Evidencia
-- <fuentes consultadas>
-- <competidores evaluados>
-- <criterios cumplidos>
+## Evidence
+- <sources consulted>
+- <competitors evaluated>
+- <criteria met>
 ```
 
-**Si NO-GO:**
+**If NO-GO:**
 
-No generar packet. Presentar la decision con opciones:
+Do not generate a packet. Present the decision with options:
 
 ```
-Recomendacion: NO-GO
+Recommendation: NO-GO
 
-Razon principal: <razon>
+Main reason: <reason>
 
-Opciones:
-1. Pivotar: cambiar usuario, problema o diferenciador
-2. Reducir: hacer el MVP aun mas pequeño
-3. Validar primero: hablar con 5 usuarios antes de construir
-4. Descartar: buscar otra idea
+Options:
+1. Pivot: change the user, problem, or differentiator
+2. Shrink: make the MVP even smaller
+3. Validate first: talk to 5 users before building
+4. Drop it: look for another idea
 
-¿Que prefieres?
+Which do you prefer?
 ```
 
-Si el usuario quiere pivotar, volver a Fase 1 con la nueva direccion.
+If the user wants to pivot, go back to Phase 1 with the new direction.
 
-### Fase 3: Post-procesamiento
+### Phase 3: Post-processing
 
-Si GO y hay un repo existente:
+If GO and there is an existing repo:
 ```bash
 npm run discipline:assemble -- --step 1
 npm run discipline:log -- --step 0a --tool "Claude + WebSearch" --notes "Automated via /discipline-step0a. Decision: GO."
 ```
 
-Si GO y no hay repo todavia:
+If GO and there is no repo yet:
 ```
-IDEA_VALIDATION_PACKET guardado.
-Siguiente: elige tu lane en 08 - Elegir Lane → clona el Repo Template → ejecuta /discipline-step1.
+IDEA_VALIDATION_PACKET saved.
+Next: pick your lane (see the lane-selection guide in The App Discipline vault, sold separately) -> clone the Template Repo -> run /discipline-step1.
 ```
 
-### Fase 4: Resumen
+### Phase 4: Summary
 
 ```
-Paso 0a completado.
+Step 0a complete.
 
 Decision: <GO / NO-GO>
-Competidores evaluados: <N>
-Severidad: <N>/10
-Diferenciador: <resumen>
+Competitors evaluated: <N>
+Severity: <N>/10
+Differentiator: <summary>
 
-<Si GO:>
-Archivo generado: .discipline/packets/IDEA_VALIDATION_PACKET.md
-Siguiente: elegir lane → clonar template → /discipline-step1
+<If GO:>
+File generated: .discipline/packets/IDEA_VALIDATION_PACKET.md
+Next: pick lane -> clone template -> /discipline-step1
 
-<Si NO-GO:>
-Opciones presentadas. Esperando decision del operador.
+<If NO-GO:>
+Options presented. Waiting on the operator's decision.
 ```
 
 ---
 
-## Manejo de errores
+## Error handling
 
-- Si WebSearch no esta disponible: advertir que la investigacion sera limitada. Generar el analisis con el conocimiento disponible pero marcar: "Investigacion sin WebSearch - validar manualmente las soluciones existentes."
-- Si no se encuentran competidores: no asumir que el mercado esta vacio. Marcar: "Mercado potencialmente desatendido o terminos de busqueda insuficientes. Investigar manualmente."
-- Si el usuario no responde las preguntas de clarificacion: generar la evaluacion con lo disponible, pero reducir el nivel de confianza de la decision.
-- Si el usuario insiste en GO cuando los criterios dan NO-GO: respetar la decision pero documentar los riesgos explicitamente en el packet.
+- If WebSearch is not available: warn that the research will be limited. Generate the analysis with available knowledge but flag it: "Research done without WebSearch - manually validate the existing solutions."
+- If no competitors are found: do not assume the market is empty. Flag it: "Market potentially underserved, or search terms insufficient. Research manually."
+- If the user does not answer the clarifying questions: generate the evaluation with what is available, but lower the confidence level of the decision.
+- If the user insists on GO when the criteria say NO-GO: respect the decision but document the risks explicitly in the packet.
 
 ---
 
-## Reglas criticas
+## Critical rules
 
-- Usar WebSearch para investigacion real. No inventar competidores ni precios.
-- No inflar la severidad para que salga GO. Ser honesto.
-- No inventar diferenciadores. Si el usuario no tiene uno claro, decirlo.
-- El MVP debe caber en 3 slices. Si no cabe, el scope es demasiado grande.
-- No preguntar sobre tecnologia. Eso se decide en Elegir Lane y Paso 1.
-- La decision GO/NO-GO es una recomendacion. El operador decide. Si insiste en GO, documentar los riesgos.
-- Las fuentes consultadas deben listarse en el packet para trazabilidad.
-- Este paso deberia tomar 30 minutos maximo. No sobreinvestigar.
+- Use WebSearch for real research. Do not invent competitors or prices.
+- Do not inflate the severity to force a GO. Be honest.
+- Do not invent differentiators. If the user does not have a clear one, say so.
+- The MVP must fit in 3 slices. If it does not fit, the scope is too big.
+- Do not ask about technology. That gets decided when picking the lane and in Step 1.
+- The GO/NO-GO decision is a recommendation. The operator decides. If they insist on GO, document the risks.
+- The sources consulted must be listed in the packet for traceability.
+- This step should take 30 minutes at most. Do not over-research.

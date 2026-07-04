@@ -20,11 +20,11 @@ export function parsePatchFile(filePath: string, fileContent: string): ParsedPat
     if (line === '### CONTENT' || line === '## CONTENT') { contentStartIdx = i + 1; break; }
   }
 
-  if (!name) disciplineError(`Patch sin nombre (heading) en: ${filePath}`);
-  if (!targetFile) disciplineError(`TARGET_FILE faltante en patch: ${filePath}`);
-  if (!patchMode) disciplineError(`PATCH_MODE faltante en patch: ${filePath}`);
-  if (!VALID_PATCH_MODES.includes(patchMode)) disciplineError(`PATCH_MODE inválido "${patchMode}" en ${filePath}. Válidos: ${VALID_PATCH_MODES.join(', ')}`);
-  if (!anchor) disciplineError(`ANCHOR faltante en patch: ${filePath}`);
+  if (!name) disciplineError(`Patch without a name (heading) in: ${filePath}`);
+  if (!targetFile) disciplineError(`TARGET_FILE missing in patch: ${filePath}`);
+  if (!patchMode) disciplineError(`PATCH_MODE missing in patch: ${filePath}`);
+  if (!VALID_PATCH_MODES.includes(patchMode)) disciplineError(`Invalid PATCH_MODE "${patchMode}" en ${filePath}. Valid: ${VALID_PATCH_MODES.join(', ')}`);
+  if (!anchor) disciplineError(`ANCHOR missing in patch: ${filePath}`);
   if (contentStartIdx === -1) disciplineError(`Marcador "### CONTENT" no encontrado en: ${filePath}`);
 
   const content = lines.slice(contentStartIdx).join('\n').trim();

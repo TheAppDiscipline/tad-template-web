@@ -1,222 +1,222 @@
 ---
 name: discipline-legal-init
-description: "Generate legal docs (privacy-policy.md, terms-of-service.md, refund-policy.md, breach-runbook.md) populated with real project data from discipline.md, package.json vendors, and detected imports. Output is a starting point, NOT legal advice. Triggers on /discipline-legal-init, 'init legal', 'generar privacy policy'."
+description: "Generate legal docs (privacy-policy.md, terms-of-service.md, refund-policy.md, breach-runbook.md) populated with real project data from discipline.md, package.json vendors, and detected imports. Output is a starting point, NOT legal advice. Triggers on /discipline-legal-init, 'legal init', 'privacy terms', 'generate privacy policy'."
 ---
 
-# /discipline-legal-init - Generar documentos legales as-built del proyecto
+# /discipline-legal-init - Generate as-built legal documents for the project
 
-Este skill toma las 4 plantillas legales del vault (`Plantillas/Plantillas Legales/`) y las personaliza con datos reales del proyecto: vendors detectados en `package.json` + imports de `src/`, retention de cada vendor, profile actual, contact email de soporte. Produce un punto de arranque listo para revisar y publicar.
+This skill takes the 4 legal templates from the vault (a Legal Templates folder in The App Discipline vault, sold separately) and customizes them with real project data: vendors detected in `package.json` plus imports in `src/`, retention for each vendor, the current profile, and the support contact email. It produces a starting point ready to review and publish.
 
-CRÍTICO: el output NO es asesoría legal. Es un baseline as-built. Para producción comercial seria, validar con counsel local de jurisdicción aplicable.
+CRITICAL: the output is NOT legal advice. It is an as-built baseline. For serious commercial production, validate with local counsel in the applicable jurisdiction.
 
-## Lo que el usuario ve
+## What the user sees
 
-1. El skill confirma datos clave (APP_NAME, COMPANY_OR_NAME, JURISDICTION, CONTACT_EMAIL, APP_URL).
-2. Detecta vendors usados en el proyecto (Supabase, Sentry, Stripe, Resend, PostHog, Anthropic, etc.).
-3. Pregunta cuáles documentos generar (privacy-policy obligatorio; terms-of-service obligatorio; refund-policy si cobras; breach-runbook recomendado).
-4. Genera los archivos en `public/legal/` (público) y `runbooks/breach.md` (interno).
-5. Reporta los placeholders que NO pudo resolver automáticamente y deja al usuario completarlos.
-6. Sugiere correr `/discipline-audit privacy-policy` (audit 3) después para verificar coherencia policy ↔ código.
+1. The skill confirms key data (APP_NAME, COMPANY_OR_NAME, JURISDICTION, CONTACT_EMAIL, APP_URL).
+2. It detects vendors used in the project (Supabase, Sentry, Stripe, Resend, PostHog, Anthropic, etc.).
+3. It asks which documents to generate (privacy-policy required; terms-of-service required; refund-policy if you charge money; breach-runbook recommended).
+4. It generates the files in `public/legal/` (public) and `runbooks/breach.md` (internal).
+5. It reports the placeholders it could NOT resolve automatically and leaves them for the user to complete.
+6. It suggests running `/discipline-audit privacy-policy` (audit 3) afterward to verify that policy and code stay consistent.
 
-## Prerrequisitos
+## Prerequisites
 
-- Repo con `.discipline/` y `discipline.md`.
-- `package.json` legible con dependencies y devDependencies.
-- Acceso al vault Discipline Loop (las plantillas viven en `Plantillas/Plantillas Legales/` del vault, no del repo).
-- Si las plantillas no están copiadas al repo, el skill las solicita al usuario una vez (paste manual desde el vault).
+- Repo with `.discipline/` and `discipline.md`.
+- Readable `package.json` with dependencies and devDependencies.
+- Access to the Discipline Loop vault (the templates live in a Legal Templates folder in the vault, sold separately, not in the repo).
+- If the templates have not been copied into the repo, the skill asks the user for them once (manual paste from the vault).
 
 ---
 
-## Implementacion interna
+## Internal implementation
 
-### Fase 0: Verificar precondiciones
+### Phase 0: Verify preconditions
 
-Leer `discipline.md`. Extraer PROFILE. Si LITE sin externos, advertir:
+Read `discipline.md`. Extract PROFILE. If LITE with no external services, warn:
 
 ```
-PROFILE=LITE sin externos. Los documentos legales NO son obligatorios para uso personal.
+PROFILE=LITE with no external services. Legal documents are NOT required for personal use.
 
-Si planeas pasar a FAMILY_SYNC o LAUNCH:
-- Privacy Policy + ToS son obligatorios para Gate D Launch.
-- Refund Policy obligatoria si cobras.
-- Breach Runbook recomendado desde primer dato externo.
+If you plan to move to FAMILY_SYNC or LAUNCH:
+- Privacy Policy + ToS are required for Gate D Launch.
+- Refund Policy is required if you charge money.
+- Breach Runbook is recommended from the first piece of external data.
 
-¿Generar las plantillas igualmente como preparación? (Y/N)
+Generate the templates anyway as preparation? (Y/N)
 ```
 
-Si el usuario dice N, terminar.
+If the user says N, stop.
 
-### Fase 1: Recoger datos del proyecto
+### Phase 1: Collect project data
 
-Detectar y confirmar con el usuario:
+Detect and confirm with the user:
 
-| Placeholder | Cómo se detecta | Default si falta |
+| Placeholder | How it is detected | Default if missing |
 |---|---|---|
-| `{{APP_NAME}}` | `discipline.md §0` (campo APP_NAME o título) o `package.json` name | preguntar |
-| `{{COMPANY_OR_NAME}}` | `discipline.md` o git config user.name | preguntar |
-| `{{CONTACT_EMAIL}}` | `discipline.md` campo SUPPORT_EMAIL o git config user.email | preguntar |
-| `{{JURISDICTION}}` | preguntar siempre (no se puede detectar) | preguntar |
-| `{{LAST_UPDATED}}` | fecha actual ISO (YYYY-MM-DD) | auto |
-| `{{APP_URL}}` | discipline.md campo APP_URL o package.json homepage | preguntar |
-| `{{REFUND_WINDOW_DAYS}}` | discipline.md o default 30 | 30 |
+| `{{APP_NAME}}` | `discipline.md §0` (APP_NAME field or title) or `package.json` name | ask |
+| `{{COMPANY_OR_NAME}}` | `discipline.md` or git config user.name | ask |
+| `{{CONTACT_EMAIL}}` | `discipline.md` SUPPORT_EMAIL field or git config user.email | ask |
+| `{{JURISDICTION}}` | always ask (cannot be detected) | ask |
+| `{{LAST_UPDATED}}` | current date ISO (YYYY-MM-DD) | auto |
+| `{{APP_URL}}` | discipline.md APP_URL field or package.json homepage | ask |
+| `{{REFUND_WINDOW_DAYS}}` | discipline.md or default 30 | 30 |
 
-Mostrar tabla y pedir confirmación del usuario antes de continuar.
+Show the table and ask the user to confirm before continuing.
 
-### Fase 2: Detectar vendors
+### Phase 2: Detect vendors
 
-Grep imports en `src/**/*.{ts,tsx,js,jsx}` y `package.json`. Mapear cada import a vendor canónico:
+Grep imports in `src/**/*.{ts,tsx,js,jsx}` and `package.json`. Map each import to a canonical vendor:
 
-| Patrón | Vendor canónico | Categoría | Retention default |
+| Pattern | Canonical vendor | Category | Default retention |
 |---|---|---|---|
-| `@supabase/*` | Supabase (Database, Auth) | Backend | "mientras la cuenta esté activa" |
-| `@sentry/*` | Sentry | Error monitoring | "90 días por defecto" |
-| `posthog-js` | PostHog | Analytics | "según plan, típicamente 7-90 días" |
-| `resend` | Resend | Email transactional | "30 días los logs de envío" |
-| `@anthropic-ai/sdk` | Anthropic Claude API | LLM | "no entrenamiento por defecto, 30 días retention de logs si abuse detected" |
-| `openai` | OpenAI | LLM | "30 días retention de logs si no opt-out" |
-| `@google/genai` | Google AI Studio / Gemini | LLM | "según plan, free tier puede usar para training salvo opt-out" |
-| `stripe` | Stripe | Payments | "según política de Stripe; tarjetas tokenizadas no en server" |
-| `firebase`, `firebase-admin` | Firebase | Backend | "mientras la cuenta esté activa" |
-| `@vercel/*`, `@cloudflare/*` | Hosting CDN | Infra | "logs típicamente 30-90 días" |
+| `@supabase/*` | Supabase (Database, Auth) | Backend | "as long as the account is active" |
+| `@sentry/*` | Sentry | Error monitoring | "90 days by default" |
+| `posthog-js` | PostHog | Analytics | "per plan, typically 7-90 days" |
+| `resend` | Resend | Email transactional | "30 days for send logs" |
+| `@anthropic-ai/sdk` | Anthropic Claude API | LLM | "no training by default, 30 days log retention if abuse detected" |
+| `openai` | OpenAI | LLM | "30 days log retention unless opted out" |
+| `@google/genai` | Google AI Studio / Gemini | LLM | "per plan, free tier may use data for training unless opted out" |
+| `stripe` | Stripe | Payments | "per Stripe policy; tokenized cards not on your server" |
+| `firebase`, `firebase-admin` | Firebase | Backend | "as long as the account is active" |
+| `@vercel/*`, `@cloudflare/*` | Hosting CDN | Infra | "logs typically 30-90 days" |
 
-Para cada vendor detectado, capturar:
-- nombre
-- propósito (categoría)
-- retention declarado (mejor estimación)
-- jurisdicción del vendor (US, EU, etc., para transfer mechanism)
+For each detected vendor, capture:
+- name
+- purpose (category)
+- declared retention (best estimate)
+- vendor jurisdiction (US, EU, etc., for the transfer mechanism)
 
-### Fase 3: Confirmar lista de vendors con el usuario
+### Phase 3: Confirm the vendor list with the user
 
 ```
-Vendors detectados en código:
-- Supabase (Database, Auth) — retention: mientras cuenta activa — US (DPF)
-- Sentry (Error monitoring) — retention: 90 días — US (SCCs)
-- Resend (Email) — retention: 30 días logs — US (SCCs)
+Vendors detected in code:
+- Supabase (Database, Auth) - retention: as long as account active - US (DPF)
+- Sentry (Error monitoring) - retention: 90 days - US (SCCs)
+- Resend (Email) - retention: 30 days logs - US (SCCs)
 
-¿Algún vendor faltante? Algunos comunes que el grep no detecta:
+Any missing vendor? Some common ones the grep does not detect:
 - Cloudflare Pages / Vercel (hosting)
-- Google Analytics (si lo añadiste manualmente con tag)
-- Plausible / Fathom (analytics privacy-first)
+- Google Analytics (if you added it manually with a tag)
+- Plausible / Fathom (privacy-first analytics)
 - Crisp / Intercom (chat)
 - Cal.com / Calendly (booking)
 
-Lista vendors faltantes (separados por coma) o "ninguno":
+List the missing vendors (comma separated) or "none":
 ```
 
-### Fase 4: Cargar plantillas
+### Phase 4: Load templates
 
-Las plantillas viven en `<vault>/Plantillas/Plantillas Legales/*.template`. Si el repo del usuario no tiene acceso al vault, pedir paste manual una vez:
+The templates live in `<vault>/Legal Templates/*.template`. If the user's repo does not have access to the vault, ask for a manual paste once:
 
 ```
-No puedo acceder a `<vault>/Plantillas/Plantillas Legales/`.
+I cannot access `<vault>/Legal Templates/`.
 
-Opciones:
-1. Pega el contenido de `privacy-policy.md.template` aquí (lo guardo en `.discipline/legal-templates/`).
-2. Permíteme leer desde la ruta absoluta del vault si la conoces (ej: `/Users/x/Vault/...`).
-3. Salir y manualmente copiar las plantillas a `public/legal/`, después customizar.
+Options:
+1. Paste the contents of `privacy-policy.md.template` here (I will save it in `.discipline/legal-templates/`).
+2. Let me read from the vault's absolute path if you know it (e.g. `/Users/x/Vault/...`).
+3. Exit and manually copy the templates into `public/legal/`, then customize.
 ```
 
-Cargar las 4 plantillas en memoria.
+Load the 4 templates into memory.
 
-### Fase 5: Generar documentos personalizados
+### Phase 5: Generate customized documents
 
-Para cada documento solicitado:
+For each requested document:
 
-1. Leer plantilla.
-2. Sustituir placeholders `{{...}}` con datos confirmados en Fase 1.
-3. Para `privacy-policy.md`, completar §"Datos compartidos con terceros" con la lista de vendors de Fase 2-3, formateada:
+1. Read the template.
+2. Substitute the `{{...}}` placeholders with the data confirmed in Phase 1.
+3. For `privacy-policy.md`, complete the "Data shared with third parties" section with the vendor list from Phase 2-3, formatted:
    ```
-   | Servicio | Propósito | Datos compartidos | Retention | Jurisdicción/Transfer |
+   | Service | Purpose | Data shared | Retention | Jurisdiction/Transfer |
    |---|---|---|---|---|
-   | Supabase | Database + Auth | Email, contenido del usuario | Mientras la cuenta esté activa | US (Data Privacy Framework) |
+   | Supabase | Database + Auth | Email, user content | As long as the account is active | US (Data Privacy Framework) |
    | ... | ... | ... | ... | ... |
    ```
-4. Tachar secciones que no aplican según switches del proyecto:
-   - Si NO hay `stripe`/`@stripe/*` en deps: tachar §Pagos.
-   - Si NO hay `@anthropic-ai/sdk`/`openai`/`@google/genai`: tachar §Uso de IA.
-   - Si NO hay cookies (template asume sí): preguntar al usuario.
-5. **Borrar** el bloque `[!warning] PLANTILLA, NO ES ASESORÍA LEGAL` y el comentario HTML del top de cada plantilla (ya no son plantilla, son docs reales).
-6. Agregar entry de versión y changelog interno al final:
+4. Strike out sections that do not apply according to the project switches:
+   - If there is NO `stripe`/`@stripe/*` in deps: strike the Payments section.
+   - If there is NO `@anthropic-ai/sdk`/`openai`/`@google/genai`: strike the AI Usage section.
+   - If there are no cookies (the template assumes there are): ask the user.
+5. **Delete** the `[!warning] TEMPLATE, NOT LEGAL ADVICE` block and the HTML comment at the top of each template (they are no longer a template, they are real docs).
+6. Add a version entry and internal changelog at the end:
    ```markdown
-   ## Changelog interno
-   - <fecha> · v1.0 generado vía /discipline-legal-init con vendors: <lista>.
+   ## Internal changelog
+   - <date> · v1.0 generated via /discipline-legal-init with vendors: <list>.
    ```
 
-### Fase 6: Escribir archivos
+### Phase 6: Write files
 
-Estructura sugerida (preguntar al usuario si prefiere otra):
+Suggested structure (ask the user if they prefer another):
 
 ```
 <repo>/
 ├── public/legal/
 │   ├── privacy-policy.md
 │   ├── terms-of-service.md
-│   └── refund-policy.md (solo si cobras)
+│   └── refund-policy.md (only if you charge money)
 └── runbooks/
-    └── breach.md (NO público; .gitignore-able si tiene contactos sensibles)
+    └── breach.md (NOT public; .gitignore-able if it holds sensitive contacts)
 ```
 
-Verificar que las rutas existen, crear directorios si no.
+Verify that the paths exist, create directories if they do not.
 
-Si los archivos ya existen, NO sobrescribir sin confirmación. Mostrar diff y pedir aprobación.
+If the files already exist, do NOT overwrite without confirmation. Show a diff and ask for approval.
 
-### Fase 7: Verificación post-generación
+### Phase 7: Post-generation verification
 
-Pedir al usuario:
-1. Servir cada archivo en la ruta esperada del template (`/privacy`, `/terms`, `/refund`).
-2. Enlazar desde footer + signup + Settings.
-3. Correr `/discipline-audit privacy-policy` (audit 3 de 48c) para verificar que la policy refleja la app real.
-4. Marcar items L01 (Privacy Policy) y L02 (ToS) en `.discipline/scorecard.yaml` con evidencia.
+Ask the user to:
+1. Serve each file at the route the template expects (`/privacy`, `/terms`, `/refund`).
+2. Link them from the footer + signup + Settings.
+3. Run `/discipline-audit privacy-policy` (audit 3 of the self-audit prompts in the vault, sold separately) to verify that the policy reflects the real app.
+4. Mark items L01 (Privacy Policy) and L02 (ToS) in `.discipline/scorecard.yaml` with evidence.
 
-### Fase 8: Resumen
+### Phase 8: Summary
 
 ```
-Documentos legales generados:
+Legal documents generated:
 
-✓ public/legal/privacy-policy.md (Vendors: <lista>)
+✓ public/legal/privacy-policy.md (Vendors: <list>)
 ✓ public/legal/terms-of-service.md
-<si refund:>
-✓ public/legal/refund-policy.md (window: <N> días)
-✓ runbooks/breach.md (interno; rellena los contactos del DPA y counsel ANTES de necesitarlos)
+<if refund:>
+✓ public/legal/refund-policy.md (window: <N> days)
+✓ runbooks/breach.md (internal; fill in the DPA and counsel contacts BEFORE you need them)
 
-Placeholders no resueltos automáticamente (revisa antes de publicar):
-- <lista>
+Placeholders not resolved automatically (review before publishing):
+- <list>
 
-Acciones recomendadas:
-1. Servir los archivos en /privacy, /terms, /refund de tu app.
-2. Enlazar desde footer + signup + Settings.
-3. Correr `/discipline-audit privacy-policy` para verificar coherencia con el código.
-4. Para producción comercial seria, validar con counsel local de tu jurisdicción.
+Recommended actions:
+1. Serve the files at /privacy, /terms, /refund of your app.
+2. Link them from the footer + signup + Settings.
+3. Run `/discipline-audit privacy-policy` to verify consistency with the code.
+4. For serious commercial production, validate with local counsel in your jurisdiction.
 
-CRÍTICO: estos documentos son punto de arranque as-built, NO asesoría legal. La doctrina Discipline Loop es: el vault te da una base; el abogado ajusta a tu caso real.
+CRITICAL: these documents are an as-built starting point, NOT legal advice. The Discipline Loop doctrine is: the vault gives you a base; the lawyer tailors it to your real case.
 ```
 
-Registrar en `findings.md §Legal`:
+Log in `findings.md §Legal`:
 ```markdown
 ## Legal
 
-- <fecha> · /discipline-legal-init generó privacy-policy.md + terms-of-service.md + refund-policy.md + runbooks/breach.md. Vendors detectados: <lista>. Placeholder pendientes: <lista>. Verificar con counsel local antes de Gate E PROD.
+- <date> · /discipline-legal-init generated privacy-policy.md + terms-of-service.md + refund-policy.md + runbooks/breach.md. Vendors detected: <list>. Pending placeholders: <list>. Verify with local counsel before Gate E PROD.
 ```
 
 ---
 
-## Manejo de errores
+## Error handling
 
-- Plantillas no accesibles: pedir paste manual o salir con instrucción de copiar manualmente.
-- Vendors detectados con conflicto (eg ambos `firebase` y `@supabase/supabase-js`): preguntar al usuario cuál es el primario.
-- Discipline.md no declara APP_URL: preguntar y persistir el valor en discipline.md vía patch block (opcional, con aprobación del usuario).
-- Archivo destino ya existe: no sobrescribir sin diff visible y aprobación.
-- Si usuario cobra pero no genera refund-policy: warning y registrar en findings.md §Legal como deuda.
+- Templates not accessible: ask for a manual paste or exit with instructions to copy them manually.
+- Vendors detected in conflict (e.g. both `firebase` and `@supabase/supabase-js`): ask the user which one is primary.
+- Discipline.md does not declare APP_URL: ask and persist the value in discipline.md via a patch block (optional, with the user's approval).
+- Destination file already exists: do not overwrite without a visible diff and approval.
+- If the user charges money but does not generate a refund-policy: warn and log it in findings.md §Legal as debt.
 
 ---
 
-## Reglas críticas
+## Critical rules
 
-- **Output NO es asesoría legal.** Reportar esto explícitamente al final del run, sin excepciones.
-- Privacy Policy debe ser **as-built**: si la app no usa Stripe, no mencionar Stripe.
-- No inventar vendors que no están en el código. La regla "menciono todo por si acaso" no aplica; menciona lo que detectaste.
-- No copiar texto del refund policy del vault Discipline Loop sin ajuste; el vault tiene 30 días sin preguntas pero la app del usuario puede tener política distinta.
-- Breach runbook NO es público; verificar que está en `runbooks/` o equivalente, NO en `public/`.
-- Cuando jurisdicción es EU: agregar nota sobre derecho de retiro 14 días y cumplimiento GDPR Art. 33 (72h breach notification).
-- No marcar items L01/L02 del scorecard como `done` automáticamente. El usuario verifica que los archivos están publicados Y reflejan la app real, después marca evidencia.
-- Tiempo objetivo: 5-10 min para generar los 4 docs en proyecto con vendors típicos.
+- **Output is NOT legal advice.** Report this explicitly at the end of the run, no exceptions.
+- The Privacy Policy must be **as-built**: if the app does not use Stripe, do not mention Stripe.
+- Do not invent vendors that are not in the code. The "mention everything just in case" rule does not apply; mention what you detected.
+- Do not copy the refund policy text from the Discipline Loop vault without adjustment; the vault uses 30 days no questions asked, but the user's app may have a different policy.
+- The breach runbook is NOT public; verify that it is in `runbooks/` or equivalent, NOT in `public/`.
+- When the jurisdiction is EU: add a note about the 14-day right of withdrawal and GDPR Art. 33 compliance (72h breach notification).
+- Do not mark scorecard items L01/L02 as `done` automatically. The user verifies that the files are published AND reflect the real app, then records evidence.
+- Target time: 5-10 min to generate the 4 docs in a project with typical vendors.

@@ -48,7 +48,7 @@ Return **only** the JSON envelope below as your final message: no prose, no mark
 }
 ```
 
-- `status`: `PASS` = no findings; `WARN` = only moderate/minor findings; `FAIL` = at least one critical finding (matches the prior "critical > 0 → FAIL" rule).
+- `status`: `PASS` = no findings; `WARN` = only moderate/minor findings; `FAIL` = at least one critical finding (matches the prior "critical > 0 -> FAIL" rule).
 - `blocking` is always `false`: this subagent reports; the human decides. Moderate/minor never block.
 - `location` and `fix` may be `null` (a finding can be global or have no direct fix).
 - Mapping: each accessibility violation this agent finds is a finding; set `severity` per the classification in "What to check" above (critical/moderate/minor). `rule` is the violation id or name; `location` is the file and line or the element/selector (or `null`); `fix` is the remediation hint.

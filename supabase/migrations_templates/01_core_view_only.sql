@@ -56,7 +56,7 @@ alter table public.memberships enable row level security;
 alter table public.notifications enable row level security;
 
 -- Membership lookups via SECURITY DEFINER helpers. A policy ON memberships that
--- does `select ... from memberships` triggers the memberships policy again →
+-- does `select ... from memberships` triggers the memberships policy again ->
 -- "infinite recursion detected in policy for relation memberships". These helpers
 -- run with definer rights (RLS bypassed inside the function), breaking the cycle.
 -- They still scope to the caller: `user_id = auth.uid()`. search_path is pinned.
