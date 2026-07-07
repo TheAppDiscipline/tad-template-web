@@ -1,0 +1,64 @@
+# Example: unattended slice execution via a cloud agent (GitHub lane, autonomy L4).
+#
+# This file is INERT in .github/workflow-examples/. To activate it:
+#   1. Copy it to .github/workflows/agent-slice.yml
+#   2. Add the ANTHROPIC_API_KEY secret (repo Settings -> Secrets and variables -> Actions).
+#   3. Make the CI "gate" job a required status check on main (branch protection
+#      or a ruleset), and require review for .env*, supabase/migrations/** and
+#      .github/workflows/** so the never-auto-approve list is enforced by GitHub.
+#   4. Mark ONE ready slice as in-progress-cloud in task_plan.md, then label an
+#      issue `slice-ready` with the slice id in the title.
+#
+# The pull request is the review artifact: nothing merges without your approval
+# and a green gate. Equivalent patterns exist for Codex cloud (@codex) and the
+# GitHub Copilot coding agent; this example uses Claude Code. The action version
+# and inputs are volatile: check the anthropics/claude-code-action releases.
+
+name: Agent slice run
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: read
+
+concurrency:
+  group: slice-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  run-slice:
+    if: github.event.label.name == 'slice-ready'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the slice with Claude Code
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Read issue #${{ github.event.issue.number }} ("${{ github.event.issue.title }}").
+            It names ONE ready slice from task_plan.md. Follow AGENTS.md strictly:
+            read the slice's STEP_5_SLICE_PACKET under .discipline/packets/,
+            implement only that slice, run `npm run gate` until green (the Repair
+            Budget applies: stop after 2 identical failures and report), update
+            progress.md, emit SLICE_COMPLETION_PACKET, then open a pull request
+            from branch disc/slice-<id>. Never touch .env*, supabase/migrations/**
+            or .github/workflows/**; if the slice seems to require it, stop and
+            explain in the pull request description instead.

@@ -7,6 +7,7 @@ import { resolveProjectRoot, readDisciplineConfig } from './lib/discipline-confi
 import { DISCIPLINE_MD_ANCHORS, TASK_PLAN_ANCHORS, FINDINGS_ANCHORS, PROGRESS_ANCHORS } from './lib/anchors.js';
 import { ALL_PACKET_NAMES } from './lib/artifact-flow.js';
 import { parsePacketFile } from './lib/parse-packet.js';
+import { parsePacketMeta } from './lib/packet-meta.js';
 import { validateScorecard, type ScorecardMode } from './validate-scorecard.js';
 
 const args = minimist(process.argv.slice(2));
@@ -58,9 +59,33 @@ export function validateDiscipline(root: string): ValidationIssue[] {
   }
 
   checkPacketSemantics(root, issues);
+  checkPacketFrontmatter(root, issues);
   checkProgressLength(root, issues);
   checkProfileScorecard(root, issues);
   return issues;
+}
+
+// Optional packet frontmatter (warn-only). Packets without a `---` block are
+// legacy and fine. When frontmatter is present but malformed or fails the
+// generic schema, list it as a warning. The human-readable body stays
+// canonical, so this NEVER changes the exit code.
+function checkPacketFrontmatter(root: string, issues: ValidationIssue[]) {
+  const packetsDir = path.join(root, '.discipline', 'packets');
+  if (!fs.existsSync(packetsDir)) return;
+
+  const files = fs.readdirSync(packetsDir).filter(fileName => fileName.endsWith('.md'));
+  for (const fileName of files) {
+    const content = fs.readFileSync(path.join(packetsDir, fileName), 'utf-8');
+    const { errors } = parsePacketMeta(content);
+    for (const error of errors) {
+      issues.push({
+        severity: 'warning',
+        file: fileName,
+        message: `packet frontmatter: ${error}`,
+        detail: 'Optional metadata, advisory only. The markdown body remains canonical.',
+      });
+    }
+  }
 }
 
 function checkProfileScorecard(root: string, issues: ValidationIssue[]) {

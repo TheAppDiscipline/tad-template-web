@@ -30,6 +30,13 @@ build_output.txt
 # Discipline Loop pipeline artifacts — versioned alongside code (packets = context handoff)
 # Do NOT ignore .discipline/ contents — they are project artifacts, not build output
 
+# Substrate runtime state — machine-local, not project artifacts (see AGENTS.md "Substrate")
+.discipline/locks/
+.discipline/ledger/
+.discipline/review/
+.discipline/STOP
+.discipline/gate-report.json
+
 
 # Environment
 .env

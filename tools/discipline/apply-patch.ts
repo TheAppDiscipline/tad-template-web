@@ -6,6 +6,8 @@ import { disciplineError, disciplineInfo } from './lib/types.js';
 import { resolveProjectRoot } from './lib/discipline-config.js';
 import { parsePatchFile } from './lib/parse-patch.js';
 import { findSectionBounds, isDuplicateAnchor, PATCH_APPLICATION_ORDER, ALLOWED_PATCH_TARGETS, normalizeLineEndings } from './lib/anchors.js';
+import { withWriterLock, releaseWriterLock } from './lib/locks.js';
+import { appendLedger } from './lib/ledger.js';
 
 const args = minimist(process.argv.slice(2));
 const projectRoot = resolveProjectRoot(args['project-dir']);
@@ -33,7 +35,6 @@ function atomicWriteWithBackup(root: string, filePath: string, content: string):
 
 export async function applyPatches(root: string, isDryRun = false): Promise<number> {
   const pendingDir = path.join(root, '.discipline', 'patches', 'pending');
-  const appliedDir = path.join(root, '.discipline', 'patches', 'applied');
   if (!fs.existsSync(pendingDir)) { disciplineInfo('No .discipline/patches/pending/ directory.'); return 0; }
 
   const files = fs.readdirSync(pendingDir).filter(f => f.endsWith('.md'));
@@ -71,6 +72,28 @@ export async function applyPatches(root: string, isDryRun = false): Promise<numb
     return 0;
   }
 
+  // Mutating from here on: hold the writer lock so no other process (manual
+  // flow or a future reconciler) rewrites the same Discipline files at once.
+  // If a live owner holds it, withWriterLock throws a clear error naming it.
+  const targetsTouched = [...new Set(patches.map(p => p.targetFile))];
+  const applied = await withWriterLock(root, { tool: 'discipline:patch' }, () =>
+    applyPatchesLocked(root, patches),
+  );
+
+  try {
+    appendLedger(root, { event: 'patch_applied', targets: targetsTouched, count: applied, ok: true });
+  } catch {
+    // Ledger is best-effort observability; never fail patching because of it.
+  }
+
+  disciplineInfo(`\n${applied} patch(es) applied. Moved to .discipline/patches/applied/`);
+  return applied;
+}
+
+type PatchList = ReturnType<typeof parsePatchFile>[];
+
+function applyPatchesLocked(root: string, patches: PatchList): number {
+  const appliedDir = path.join(root, '.discipline', 'patches', 'applied');
   // Track backups for rollback
   const backupMap: Array<{ targetPath: string; backupPath: string; patchSourcePath: string; appliedPath: string }> = [];
 
@@ -145,11 +168,14 @@ export async function applyPatches(root: string, isDryRun = false): Promise<numb
         disciplineInfo('Rollback complete. All files restored to pre-patch state.');
       }
 
+      // process.exit() below skips withWriterLock's finally, so release the
+      // writer lock here to avoid leaving a stale lock behind on failure.
+      try { releaseWriterLock(root); } catch { /* best-effort cleanup */ }
+      try { appendLedger(root, { event: 'patch_applied', targets: [patch.targetFile], count: applied, ok: false }); } catch { /* best-effort */ }
       process.exit(1);
     }
   }
 
-  disciplineInfo(`\n${applied} patch(es) applied. Moved to .discipline/patches/applied/`);
   return applied;
 }
 

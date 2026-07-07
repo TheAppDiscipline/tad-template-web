@@ -13,6 +13,7 @@ import { updateProgress } from './update-progress.js';
 import { assemblePasteReady } from './assemble-paste-ready.js';
 import { logRun } from './log-run.js';
 import { STEP_ASSEMBLY_MAP } from './lib/artifact-flow.js';
+import { withWriterLock, isStopped } from './lib/locks.js';
 
 const args = minimist(process.argv.slice(2));
 const projectRoot = resolveProjectRoot(args['project-dir']);
@@ -90,29 +91,35 @@ export async function handlePacket(root: string, filePath: string) {
   let assembledStep: StepId | null = null;
   let assembledOK = false;
 
-  if (patches.length > 0) {
-    disciplineInfo(`  Extracted ${patches.length} patch(es)`);
-    if (!fs.existsSync(pendingDir)) fs.mkdirSync(pendingDir, { recursive: true });
+  // Hold the writer lock around both mutations (patch application and progress
+  // update) so a single packet's state changes are atomic against any other
+  // writer. applyPatches also takes the writer lock, but withWriterLock is
+  // re-entrant, so the inner call reuses this hold rather than re-acquiring.
+  await withWriterLock(root, { tool: 'discipline:watch' }, async () => {
+    if (patches.length > 0) {
+      disciplineInfo(`  Extracted ${patches.length} patch(es)`);
+      if (!fs.existsSync(pendingDir)) fs.mkdirSync(pendingDir, { recursive: true });
 
-    for (const patch of patches) {
-      const patchFile = path.join(pendingDir, `${new Date().toISOString().slice(0, 10)}_${patch.name}.md`);
-      fs.writeFileSync(
-        patchFile,
-        `## ${patch.name}\n\nTARGET_FILE: ${patch.targetFile}\nPATCH_MODE: ${patch.patchMode}\nANCHOR: ${patch.anchor}\n\n### CONTENT\n${patch.content}`,
-        'utf-8',
-      );
+      for (const patch of patches) {
+        const patchFile = path.join(pendingDir, `${new Date().toISOString().slice(0, 10)}_${patch.name}.md`);
+        fs.writeFileSync(
+          patchFile,
+          `## ${patch.name}\n\nTARGET_FILE: ${patch.targetFile}\nPATCH_MODE: ${patch.patchMode}\nANCHOR: ${patch.anchor}\n\n### CONTENT\n${patch.content}`,
+          'utf-8',
+        );
+      }
+
+      disciplineInfo('  Applying patches...');
+      await applyPatches(root);
+      logNotes.push(`patches=${patches.length}`);
     }
 
-    disciplineInfo('  Applying patches...');
-    await applyPatches(root);
-    logNotes.push(`patches=${patches.length}`);
-  }
-
-  if (fileName.includes('SLICE_COMPLETION_PACKET')) {
-    disciplineInfo('  Updating progress...');
-    await updateProgress(root);
-    logNotes.push('progress-updated');
-  }
+    if (fileName.includes('SLICE_COMPLETION_PACKET')) {
+      disciplineInfo('  Updating progress...');
+      await updateProgress(root);
+      logNotes.push('progress-updated');
+    }
+  });
 
   const next = detectNext(root);
   if (next) {
@@ -169,7 +176,13 @@ export function startWatcher(root: string) {
     const filePath = queue.shift()!;
 
     try {
-      await handlePacket(root, filePath);
+      // Kill switch: `.discipline/STOP` pauses processing without killing the
+      // watcher. Skip this packet (it stays in .discipline/packets/) and warn.
+      if (isStopped(root)) {
+        disciplineWarn(`.discipline/STOP present: skipping ${path.basename(filePath)}. Remove STOP to resume.`);
+      } else {
+        await handlePacket(root, filePath);
+      }
     } catch (err) {
       disciplineWarn(`Error processing ${path.basename(filePath)}: ${err instanceof Error ? err.message : err}`);
     } finally {

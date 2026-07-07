@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "discipline.packet_meta.v1",
+  "title": "Discipline packet frontmatter",
+  "description": "Optional YAML frontmatter for a Discipline Loop packet. The human-readable markdown body remains canonical; this metadata is advisory (warn-only) and never changes any gate or validation exit code.",
+  "type": "object",
+  "required": [
+    "schema",
+    "version",
+    "id",
+    "status"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "schema": {
+      "type": "string",
+      "pattern": "^discipline\\.packet"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+(\\.\\d+){0,2}(-[0-9A-Za-z.-]+)?$"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "validated",
+        "ready",
+        "superseded",
+        "ready-for-human",
+        "approved",
+        "rejected"
+      ]
+    },
+    "slice": {
+      "type": [
+        "string",
+        "number"
+      ]
+    },
+    "produced_by": {
+      "type": "object"
+    }
+  }
+}

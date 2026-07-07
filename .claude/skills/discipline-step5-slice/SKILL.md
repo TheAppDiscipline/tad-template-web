@@ -48,6 +48,14 @@ Missing: <list of fields>
 
 ### Phase 1: Verify preconditions
 
+- The slice lease is yours. Acquire it before touching any state (One Writer Per Slice as mechanism, not just doctrine):
+
+```bash
+npm run discipline:lease -- acquire <slice-id>
+```
+
+If the lease is already held by a live owner, STOP: another agent or session owns this slice. Do not double-write. Take it over only after a human confirms the other writer is gone (`npm run discipline:lease -- release <slice-id> --force` is a deliberate human action, never automatic).
+
 - `.discipline/patches/pending/` is empty (if there are patches, apply them first with `npm run discipline:patch`).
 - Repo changes match the slice's scope (check `git diff --stat`).
 - Touched files are inside the slice's scope IN.
@@ -198,6 +206,7 @@ If new info came up:
 ```bash
 npm run discipline:progress      # updates progress.md from SLICE_COMPLETION_PACKET
 npm run discipline:log -- --step 5 --tool "/discipline-step5-slice" --notes "<slice id> closed, repair=<N>/3, deploy=<signal>"
+npm run discipline:lease -- release <slice-id>   # close-out: frees One Writer Per Slice
 ```
 
 If the watcher is running, these steps are automatic. If not, run them manually.
@@ -239,6 +248,7 @@ Next: <paste `paste-ready/step-X-input.md` into /discipline-stepX or continue th
 - If patches are pending and `discipline:patch` fails: stop, report the conflict, redirect to the apply-patch-blocks guide in the vault (sold separately).
 - If the gate fails with an error outside the 20 listed in 81a: apply the Repair Budget normally.
 - If manual verification is reported as failed: update SLICE_COMPLETION_PACKET with `Outcome: partial` or `blocked` and leave the slice open for a new iteration.
+- If the slice stays open (`partial` / `blocked` / Repair Budget stop): still release the slice lease before ending the session. The lease guards against concurrent writers, not the slice's status.
 
 ---
 
@@ -247,6 +257,7 @@ Next: <paste `paste-ready/step-X-input.md` into /discipline-stepX or continue th
 - The Repair Budget does not relax: 3 attempts with no new info = hard stop.
 - Manual verification is not optional. A green gate does not mean the slice is done.
 - Do not touch code from ANOTHER slice while this one is running.
+- Acquire the slice lease at the start and release it at the end, every time. Never work on a slice whose lease a live owner holds.
 - Do not update `discipline.md` from this skill (that is Step 2).
 - If 5+ open issues come up, the slice was probably poorly defined, go back to Step 4.
 - The skill does not write the slice's code. It only closes it.
