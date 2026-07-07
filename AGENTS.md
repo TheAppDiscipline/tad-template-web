@@ -56,6 +56,8 @@ npm run discipline:validate   # check pipeline integrity and packet completeness
 npm run discipline:watch      # auto-run the plumbing on new packets
 ```
 
+There is no batch-to-cloud script: the former `discipline:codex-batch` depended on a non-public Codex API endpoint and was removed. For parallel or unattended slice execution, use the GitHub lane instead: one branch/PR per slice driven by your cloud agent (Claude Code GitHub Action, Codex cloud, Copilot coding agent), with CI running `npm run gate` on every push (`.github/workflows/ci.yml`) as the merge check.
+
 ## Validation Rule
 
 Run `npm run discipline:validate` before closing a pipeline branch or opening a PR that touches Discipline Loop artifacts.

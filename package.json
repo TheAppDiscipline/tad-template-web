@@ -62,7 +62,6 @@
     "discipline:step1-prep": "tsx tools/discipline/step1-prep.ts",
     "discipline:ai-scaffold": "tsx tools/discipline/ai-scaffold.ts",
     "discipline:test-scaffold": "tsx tools/discipline/test-scaffold.ts",
-    "discipline:codex-batch": "tsx tools/discipline/codex-batch.ts",
     "discipline:audit-merge": "tsx tools/discipline/audit-merge.ts",
     "discipline": "tsx tools/discipline/cli.ts",
     "deploy:preview": "vercel",

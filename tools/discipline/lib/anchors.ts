@@ -62,6 +62,16 @@ export function headingLevel(line: string): number {
   return match ? match[1].length : 0;
 }
 
+/**
+ * Anchor comparison normalizes Unicode to NFC. A heading edited on macOS can
+ * arrive in NFD ("ó" stored as "o" + U+0301) and would never match its NFC
+ * twin byte by byte, so the patch would fail even though both strings render
+ * identically.
+ */
+function anchorsEqual(line: string, anchor: string): boolean {
+  return line.trim().normalize('NFC') === anchor.trim().normalize('NFC');
+}
+
 export function findSectionBounds(
   lines: string[],
   anchor: string
@@ -69,7 +79,7 @@ export function findSectionBounds(
   let startIdx = -1;
 
   for (let i = 0; i < lines.length; i++) {
-    if (lines[i].trim() === anchor.trim()) {
+    if (anchorsEqual(lines[i], anchor)) {
       if (startIdx !== -1) {
         return null; // duplicate anchor
       }
@@ -96,7 +106,7 @@ export function findSectionBounds(
 export function isDuplicateAnchor(lines: string[], anchor: string): boolean {
   let count = 0;
   for (const line of lines) {
-    if (line.trim() === anchor.trim()) count++;
+    if (anchorsEqual(line, anchor)) count++;
     if (count > 1) return true;
   }
   return false;

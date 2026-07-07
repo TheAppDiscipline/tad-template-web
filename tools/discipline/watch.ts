@@ -6,6 +6,7 @@ import { watch as chokidarWatch } from 'chokidar';
 import minimist from 'minimist';
 import { disciplineInfo, disciplineWarn, type StepId } from './lib/types.js';
 import { resolveProjectRoot } from './lib/discipline-config.js';
+import { copyToClipboard as writeTextToClipboard } from './lib/clipboard.js';
 import { extractEmbeddedPatches } from './lib/parse-patch.js';
 import { applyPatches } from './apply-patch.js';
 import { updateProgress } from './update-progress.js';
@@ -56,9 +57,7 @@ function detectFeedbackBranch(root: string): StepId | null {
 
 function copyToClipboard(content: string) {
   try {
-    if (process.platform === 'win32') execSync('clip', { input: content });
-    else if (process.platform === 'darwin') execSync('pbcopy', { input: content });
-    else execSync('xclip -selection clipboard', { input: content });
+    writeTextToClipboard(content);
     disciplineInfo('  Copied paste-ready to clipboard.');
   } catch {
     disciplineWarn('  Could not copy paste-ready to clipboard.');

@@ -5,6 +5,7 @@ import { execSync } from 'node:child_process';
 import minimist from 'minimist';
 import { disciplineError, disciplineInfo, disciplineWarn } from './lib/types.js';
 import { resolveProjectRoot } from './lib/discipline-config.js';
+import { copyToClipboard } from './lib/clipboard.js';
 import { STEP_ASSEMBLY_MAP, VALID_STEPS } from './lib/artifact-flow.js';
 
 const args = minimist(process.argv.slice(2));
@@ -63,8 +64,7 @@ if (isMain) {
   assemblePasteReady(projectRoot, step!).then(assembled => {
     if (useClipboard) {
       try {
-        if (process.platform === 'win32') execSync('clip', { input: assembled });
-        else execSync('pbcopy', { input: assembled });
+        copyToClipboard(assembled);
         disciplineInfo('Copied to clipboard.');
       } catch { disciplineWarn('Could not copy to clipboard.'); }
     }

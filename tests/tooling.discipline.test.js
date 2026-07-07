@@ -781,3 +781,60 @@ test('check-db-types: parseBackendProvider ignores empty values and VITE_BACKEND
   assert.equal(parseBackendProvider('- backend_provider = supabase'), 'SUPABASE')
   assert.equal(parseBackendProvider('- BACKEND_PROVIDER: local-mock'), 'LOCAL-MOCK')
 })
+
+test('discipline patch matches an NFD heading against its NFC anchor', () => {
+  const projectRoot = createDisciplineProject()
+  const progressPath = path.join(projectRoot, 'progress.md')
+  // "## Sección Local" with the ó decomposed as o + U+0301 (how macOS tools often emit it)
+  fs.appendFileSync(progressPath, '\n## Seccio\u0301n Local\n\n- old content\n', 'utf8')
+
+  fs.writeFileSync(
+    path.join(projectRoot, '.discipline', 'patches', 'pending', 'nfc-anchor.md'),
+    '## nfc_anchor_patch\n\nTARGET_FILE: progress.md\nPATCH_MODE: replace_section\nANCHOR: ## Secci\u00F3n Local\n\n### CONTENT\n- replaced via NFC-normalized anchor\n',
+    'utf8',
+  )
+
+  const result = runTsx('tools/discipline/apply-patch.ts', ['--project-dir', projectRoot])
+  assert.equal(result.status, 0, getOutput(result))
+  assert.match(fs.readFileSync(progressPath, 'utf8'), /replaced via NFC-normalized anchor/)
+})
+
+test('discipline patch flags NFC/NFD twin headings as duplicate anchors', () => {
+  const projectRoot = createDisciplineProject()
+  const progressPath = path.join(projectRoot, 'progress.md')
+  fs.appendFileSync(progressPath, '\n## Secci\u00F3n Local\n\n- nfc twin\n\n## Seccio\u0301n Local\n\n- nfd twin\n', 'utf8')
+
+  fs.writeFileSync(
+    path.join(projectRoot, '.discipline', 'patches', 'pending', 'dup-anchor.md'),
+    '## dup_anchor_patch\n\nTARGET_FILE: progress.md\nPATCH_MODE: append\nANCHOR: ## Secci\u00F3n Local\n\n### CONTENT\n- must not apply\n',
+    'utf8',
+  )
+
+  const result = runTsx('tools/discipline/apply-patch.ts', ['--project-dir', projectRoot])
+  assert.notEqual(result.status, 0)
+  assert.match(getOutput(result), /Duplicate anchor/)
+  assert.doesNotMatch(fs.readFileSync(progressPath, 'utf8'), /must not apply/)
+})
+
+test('clipboard on win32 routes through PowerShell Set-Clipboard reading the temp file as UTF-8', () => {
+  const result = runTsx('tools/discipline/lib/clipboard.ts', ['--print-command', 'win32'])
+  assert.equal(result.status, 0, getOutput(result))
+  const command = JSON.parse(result.stdout)
+  assert.equal(command.file, 'powershell.exe')
+  const psCommand = command.args[command.args.length - 1]
+  assert.match(psCommand, /Set-Clipboard/)
+  assert.match(psCommand, /-Encoding UTF8/)
+})
+
+test('discipline tooling never shells out to clip.exe (OEM codepage corrupts UTF-8 accents)', () => {
+  const offenders = []
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name)
+      if (entry.isDirectory()) walk(full)
+      else if (entry.name.endsWith('.ts') && /['"`]clip['"`]/.test(fs.readFileSync(full, 'utf8'))) offenders.push(entry.name)
+    }
+  }
+  walk(path.join(repoRoot, 'tools', 'discipline'))
+  assert.deepEqual(offenders, [])
+})
