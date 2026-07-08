@@ -2,7 +2,7 @@
 /**
  * Discipline Loop AI Cost Dashboard
  *
- * Reads the Claude Code usage log (~/.claude/usage.json) and prints a daily cost summary.
+ * Reads a Claude Code usage log, when available, and prints a daily cost summary.
  *
  * Usage:
  *   node tools/ai-cost-dashboard.js
@@ -11,17 +11,19 @@
  * Requires: Node 18+. No runtime deps.
  */
 
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
 
-const USAGE_FILE = path.join(os.homedir(), '.claude', 'usage.json');
+const USAGE_FILE = process.env.DISCIPLINE_CLAUDE_USAGE_FILE || path.join(os.homedir(), '.claude', 'usage.json');
 const BUDGET_DEFAULT = 150; // USD/month; override via env DISCIPLINE_AI_BUDGET
 
 function loadUsage() {
   if (!fs.existsSync(USAGE_FILE)) {
-    console.log('~/.claude/usage.json not found. Is Claude Code installed?');
-    console.log('Run a few Claude Code commands first so the usage log gets created.');
+    console.log(`${USAGE_FILE} not found.`);
+    console.log('This dashboard only works when Claude Code writes a local usage JSON file.');
+    console.log('If you already used Claude Code, check billing/export in Claude Code or Anthropic instead.');
+    console.log('If you have a JSON export, rerun with DISCIPLINE_CLAUDE_USAGE_FILE=<path-to-json>.');
     process.exit(1);
   }
   try {
