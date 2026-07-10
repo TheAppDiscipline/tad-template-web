@@ -218,7 +218,8 @@ Rules:
   - Install the chosen provider SDK (examples: npm install @supabase/supabase-js or npm install firebase)
   - Configure .env from the matching .env.example
   - Run npm run backend:smoke
-  - If AI_FEATURES=enabled: install LLM SDK(s) and run npm run ai:smoke
+  - If AI_FEATURES=enabled: declare the P0 AI feature name(s), create the minimum prompt/schema/eval fixture files needed for npm run ai:eval to pass, and run npm run ai:eval in fixture mode.
+  - If AI_FEATURES=enabled but Step 2.5 has not chosen the live provider yet: do NOT install a paid/live LLM SDK in Slice 0 unless the provider is already decided. Keep the fixture eval green first.
   - Apply the core migration if the backend requires it`,
 
     8: `Review all outputs we generated and look for inconsistencies.
@@ -320,6 +321,8 @@ Rules:
 - Do not generate this packet if AI_FEATURES=none.
 - Do not invent new AI features.
 - Do not write final prompts or schemas yet.
+- Make it clear which prompt/schema/eval files Step 2.5 must create so Slice 0 can keep npm run ai:eval green in fixture mode before any live provider is wired.
+- PROVIDER_PREFERENCE may stay undecided here. Do not force a paid/live SDK choice before Step 2.5 has enough evidence.
 - It must be easy to paste into Step 2.5.`,
 
     11: `Now generate one block called STEP_3_STITCH_PACKET.
@@ -346,48 +349,54 @@ Rules:
 
     12: `Now generate one block called STEP_4_EXECUTION_PACKET.
 
+Use this packet header exactly:
+
+# STEP_4_EXECUTION_PACKET
+
+STATUS: draft
+
+Then use these exact markdown section headings so discipline:validate can read the packet:
+
 It must be self-contained and leave Step 4 almost ready, even though Step 2 may later validate and replace it.
 
-Include, in this order:
-
-1. PRODUCT SUMMARY
+## Product summary
 - product goal
 - main user
 - main use case
 
-2. MVP BOUNDARY
+## MVP boundary
 - what is included
 - what is not included yet
 
-3. ARCHITECTURE LOCKS
+## Architecture locks
 - architecture switches already chosen
 - non-negotiable system constraints
 
-4. DATA / ACCESS / SYNC CONTRACTS
+## Data / access / sync contracts
 - key entities
 - key relationships
 - minimum access rules
 - minimum sync rules
 
-5. SLICE DRAFT
+## Slice
 - Slice 0 to Slice 4
 - short goal
 - tentative scope
 - obvious dependencies
 
-6. BOOTSTRAP REQUIREMENTS
+## Bootstrap requirements
 - what must exist first to start the app
 
-7. UI SURFACE SUMMARY
+## UI surface summary
 - P0 screen names
 
-8. AI SURFACE SUMMARY
+## AI surface summary
 - P0 AI features, if any
 
-9. RISKS / EDGE CASES
+## Risks / edge cases
 - maximum 8
 
-10. IMPLEMENTATION GUARDRAILS
+## Implementation guardrails
 - what must not be reinvented later
 - what must not grow prematurely
 

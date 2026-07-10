@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -39,6 +40,15 @@ function getOutput(result) {
     return `${result.stdout}${result.stderr}`
 }
 
+function withTempProject(fn) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tad-template-'))
+    try {
+        return fn(dir)
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true })
+    }
+}
+
 function assertGeneratedRlsIsStructurallyValid(sql) {
     const createTable = sql.match(/CREATE TABLE IF NOT EXISTS public\.items \([\s\S]*?\n\);/)
     assert.ok(createTable, 'generated SQL should include a complete CREATE TABLE block')
@@ -53,6 +63,84 @@ test('discipline:rls-generate emits structurally valid SQL with guarded update p
 
     assert.equal(result.status, 0, getOutput(result))
     assertGeneratedRlsIsStructurallyValid(result.stdout)
+})
+
+test('migration lint accepts ownership helpers defined in earlier migration files only within the same directory', () => {
+    withTempProject((dir) => {
+        const migrations = path.join(dir, 'supabase', 'migrations')
+        fs.mkdirSync(migrations, { recursive: true })
+        fs.writeFileSync(path.join(migrations, '0001_helpers.sql'), `
+CREATE TABLE IF NOT EXISTS public.trips (
+    id UUID PRIMARY KEY,
+    owner_id UUID NOT NULL
+);
+ALTER TABLE public.trips ENABLE ROW LEVEL SECURITY;
+
+CREATE OR REPLACE FUNCTION public.is_trip_member(trip_id UUID)
+RETURNS BOOLEAN
+LANGUAGE SQL
+SECURITY DEFINER -- Discipline Loop:ALLOW_SECURITY_DEFINER
+SET search_path = public
+AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM public.trips
+        WHERE trips.id = trip_id
+        AND trips.owner_id = auth.uid()
+    );
+$$;
+
+CREATE POLICY "trip owners can read"
+ON public.trips
+FOR SELECT
+USING (owner_id = auth.uid());
+`, 'utf8')
+        fs.writeFileSync(path.join(migrations, '0002_activities.sql'), `
+CREATE TABLE IF NOT EXISTS public.activities (
+    id UUID PRIMARY KEY,
+    trip_id UUID NOT NULL REFERENCES public.trips(id)
+);
+ALTER TABLE public.activities ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "members can read activities"
+ON public.activities
+FOR SELECT
+USING (public.is_trip_member(trip_id));
+`, 'utf8')
+
+        const result = spawnSync(process.execPath, [path.join(repoRoot, 'tools', 'migration_lint.js')], {
+            cwd: dir,
+            encoding: 'utf8',
+        })
+
+        assert.equal(result.status, 0, getOutput(result))
+    })
+})
+
+test('migration lint still rejects permissive RLS after cross-file helper collection', () => {
+    withTempProject((dir) => {
+        const migrations = path.join(dir, 'supabase', 'migrations')
+        fs.mkdirSync(migrations, { recursive: true })
+        fs.writeFileSync(path.join(migrations, '0001_insecure.sql'), `
+CREATE TABLE IF NOT EXISTS public.items (
+    id UUID PRIMARY KEY,
+    owner_id UUID NOT NULL
+);
+ALTER TABLE public.items ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "bad public read"
+ON public.items
+FOR SELECT
+USING (true);
+`, 'utf8')
+
+        const result = spawnSync(process.execPath, [path.join(repoRoot, 'tools', 'migration_lint.js')], {
+            cwd: dir,
+            encoding: 'utf8',
+        })
+
+        assert.equal(result.status, 1, getOutput(result))
+        assert.match(getOutput(result), /evaluates to true/)
+    })
 })
 
 function createMemoryStorage() {

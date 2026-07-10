@@ -190,6 +190,14 @@ function checkPacketSemantics(root: string, issues: ValidationIssue[]) {
 
     if (!rules) continue;
 
+    if (!hasReadablePacketStart(fileContent)) {
+      issues.push({
+        severity: 'error',
+        file: fileName,
+        message: `${packetName} must start with "# ${packetName}" or YAML frontmatter; put STATUS after the heading/frontmatter.`,
+      });
+    }
+
     if (rules.status && parsed.status !== rules.status) {
       issues.push({
         severity: 'error',
@@ -227,6 +235,11 @@ function hasPacketHeading(body: string, heading: string): boolean {
     new RegExp(`^[-*]\\s*${escaped}\\s*:\\s*.+$`, 'im'),
   ];
   return patterns.some(pattern => pattern.test(body));
+}
+
+function hasReadablePacketStart(content: string): boolean {
+  const firstLine = (content.split('\n')[0] ?? '').trim().replace(/^\uFEFF/, '');
+  return firstLine === '---' || /^#{1,3}\s+.+/.test(firstLine);
 }
 
 export function showStatus(root: string): void {

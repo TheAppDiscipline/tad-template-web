@@ -33,12 +33,22 @@ const issues = [];
 
 for (const dir of dirs) {
   const files = fs.readdirSync(dir).filter(f => f.endsWith('.sql'));
-  for (const file of files) {
+  const records = files.map(file => {
     const filePath = path.join(dir, file);
     const content = fs.readFileSync(filePath, 'utf-8');
-    const relPath = path.relative(process.cwd(), filePath);
-
-    lintFile(relPath, content);
+    return {
+      relPath: path.relative(process.cwd(), filePath),
+      content,
+    };
+  });
+  const ownershipFns = new Set();
+  for (const record of records) {
+    for (const fn of collectOwnershipFunctions(record.content)) {
+      ownershipFns.add(fn);
+    }
+  }
+  for (const record of records) {
+    lintFile(record.relPath, record.content, ownershipFns);
   }
 }
 
@@ -111,7 +121,7 @@ function permissiveReason(expr) {
   return 'no "<col> = auth.uid()" comparison with a real ownership column';
 }
 
-function lintFile(filePath, content) {
+function lintFile(filePath, content, directoryOwnershipFns = new Set()) {
   const upper = content.toUpperCase();
   const lines = content.split('\n');
 
@@ -203,7 +213,7 @@ function lintFile(filePath, content) {
   // than blacklisting specific literals. This catches the equivalent bypasses:
   // `USING (true)`, `((auth.uid() is not null))`, `auth.role() = 'authenticated'`,
   // `auth.jwt() ->> ...`, and role-only policies with no predicate at all.
-  const ownershipFns = collectOwnershipFunctions(content);
+  const ownershipFns = new Set([...directoryOwnershipFns, ...collectOwnershipFunctions(content)]);
   const policyBlocks = [...content.matchAll(/create\s+policy\s+[\s\S]*?;/gi)];
   for (const pol of policyBlocks) {
     const block = pol[0];

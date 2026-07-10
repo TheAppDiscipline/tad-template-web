@@ -114,6 +114,18 @@ test('discipline validate rejects an incomplete slice completion packet', () => 
   assert.match(getOutput(result), /SLICE_COMPLETION_PACKET incomplete: missing Deploy signal/)
 })
 
+test('discipline validate explains packet heading before STATUS ordering', () => {
+  const projectRoot = createDisciplineProject({
+    'STEP_4_EXECUTION_PACKET.md': `STATUS: validated\n\n# STEP_4_EXECUTION_PACKET\n\n## Product summary\n- x\n\n## Slice\n- S0\n`,
+  })
+
+  const result = runTsx('tools/discipline/validate-discipline.ts', ['--project-dir', projectRoot])
+
+  assert.notEqual(result.status, 0)
+  assert.match(getOutput(result), /must start with "# STEP_4_EXECUTION_PACKET" or YAML frontmatter/)
+  assert.match(getOutput(result), /put STATUS after the heading\/frontmatter/)
+})
+
 test('discipline validate accepts complete post-deploy and hardening packets', () => {
   const projectRoot = createDisciplineProject({
     'POST_DEPLOY_FEEDBACK_PACKET.md': `# POST_DEPLOY_FEEDBACK_PACKET\n\nSTATUS: ready\nSOURCE_STEP: Step 6\n\n## Recommended branch\n- Step 7 productization\n`,
