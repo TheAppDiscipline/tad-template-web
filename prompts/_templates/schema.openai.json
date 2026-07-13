@@ -1,0 +1,71 @@
+{
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+        "schema_version",
+        "request_id",
+        "ok",
+        "data",
+        "error"
+    ],
+    "properties": {
+        "schema_version": {
+            "type": "string"
+        },
+        "request_id": {
+            "type": "string"
+        },
+        "ok": {
+            "type": "boolean"
+        },
+        "data": {
+            "type": [
+                "object",
+                "null"
+            ],
+            "additionalProperties": false,
+            "description": "TODO: inline the real shape of your feature. OpenAI json_schema strict needs additionalProperties:false and every property listed in required.",
+            "required": [],
+            "properties": {}
+        },
+        "error": {
+            "type": [
+                "object",
+                "null"
+            ],
+            "additionalProperties": false,
+            "required": [
+                "code",
+                "message",
+                "missing_fields",
+                "retryable"
+            ],
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "enum": [
+                        "NONE",
+                        "MISSING_FIELDS",
+                        "AMBIGUOUS",
+                        "INVALID_INPUT",
+                        "POLICY_BLOCK",
+                        "PROVIDER_ERROR",
+                        "INTERNAL_ERROR"
+                    ]
+                },
+                "message": {
+                    "type": "string"
+                },
+                "missing_fields": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "retryable": {
+                    "type": "boolean"
+                }
+            }
+        }
+    }
+}

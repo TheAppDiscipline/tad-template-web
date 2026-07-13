@@ -3,7 +3,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import Ajv2020 from 'ajv/dist/2020.js'
 import addFormats from 'ajv-formats'
-import { getProvider } from './llm_providers/index.js'
+import { getProvider, normalizeProviderName } from './llm_providers/index.js'
+import { resolveProviderResponseSchema } from './llm_providers/response_schema.js'
 import { isAiEnabled, listConfiguredEvalFeatures } from './project_state.js'
 
 function parseArgs(argv) {
@@ -115,6 +116,22 @@ async function runFeatureEval({ feature, mode, providerName, modelOverride, maxC
 
     const provider = mode === 'live' ? await getProvider(providerName) : null
 
+    // In live mode, providers with native structured output receive a MINIMAL,
+    // provider-shaped schema — never the canonical JSON Schema 2020-12, which
+    // Gemini rejects with a 400 (Unknown name "$schema"). The canonical `schema`
+    // still enforces validation via AJV below. See tools/LLM_TOOLS_README.md §8.
+    let responseSchema = schema
+    if (mode === 'live') {
+        const resolved = resolveProviderResponseSchema({ feature, provider: providerName, canonicalSchema: schema })
+        responseSchema = resolved.schema
+        if (resolved.source === 'canonical') {
+            const providerLabel = normalizeProviderName(providerName) || '<provider>'
+            console.warn(`[WARN] ${feature}: no minimal provider schema found (looked for prompts/${feature}/schema.${providerLabel}.json then schema.aistudio.json). Passing the canonical schema.json as responseSchema — some providers accept it, but Gemini returns 400 for $schema/$defs/additionalProperties/minimum. Add prompts/${feature}/schema.${providerLabel}.json (OpenAI-shaped: additionalProperties:false + all fields required) or schema.aistudio.json (Gemini-shaped) to silence this.`)
+        } else {
+            console.log(`[INFO] ${feature}: using ${resolved.source} response schema from ${resolved.path}; canonical schema.json still validates the response via AJV.`)
+        }
+    }
+
     for (const c of cases) {
         const id = c.id ?? '(no-id)'
         const input = c.input
@@ -139,7 +156,7 @@ async function runFeatureEval({ feature, mode, providerName, modelOverride, maxC
                     model: modelOverride,
                     system,
                     input,
-                    responseSchema: schema, // Providers use this when they support structured output
+                    responseSchema, // Minimal, provider-shaped schema resolved above; canonical schema.json still validates via AJV.
                 })
             } else {
                 throw new Error(`Unknown mode: ${mode}`)

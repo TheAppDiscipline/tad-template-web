@@ -12,11 +12,16 @@ These scripts support the AI Studio Lane with:
 For a feature `<feature>`:
 
 - `prompts/<feature>/system.md`
-- `prompts/<feature>/schema.json`
+- `prompts/<feature>/schema.json` — canonical JSON Schema 2020-12 (validation boundary)
+- `prompts/<feature>/schema.<provider>.json` — **optional**, per-provider minimal
+  schema for live mode (e.g. `schema.openai.json`). Use for OpenAI/openai-compatible.
+- `prompts/<feature>/schema.aistudio.json` — **optional**, generic Gemini-shaped
+  minimal schema for live mode. See §8 for how the eval runner picks between them.
 - `evals/<feature>.jsonl`
 
 Base templates:
-- `prompts/_templates/*`
+- `prompts/_templates/*` (includes `schema.json`, plus `schema.aistudio.json` and
+  `schema.openai.json` as minimal-schema examples for the two opposite shapes)
 - `evals/_templates/*`
 
 ---
@@ -245,14 +250,41 @@ of the same contract**, which this tooling already relies on:
   output should re-validate too. It needs the draft-2020-12 build of AJV:
   `import Ajv2020 from 'ajv/dist/2020.js'`. A plain `new Ajv()` cannot resolve the
   `.../2020-12/schema` meta-schema and throws.
-- **Provider** — a hand-minimized copy (e.g. `prompts/<feature>/schema.aistudio.json`)
-  passed to the model as `responseSchema`. `tools/llm_providers/payloads.js` →
-  `buildGeminiJsonRequest` forwards `responseSchema` **verbatim, without sanitizing
-  it**, so the caller must pass the minimal version, never the canonical one.
+- **Provider** — a hand-minimized copy (e.g. `prompts/<feature>/schema.aistudio.json`
+  or `prompts/<feature>/schema.openai.json`) passed to the model as `responseSchema`.
+  The adapter (`tools/llm_providers/payloads.js` → `buildGeminiJsonRequest`) forwards
+  `responseSchema` **verbatim, without sanitizing it** — that is deliberate: the
+  adapter transports the request shape, it does not rewrite schema content. So the
+  **caller** owns which representation to pass, and must pass the minimal version,
+  never the canonical one.
 
 The numeric/size constraints are **not lost** by minimizing the provider schema:
 they stay in `schema.json` and AJV enforces them against the response after the
 call.
+
+### How `tools/llm_eval.js` picks the provider schema (live mode)
+
+The eval runner is a caller, so it does the picking for you via
+`resolveProviderResponseSchema` (`tools/llm_providers/response_schema.js`) before
+the call. Only the canonical `schema.json` keeps validating the response with AJV
+afterwards. Resolution is by precedence:
+
+1. `prompts/<feature>/schema.<provider>.json` — provider-specific (e.g.
+   `schema.openai.json`). **This is the correct path for OpenAI/openai-compatible**,
+   whose `json_schema` strict mode requires the OPPOSITE of Gemini:
+   `additionalProperties: false` and every property listed in `required`.
+2. `prompts/<feature>/schema.aistudio.json` — generic Gemini-shaped minimal schema.
+   Safe **only** for Gemini and Gemini-shaped providers; it would fail OpenAI strict.
+3. Canonical `schema.json` — fallback, emitted with a clear `[WARN]`. Some providers
+   accept it; Gemini returns `400 INVALID_ARGUMENT: Unknown name "$schema"`.
+
+**Do not reuse one minimal file across providers.** The Gemini shape (drop
+`additionalProperties`, no `$ref`/`$defs`, `nullable` instead of type-arrays, no
+numeric constraints) and the OpenAI strict shape (`additionalProperties: false`,
+all fields `required`) are mutually exclusive. Keep one `schema.<provider>.json`
+per target you run live, or a single `schema.aistudio.json` when you only run
+Gemini. `prompts/_templates/schema.aistudio.json` and `schema.openai.json` show
+both shapes derived from the same canonical `schema.json`.
 
 ### What Gemini's subset rejects (verified 2026-07-13, AI Studio + API)
 

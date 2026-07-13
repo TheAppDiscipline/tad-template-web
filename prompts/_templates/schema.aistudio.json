@@ -1,0 +1,63 @@
+{
+    "type": "object",
+    "required": [
+        "schema_version",
+        "request_id",
+        "ok",
+        "data",
+        "error"
+    ],
+    "properties": {
+        "schema_version": {
+            "type": "string"
+        },
+        "request_id": {
+            "type": "string"
+        },
+        "ok": {
+            "type": "boolean"
+        },
+        "data": {
+            "type": "object",
+            "nullable": true,
+            "description": "TODO: inline the real shape of your feature here. Gemini forbids schema references, so copy the shape in instead of pointing at schema.json.",
+            "properties": {}
+        },
+        "error": {
+            "type": "object",
+            "nullable": true,
+            "required": [
+                "code",
+                "message",
+                "missing_fields",
+                "retryable"
+            ],
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "enum": [
+                        "NONE",
+                        "MISSING_FIELDS",
+                        "AMBIGUOUS",
+                        "INVALID_INPUT",
+                        "POLICY_BLOCK",
+                        "PROVIDER_ERROR",
+                        "INTERNAL_ERROR"
+                    ]
+                },
+                "message": {
+                    "type": "string"
+                },
+                "missing_fields": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "retryable": {
+                    "type": "boolean"
+                }
+            }
+        }
+    }
+}

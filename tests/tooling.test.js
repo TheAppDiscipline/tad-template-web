@@ -28,6 +28,7 @@ import {
     buildOpenAiCompatibleJsonRequest,
     toChatCompletionsEndpoint,
 } from '../tools/llm_providers/openai-compatible.js'
+import { resolveProviderResponseSchema } from '../tools/llm_providers/response_schema.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(__dirname, '..')
@@ -266,6 +267,42 @@ test('LLM provider payloads use strict structured outputs when a schema is suppl
     const gemini = buildGeminiJsonRequest({ system: 'system', input: { ping: true }, responseSchema: schema })
     assert.equal(gemini.config.responseMimeType, 'application/json')
     assert.deepEqual(gemini.config.responseSchema, schema)
+})
+
+test('resolveProviderResponseSchema prefers provider-specific, then aistudio, then canonical', () => {
+    withTempProject((dir) => {
+        const feature = 'demo'
+        const promptsDir = path.join(dir, 'prompts')
+        const featureDir = path.join(promptsDir, feature)
+        fs.mkdirSync(featureDir, { recursive: true })
+
+        const canonicalSchema = { $schema: 'x', type: 'object', additionalProperties: false }
+        const aistudioSchema = { type: 'object', properties: { ok: { type: 'boolean' } } }
+        const geminiSchema = { type: 'object', properties: { ok: { type: 'boolean' }, note: { type: 'string' } } }
+
+        // Only canonical available -> fallback with source 'canonical'.
+        const fallback = resolveProviderResponseSchema({ feature, provider: 'gemini', canonicalSchema, promptsDir })
+        assert.equal(fallback.source, 'canonical')
+        assert.equal(fallback.path, null)
+        assert.deepEqual(fallback.schema, canonicalSchema)
+
+        // aistudio present -> generic minimal wins over canonical.
+        fs.writeFileSync(path.join(featureDir, 'schema.aistudio.json'), JSON.stringify(aistudioSchema), 'utf8')
+        const generic = resolveProviderResponseSchema({ feature, provider: 'gemini', canonicalSchema, promptsDir })
+        assert.equal(generic.source, 'aistudio-generic')
+        assert.deepEqual(generic.schema, aistudioSchema)
+
+        // provider-specific present -> wins over aistudio, provider name is case-insensitive.
+        fs.writeFileSync(path.join(featureDir, 'schema.gemini.json'), JSON.stringify(geminiSchema), 'utf8')
+        const specific = resolveProviderResponseSchema({ feature, provider: 'GEMINI', canonicalSchema, promptsDir })
+        assert.equal(specific.source, 'provider-specific')
+        assert.deepEqual(specific.schema, geminiSchema)
+
+        // A different provider with no specific file falls back to the generic aistudio schema.
+        const other = resolveProviderResponseSchema({ feature, provider: 'openai', canonicalSchema, promptsDir })
+        assert.equal(other.source, 'aistudio-generic')
+        assert.deepEqual(other.schema, aistudioSchema)
+    })
 })
 
 test('OpenAI provider payload keeps json_object only as the no-schema compatibility fallback', () => {
