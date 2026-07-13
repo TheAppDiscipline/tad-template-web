@@ -119,6 +119,21 @@ Paste your schema:
 
 Generate `prompts/<feature-name>/schema.json` with the full wrapper. Validate with AJV (already in deps).
 
+> **Gotcha — providers need a second, minimal schema.** Models with native
+> structured output (Gemini `responseSchema`, OpenAI `json_schema`, Grok,
+> Mistral) consume a restricted OpenAPI subset, not full JSON Schema. Gemini
+> rejects `additionalProperties`, type-arrays (`["string","null"]` → use
+> `nullable`), `$defs`/`$ref`/`allOf`, and
+> `minimum`/`maximum`/`minItems`/`maxItems` (the last group fails with a generic
+> "An internal error has occurred", hard to diagnose). So produce **two** files:
+> the canonical `prompts/<feature-name>/schema.json` above (validated by AJV in
+> `tools/llm_eval.js`, which imports `Ajv2020` from `ajv/dist/2020.js`) and a
+> minimal provider copy (e.g. `prompts/<feature-name>/schema.aistudio.json`) that
+> you paste as `responseSchema`. AJV still enforces the numeric/size constraints
+> against the canonical schema after the response. In AI Studio, paste JSON via
+> the "Structured outputs" **Code Editor** tab. Full list + grounding/billing
+> caveats: `tools/LLM_TOOLS_README.md` §8.
+
 ### Phase 3: Prompt iteration in AI Studio
 
 This phase is manual. The skill generates the base prompt + an invitation to iterate:

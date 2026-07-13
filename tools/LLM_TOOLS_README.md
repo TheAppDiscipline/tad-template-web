@@ -231,4 +231,78 @@ If evals fail by schema repeatedly:
 
 ---
 
+## 8) Structured output: JSON Schema (AJV) vs OpenAPI subset (provider) — gotchas
+
+Providers with native structured output (Gemini `responseSchema`, OpenAI
+`json_schema`, Grok, Mistral, ...) do **not** consume full JSON Schema. Each one
+accepts a restricted, OpenAPI-3.0-style subset. That forces **two representations
+of the same contract**, which this tooling already relies on:
+
+- **Canonical** — `prompts/<feature>/schema.json`, full JSON Schema 2020-12: the
+  `ok/data/error` envelope, `$defs`/`$ref`, `additionalProperties`, and every
+  numeric/size constraint. This is the validation boundary — `tools/llm_eval.js`
+  validates each response against it with AJV, and any endpoint that persists the
+  output should re-validate too. It needs the draft-2020-12 build of AJV:
+  `import Ajv2020 from 'ajv/dist/2020.js'`. A plain `new Ajv()` cannot resolve the
+  `.../2020-12/schema` meta-schema and throws.
+- **Provider** — a hand-minimized copy (e.g. `prompts/<feature>/schema.aistudio.json`)
+  passed to the model as `responseSchema`. `tools/llm_providers/payloads.js` →
+  `buildGeminiJsonRequest` forwards `responseSchema` **verbatim, without sanitizing
+  it**, so the caller must pass the minimal version, never the canonical one.
+
+The numeric/size constraints are **not lost** by minimizing the provider schema:
+they stay in `schema.json` and AJV enforces them against the response after the
+call.
+
+### What Gemini's subset rejects (verified 2026-07-13, AI Studio + API)
+
+- `additionalProperties` → explicit error: `Unknown key: additionalProperties`.
+- type-arrays like `"type": ["object", "null"]` → use `"nullable": true` instead.
+- `$defs` / `$ref` / `allOf` / `if`/`then` — no composition or references; inline
+  everything.
+- `minimum` / `maximum` / `minItems` / `maxItems` → these fail with a **generic**
+  `An internal error has occurred` (in AI Studio), with no useful message — very
+  hard to isolate. Drop them from the provider schema.
+
+In practice Gemini's accepted subset is essentially only `type`, `properties`,
+`required`, `enum`, and `nullable`. Other native-structured-output providers
+impose *different* subsets (OpenAI's `json_schema`, for example, conversely
+*requires* `additionalProperties: false` and also rejects `minimum`/`maximum`), so
+validate the minimal schema against each provider you target instead of assuming
+Gemini's exact rules transfer.
+
+### AI Studio editor
+
+The "Structured outputs" panel asks for an "OpenAPI schema object". Use the
+**Code Editor** tab (not the Visual Editor) to paste raw JSON.
+
+### Grounding (Google Search / Maps) + structured output
+
+- Gemini 3 **does** combine Google Search grounding with `responseSchema` through
+  the official `@google/genai` SDK (the one `tools/llm_providers/gemini.js` uses):
+  set `config.tools = [{ googleSearch: {} }]` together with `config.responseSchema`
+  and `config.responseMimeType = 'application/json'`. The Vercel `@ai-sdk/google`
+  wrapper blocks this (it forces a second, tool-free call) — prefer the official
+  SDK for grounded structured output.
+- In AI Studio you **cannot** enable Google Search + Google Maps + Structured
+  outputs at the same time ("not compatible with the current active tools"); verify
+  multi-tool combinations against the live API, not the Playground.
+- **Grounding injects citations into string values.** Even when the prompt forbids
+  it, grounded responses embed markers like `[[1](https://…vertexaisearch…)]`
+  inside string fields (occasionally a bare non-URL artifact such as `[1.1.7]`).
+  This is grounding-system behavior, not prompt non-compliance — reinforcing the
+  prompt does not stop it. Any consumer that persists grounded text **must** strip
+  them (e.g. `/\s*\[\[?\d+\]?\((https?:\/\/[^)]+)\)\]?/g`) or read
+  `candidates[].groundingMetadata` separately instead of trusting the inline text.
+
+### Billing
+
+The Gemini API free tier calls Flash models without a card, but **grounding
+(Search/Maps) returns `429` ("check your plan and billing") unless billing is
+enabled**. The consumer Gemini / Google AI Pro subscription ($20/mo) does **not**
+grant API access — it is a separate product. Any feature that uses grounding needs
+a billing-enabled API key.
+
+---
+
 End.
