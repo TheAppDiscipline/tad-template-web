@@ -142,7 +142,7 @@ Gate green. Manual verification is mandatory before closing the slice:
 
 1. Happy path: does the main action work?
 2. Failure path if applicable: is the error shown to the user without a crash?
-3. If FAMILY_SYNC, smoke test on 2 devices.
+3. If SHARED_SYNC, smoke test on 2 devices.
 4. If the UI has loading/empty/error states, do they render correctly?
 
 Confirm with "manual verification OK" when you are done, or report what failed.

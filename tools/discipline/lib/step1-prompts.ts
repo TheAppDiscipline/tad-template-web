@@ -311,7 +311,7 @@ For each feature include:
 8. DATA_SENSITIVITY
 - whether it touches personal data, close-person data, or sensitive data
 9. PROVIDER_PREFERENCE
-- gemini | openai | anthropic | undecided
+- gemini | openai | anthropic | grok | mistral | deepseek | qwen | minimax | ollama | llama | gemma | openai-compatible | undecided
 10. EVAL_HINTS
 - 3 to 5 cases that must be evaluated
 11. MVP BOUNDARY

@@ -70,7 +70,7 @@ Step 7 offers 3 paths. Which do you choose?
 
 A) Keep it as is
    - The app works, you do not need to scale, you are not selling.
-   - Stay on PROFILE=LITE or FAMILY_SYNC.
+   - Stay on PROFILE=LITE or SHARED_SYNC.
    - Maintenance runbook: the solo-maintenance runbook in the vault (sold separately).
    - No hardening applies. This skill stops here.
 
@@ -329,7 +329,7 @@ Next step: /discipline-step4 to expand the hardening slices
 ## Error handling
 
 - If `POST_DEPLOY_FEEDBACK_PACKET` does not exist: stop with "Run /discipline-step6 first."
-- If the user has no product decision: stop with clear options (stay on FAMILY_SYNC, gather more feedback, etc.)
+- If the user has no product decision: stop with clear options (stay on SHARED_SYNC, gather more feedback, etc.)
 - If `npm run discipline:patch` fails: report the error and continue with the assembly. The patch blocks are in `.discipline/patches/pending/` for manual application.
 - If `npm run discipline:assemble` fails: report which files were missing. The PROD_HARDENING_PACKET is already in `.discipline/packets/`.
 - If `npm run discipline:log` fails: report it but do not block.

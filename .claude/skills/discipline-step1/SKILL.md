@@ -84,7 +84,7 @@ Once the description covers all 4 axes, continue:
 | "Chrome/Firefox extension" | LANE | EXTENSION |
 | "API", "backend", "service" | LANE | BACKEND |
 | Few features, one type of user, personal use | PROFILE | LITE |
-| Several data types, sharing with family/closed group | PROFILE | FAMILY_SYNC |
+| Several data types, sharing with family/closed group | PROFILE | SHARED_SYNC |
 | Public beta / first paying users, without a complete PROD scorecard | PROFILE | LAUNCH |
 | Roles, permissions, admin, multiple flows, commercial >=50 active | PROFILE | PROD |
 | "login", "create account", "users", "team", "members" | AUTH | MAGIC_LINK (default if no method is specified) |
@@ -110,7 +110,7 @@ Automatic inferences (not asked):
 Based on your description, this is the configuration I recommend:
 
 - Type: Web (LANE=WEB)
-- Complexity: Medium, several users, shared data (PROFILE=FAMILY_SYNC)
+- Complexity: Medium, several users, shared data (PROFILE=SHARED_SYNC)
 - Login: With Google (AUTH=GOOGLE)
 - Database: Supabase, quick to set up, good free tier (BACKEND=SUPABASE)
 - Collaboration: Users can edit shared data (COLLAB=COLLABORATIVE)

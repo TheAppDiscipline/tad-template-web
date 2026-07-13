@@ -31,7 +31,7 @@ NOTE: the skill does NOT modify scorecard.yaml. It only reads and reports. If it
 
 ### Phase 0: Check PROFILE and scorecard.yaml
 
-Read `discipline.md`. Extract `PROFILE`. If it is `LITE` or `FAMILY_SYNC`, warn:
+Read `discipline.md`. Extract `PROFILE`. If it is `LITE` or `SHARED_SYNC`, warn:
 
 ```
 Current PROFILE: <profile>. Gate D/E applies only to LAUNCH or PROD.

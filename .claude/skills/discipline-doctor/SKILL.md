@@ -47,13 +47,13 @@ Stop here until resolved.
 ### Phase 1: Extract PROFILE and switches
 
 Read `discipline.md` and extract the `§0 Switches` section (or equivalent). Capture:
-- `PROFILE` (LITE / FAMILY_SYNC / LAUNCH / PROD)
+- `PROFILE` (LITE / SHARED_SYNC / LAUNCH / PROD)
 - `LANE` (WEB / MOBILE / DESKTOP / EXTENSION)
 - `BACKEND_PROVIDER`
 - `AUTH_MODE`
 - `AI_FEATURES`
 
-If `PROFILE` is not declared, flag a warning: "discipline.md does not declare PROFILE. FAMILY_SYNC is the implicit default per NN #6, but making it explicit is recommended."
+If `PROFILE` is not declared, flag a warning: "discipline.md does not declare PROFILE. SHARED_SYNC is the implicit default per NN #6, but making it explicit is recommended."
 
 ### Phase 2: Read `progress.md`
 
@@ -118,7 +118,7 @@ Output in tabular format:
 
 | Area | Status | Detail |
 |---|---|---|
-| Profile declared | OK / WARNING | <PROFILE or "not declared, default FAMILY_SYNC"> |
+| Profile declared | OK / WARNING | <PROFILE or "not declared, default SHARED_SYNC"> |
 | `progress.md` | OK / WARNING | <N lines; warning if >150> |
 | Slices done | <N> | Last: <title of the last slice> |
 | Validated packets | <N> | <short list of the main ones> |
@@ -127,7 +127,7 @@ Output in tabular format:
 | Open errors | <N> | <from progress.md §Open Errors> |
 | Uncommitted changes | <N> | <from git status --short> |
 | Drift progress vs git | OK / WARNING | <description if there is drift> |
-| Scorecard YAML | N/A or OK / BLOCKER | <only if PROFILE>=LAUNCH; "not applicable" if LITE/FAMILY_SYNC> |
+| Scorecard YAML | N/A or OK / BLOCKER | <only if PROFILE>=LAUNCH; "not applicable" if LITE/SHARED_SYNC> |
 
 ## Blockers
 

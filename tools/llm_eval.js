@@ -1,7 +1,7 @@
 import 'dotenv/config'
 import fs from 'node:fs'
 import path from 'node:path'
-import Ajv from 'ajv'
+import Ajv2020 from 'ajv/dist/2020.js'
 import addFormats from 'ajv-formats'
 import { getProvider } from './llm_providers/index.js'
 import { isAiEnabled, listConfiguredEvalFeatures } from './project_state.js'
@@ -71,7 +71,7 @@ function partialDiff(expected, actual, p = '$') {
 
 async function loadSchema(schemaPath) {
     const schema = JSON.parse(fs.readFileSync(schemaPath, 'utf8'))
-    const ajv = new Ajv({ allErrors: true, strict: false })
+    const ajv = new Ajv2020({ allErrors: true, strict: false })
     addFormats(ajv)
     const validate = ajv.compile(schema)
     return { schema, validate }

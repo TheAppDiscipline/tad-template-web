@@ -90,7 +90,7 @@ For each audit in the list, apply the corresponding prompt from the auto-audit p
 ```json
 {
   "audit": "nn-coverage",
-  "profile": "FAMILY_SYNC",
+  "profile": "SHARED_SYNC",
   "checks": [
     { "nn": 1, "status": "PASS", "evidence": "discipline.md §3 Data Model declares 4 tables", "action": null },
     { "nn": 17, "status": "GAP", "evidence": null, "action": "Add §Security Baseline with 17.1-17.4" }

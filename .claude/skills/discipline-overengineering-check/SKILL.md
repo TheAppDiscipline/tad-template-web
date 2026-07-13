@@ -53,13 +53,13 @@ Each check returns: `clear` (high confidence), `probable` (40-70% confidence), `
 
 #### Check OE-1: Too many deps for the profile
 
-**Rule 11c §1, §3:** complexity justified by real pain. A LITE profile should not go past ~10 deps; FAMILY_SYNC ~20; LAUNCH/PROD can go higher.
+**Rule 11c §1, §3:** complexity justified by real pain. A LITE profile should not go past ~10 deps; SHARED_SYNC ~20; LAUNCH/PROD can go higher.
 
 **Logic:**
 - LITE + N_DEPS > 10 -> `probable`
 - LITE + N_DEPS > 15 -> `clear`
-- FAMILY_SYNC + N_DEPS > 25 -> `probable`
-- FAMILY_SYNC + N_DEPS > 35 -> `clear`
+- SHARED_SYNC + N_DEPS > 25 -> `probable`
+- SHARED_SYNC + N_DEPS > 35 -> `clear`
 - LAUNCH/PROD: warn only if growth is > 5 deps over the last 30 days with no new slices.
 
 **Action:** review deps with `npm ls --depth=0`; ask the NN #16 Scope Guard question, does this dep have a 1-5 line equivalent implementation and observed pain?
@@ -70,7 +70,7 @@ Each check returns: `clear` (high confidence), `probable` (40-70% confidence), `
 
 **Logic:**
 - If N_DEPS / max(N_SLICES_DONE, 1) > 5 -> `probable`
-- If N_DEPS / max(N_SLICES_DONE, 1) > 8 and profile LITE/FAMILY_SYNC -> `clear`
+- If N_DEPS / max(N_SLICES_DONE, 1) > 8 and profile LITE/SHARED_SYNC -> `clear`
 
 **Action:** list the deps NOT actively imported in src/ (orphans); propose removal.
 
@@ -103,7 +103,7 @@ Each check returns: `clear` (high confidence), `probable` (40-70% confidence), `
 **Logic:**
 - LITE + every slice producing all 19 possible packets -> `clear` (overkill).
 - LITE + `.discipline/scorecard.yaml` with >50 entries -> `probable`.
-- FAMILY_SYNC + no Sentry preinstalled and > 5 slices done -> `possible` (under-overhead, see the inverse of OE5 under under-engineering).
+- SHARED_SYNC + no Sentry preinstalled and > 5 slices done -> `possible` (under-overhead, see the inverse of OE5 under under-engineering).
 
 **Action:** prune packets down to the 7 minimum for LITE; defer the scorecard YAML until LAUNCH.
 
@@ -147,7 +147,7 @@ The mirror image, NN-related. The rules come from 11c §"Under-engineering signa
 
 **Logic:**
 - PROFILE >= LAUNCH and `package.json` without `@sentry/*` or `posthog-js` -> `clear`.
-- PROFILE = FAMILY_SYNC and the app is deployed (detect via `discipline:status` or git tags like `v0.x`) and there is no observability -> `probable`.
+- PROFILE = SHARED_SYNC and the app is deployed (detect via `discipline:status` or git tags like `v0.x`) and there is no observability -> `probable`.
 
 **Action:** install a minimal Sentry for Gate D; see the essential-security note (Observability baseline) in the vault (sold separately) or equivalent.
 
@@ -227,7 +227,7 @@ Note: this skill is advisory. The user decides whether the signals justify actio
 
 - Repo without git: mark OE-4 (gate skipping) as N/A; the other checks run normally.
 - progress.md empty or absent: apply the checks assuming N_SLICES_DONE = 0; that amplifies the deps/slice ratio detection.
-- discipline.md without PROFILE: use the default FAMILY_SYNC for the thresholds.
+- discipline.md without PROFILE: use the default SHARED_SYNC for the thresholds.
 - src/ empty (freshly hydrated template): most checks return `none`; report that the repo is in a premature state.
 
 ---

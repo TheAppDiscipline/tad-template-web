@@ -36,7 +36,7 @@ Read `discipline.md`. Extract PROFILE. If LITE with no external services, warn:
 ```
 PROFILE=LITE with no external services. Legal documents are NOT required for personal use.
 
-If you plan to move to FAMILY_SYNC or LAUNCH:
+If you plan to move to SHARED_SYNC or LAUNCH:
 - Privacy Policy + ToS are required for Gate D Launch.
 - Refund Policy is required if you charge money.
 - Breach Runbook is recommended from the first piece of external data.

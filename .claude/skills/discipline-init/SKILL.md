@@ -12,7 +12,7 @@ NOTE: the skill does not pick the lane for the user. If you are unsure which lan
 ## What the user sees
 
 1. The skill confirms the lane (`web` / `mobile` / `desktop` / `extension`).
-2. It asks for the project name and initial profile (default `FAMILY_SYNC` per NN #6).
+2. It asks for the project name and initial profile (default `SHARED_SYNC` per NN #6).
 3. It clones the official template from GitHub into the chosen directory.
 4. It runs `npm install` and verifies there are no install errors.
 5. It checks Node >= 22, Git >= 2.40 (per the non-programmer setup guide in the vault, sold separately).
@@ -61,7 +61,7 @@ Ask the user for:
 - **Lane** (web / mobile / desktop / extension). If it was not passed as an argument, ask.
 - **Project name** (slug-friendly, e.g. `my-app`).
 - **Target directory** (default: current directory + project name).
-- **Initial profile** (default FAMILY_SYNC; options: LITE, FAMILY_SYNC, LAUNCH, PROD). If LITE, also offer `BACKEND_PROVIDER=LOCAL_ONLY`.
+- **Initial profile** (default SHARED_SYNC; options: LITE, SHARED_SYNC, LAUNCH, PROD). If LITE, also offer `BACKEND_PROVIDER=LOCAL_ONLY`.
 
 Validate:
 - Lane is one of the 4 official lanes.
@@ -115,7 +115,7 @@ npm run discipline:hydrate
 If the script exists (all official templates have it post-Wave 3.1), it generates `discipline.md` with the default switches. Then apply a patch to adjust the profile if it differs from the default:
 
 ```bash
-# Only if profile != FAMILY_SYNC (the template default)
+# Only if profile != SHARED_SYNC (the template default)
 echo "<patch block to set PROFILE=<profile>>" > .discipline/patches/pending/init-profile.md
 npm run discipline:patch
 ```

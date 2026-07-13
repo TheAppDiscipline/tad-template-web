@@ -55,7 +55,7 @@ Read STEP_2_5_AI_PACKET. Extract:
 - Primary provider and model role (`Premium Reliable - Mechanical Work`, `Premium Reliable - Implementation`, `Premium Reliable - Critical Decisions`, or `Frontier-Budget - Implementation`). Resolve the concrete IDs against the living registry of models and tools in The App Discipline vault (sold separately)
 - Deterministic fallback provider (a simple rule for when the LLM fails)
 - Latency budget p95 (typically <3s for synchronous UI, <10s async)
-- Cost budget per request (typically <$0.01 LITE, <$0.05 FAMILY_SYNC)
+- Cost budget per request (typically <$0.01 LITE, <$0.05 SHARED_SYNC)
 
 Ask the user to confirm each one or adjust:
 
@@ -141,6 +141,25 @@ Open Google AI Studio: https://aistudio.google.com/
 
 Capture the user's final prompt.
 
+### Important: AI Studio is not necessarily the final provider
+
+Google AI Studio is an iteration and exploration tool. It does not replace
+validation against the configured production provider, model, SDK, or
+structured-output settings.
+
+If `LLM_PROVIDER` is not `gemini` (for example `openai`, `anthropic`, `grok`,
+`mistral`, `deepseek`, `qwen`, `minimax`, `ollama`, `llama`, `gemma`, or
+`openai-compatible`), use AI Studio only to explore the prompt and schema.
+The provider registry in `tools/llm_providers/index.js` is the source of truth;
+do not maintain a separate manual provider list here.
+
+There can be real drift between providers and between AI Studio and an API
+integration: model version, system-prompt handling, safety settings, SDK
+defaults, and structured-output behavior all matter. Even when
+`LLM_PROVIDER=gemini`, final validation must run with the production model and
+configuration. Before closing Step 2.5, run the real-provider smoke test and
+the live evals described in Phase 5.
+
 ### Phase 4: JSONL evals
 
 Ask for 5-10 test cases in JSONL format:
@@ -163,11 +182,16 @@ Save to `evals/<feature-name>.jsonl`. Validate the format with AJV.
 
 ### Phase 5: LLM Contract Gate
 
-Run the evals against the real provider:
+With the final provider credentials, `LLM_PROVIDER`, and `LLM_MODEL` configured,
+run the smoke test and live evals against the real provider:
 
 ```bash
-npm run ai:eval -- --feature=<feature-name>
+npm run ai:smoke
+node tools/llm_eval.js --mode=live --feature=<feature-name>
 ```
+
+`npm run ai:eval` alone runs fixture mode; it is useful for deterministic
+regression coverage but does not validate provider behavior.
 
 Capture the result. If pass rate < 90%, do not close the step:
 
@@ -180,7 +204,7 @@ Cases that failed:
 Options:
 1. Iterate the prompt in AI Studio (go back to Phase 3).
 2. Adjust the evals if they have incorrect expectations.
-3. Switch provider if Flash is not enough for the complexity.
+3. Switch the model or provider if the selected model is not sufficient for the complexity.
 4. Accept a pass rate <90% only for LITE and record it in findings.md (not recommended).
 ```
 
@@ -211,7 +235,7 @@ GENERATED: <date>
 ### Prompt
 - Path: prompts/<feature>/prompt.md
 - System + few-shot examples
-- Iterated in AI Studio: <iteration date>
+- Iterated in AI Studio or an equivalent tool: <iteration date>
 
 ### Evals
 - Path: evals/<feature>.jsonl
@@ -219,7 +243,8 @@ GENERATED: <date>
 - Pass rate: <%>
 
 ### LLM Contract Gate
-- Run: npm run ai:eval -- --feature=<feature>
+- Smoke: npm run ai:smoke
+- Live eval: node tools/llm_eval.js --mode=live --feature=<feature>
 - Status: PASS
 
 ### Budgets
@@ -227,7 +252,7 @@ GENERATED: <date>
 - Declared cost per request: <$>
 
 ### Cross-provider note
-- If the final provider != Gemini, the evals MUST be re-run against the real provider before closing Step 5 (NN #12).
+- Live validation MUST run against the configured provider and model before closing Step 2.5 (NN #12). AI Studio results alone are not sufficient.
 ```
 
 ### Phase 7: DISCIPLINE_MD_PATCH_BLOCK
