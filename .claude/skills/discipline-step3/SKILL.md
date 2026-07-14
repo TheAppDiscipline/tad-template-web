@@ -103,6 +103,13 @@ Context: web app with SSR (Next.js).
 Patterns: same as web, but consider that the first render comes from the server.
 ```
 
+**Prompt construction gotchas** (observed in real runs; they apply to Phase 1A and 1B alike):
+
+- **State the app name explicitly and defend it.** If the prompt describes the *feeling* of the design with a noun ("calm", "serenity", "trust"), Stitch tends to adopt that noun as the **brand name** and stamps it on every screen header. Always include: `The app is called "<NAME>". Words describing the intended feeling are NOT the name.` If the name drifts, correct it **immediately** — otherwise it propagates to every screen generated afterwards.
+- **Ask for states in the prompt text, not with the "multiple variants" toggle.** That toggle produces alternative *visual styles* of one screen (an exploration tool). It does NOT produce the normal/loading/empty/error **states** this step needs, and using it after the design system is fixed breaks visual consistency across screens.
+- **Lock the design system in the first prompt**, then generate every remaining screen in the **same project/thread** so they inherit it.
+- **Generate only the states that are visually distinctive** (screens whose empty/error/special state differs structurally from normal). Trivial loading/empty/error states are cheaper to document from the contracts in Phase 2 than to generate.
+
 **Call the MCP.** Use the Stitch tools:
 - `stitch_generate_screens` with the prepared prompt
 - `stitch_get_design_system` to read the generated design system
@@ -127,17 +134,29 @@ Show to the operator:
 ```
 Stitch MCP is not available. Use Stitch manually:
 
-1. Open stitch.withgoogle.com
-2. Copy and paste this prompt:
+1. Create a NEW project at stitch.withgoogle.com (do not reuse an existing one)
+2. Set the target: the composer has an "App" / "Web" toggle and DEFAULTS TO "App"
+   (native mobile). For LANE=WEB or WEB_SSR you MUST switch it to "Web", or Stitch
+   generates iOS/Android native patterns that do not apply. Leave it on "App" only
+   for LANE=MOBILE.
+3. Paste this master prompt (design direction + first screen):
 
 ---
 <prompt prepared with app name, P0 screens, flows, per-LANE adaptations>
 ---
 
-3. Generate the P0 screens
-4. Use the Play button to navigate the flow
-5. Export the code (React + Tailwind recommended for Web)
-6. When you are done, tell me:
+4. Paste the remaining per-screen prompts one at a time, IN THE SAME PROJECT, so they
+   inherit the design system
+5. Use the Play button to navigate the flow
+6. Export: choose ".zip". It downloads the code locally with no third party involved.
+   Do NOT pick "AI Studio" — that submits the content to Google AI Studio's terms.
+   The export caps at ~16 screens per download; if you generated more, either
+   deselect the least structural screens (plain empty/error states) or run a second
+   export. Superseded duplicates of a screen should NOT be exported: two conflicting
+   versions of the same screen in the repo will confuse Step 5.
+7. Save the export under `design/stitch-export/` in the repo and EXTRACT it (a zipped
+   binary is unreadable to Step 5 and to any cloud agent in the GitHub lane)
+8. When you are done, tell me:
    - How many screens were generated?
    - Do they cover the main flows?
    - Is there anything Stitch could not generate well?
@@ -219,7 +238,15 @@ SOURCE: Stitch <MCP | manual>
 Save to: `.discipline/packets/UI_HANDOFF_PACKET.md`
 Report: `✓ UI_HANDOFF_PACKET assembled with <N> screens`
 
-**Optionally, generate a DESIGN_MD_READY_BLOCK** if Stitch produced design decisions (colors, typography, spacing) that should persist. Only if there is real content, not by default.
+**Handle the Stitch export.** The `.zip` extracts to one folder per screen containing `code.html` and `screen.png`, plus a `<project>/DESIGN.md`. Three rules:
+
+1. **Read `DESIGN.md`. Never infer design tokens from screenshots.** Stitch ALWAYS emits a `DESIGN.md` in the export with the authoritative token set (Material-3-style color roles, typographic scale, radii, spacing, layout, component guidance). Eyeballing hex values off a swatch image gets them **wrong** — swatch tiles show container/variant shades, not the base role, so the `primary` you read from the image is typically the `primary-container`. Open the file.
+2. **Write a `README.md` in `design/stitch-export/`** stating that the export is **reference, not source**: do not copy the mockup HTML into `src/`, it bypasses the backend adapter, the semantic-token rule, and the `limit` rule. The contract for Step 5 is the UI_HANDOFF_PACKET, not the mockups.
+3. **Warn about hotlinked assets.** Stitch mockups reference AI-generated avatars/illustrations from Google's CDN (`lh3.googleusercontent.com/...`). Harmless in a mockup; in production it is a privacy leak to a third party and a link that will rot. The README must say: use your own assets.
+
+**Generate a DESIGN_MD_READY_BLOCK** whenever a `DESIGN.md` exists in the export (with Stitch, it always does). Transcribe the real token set from that file — colors, typography, radii, spacing, layout — and frame the hex values as **brand values that populate semantic tokens** in Step 5, never as raw hex for components (`discipline.md §8` forbids raw hex; the `check-tokens` gate enforces it).
+
+**Flag the dark-theme gap.** Stitch emits a **light-mode token set only**, while `discipline.md §8` requires light **and** dark. This mismatch is systematic, not project-specific. Record it as an explicit gap in the DESIGN_MD_READY_BLOCK so Step 5 derives the dark palette instead of assuming §8 is satisfied.
 
 ### Phase 3: Post-processing
 
@@ -277,3 +304,8 @@ Next step: /discipline-step4 (Executable slices)
 - Do not recommend component libraries unless discipline.md or the STITCH_PACKET mentions them.
 - The implementation notes are hints, not code. The code is written in Step 5.
 - If there are inconsistencies between Stitch and the STEP_4_EXECUTION_PACKET (e.g., a screen references data that is not in the contracts), document it in findings.md and use the contracts as the source of truth.
+- **Set the Stitch target to "Web" for LANE=WEB/WEB_SSR.** The composer defaults to "App" (native mobile); leaving it there produces iOS/Android patterns that do not apply.
+- **Design tokens come from the export's `DESIGN.md`, never from screenshots.** Reading hex off a swatch image yields the container shade, not the base role.
+- **The export is reference, not source.** It ships with a README saying so, and never gets copied into `src/`. Its hotlinked CDN images never reach production.
+- **Stitch only emits light-mode tokens.** `discipline.md §8` demands light and dark: record the dark-theme gap explicitly rather than letting Step 5 assume §8 is met.
+- **Verify the contract-critical states against `discipline.md`, not against how good the screen looks.** A state that must show *no value* (an uncomputable metric, a blocked suggestion) must show no value — not a placeholder zero. Generators reach for `0` by default; that is a contract violation, and it is the single most likely thing to slip through this step.
