@@ -248,6 +248,17 @@ Report: `✓ UI_HANDOFF_PACKET assembled with <N> screens`
 
 **Flag the dark-theme gap.** Stitch emits a **light-mode token set only**, while `discipline.md §8` requires light **and** dark. This mismatch is systematic, not project-specific. Record it as an explicit gap in the DESIGN_MD_READY_BLOCK so Step 5 derives the dark palette instead of assuming §8 is satisfied.
 
+**Contract-mapping gate (mandatory before closing Step 3).** Stitch mockups routinely add actions, computed metrics, navigation targets and empty-state CTAs that have NO contract behind them. Transcribing them into the handoff turns mockup embellishment into fake spec, and Step 5 then tries to build uncontracted features. Before closing, reconcile **every visible element** against the contracts (`discipline.md`, `STEP_4_EXECUTION_PACKET`) — the contracts win. Each item must map to something that exists, or be removed / explicitly marked P1/P2; never copied as spec from the tool:
+
+- **Actions/buttons → a concrete P0 adapter operation.** No operation ⇒ remove or mark deferred (and, if wanted, send it back to Step 2/4 to be contracted first).
+- **Computed metrics → a contracted output (IO shape).** No invented history or projections (month-over-month deltas, payoff dates) unless the data/op exists in P0.
+- **Navigation targets → only defined P0 screens.** No tabs to screens that do not exist.
+- **Empty-state / error copy and CTAs → must not imply an uncontracted operation.** A derived value (a computed plan, a projection) is never phrased as something the user "creates".
+- **Tool export → visual reference only.** Its copy, labels and navigation are reconciled against the contracts, not trusted; mark it stale if it drifted.
+- **Design tokens → verify light AND dark** before calling the design closed (`discipline.md §8`).
+
+Record the resulting P0 decisions in `findings.md` (the decisions, not just the defect). If a mismatch traces to an upstream artifact (the `STEP_3_STITCH_PACKET` or a Step 1 output), fix it there too so a rerun cannot reintroduce it, then re-assemble the affected paste-ready.
+
 ### Phase 3: Post-processing
 
 Assemble the paste-ready for Step 4:
@@ -309,3 +320,4 @@ Next step: /discipline-step4 (Executable slices)
 - **The export is reference, not source.** It ships with a README saying so, and never gets copied into `src/`. Its hotlinked CDN images never reach production.
 - **Stitch only emits light-mode tokens.** `discipline.md §8` demands light and dark: record the dark-theme gap explicitly rather than letting Step 5 assume §8 is met.
 - **Verify the contract-critical states against `discipline.md`, not against how good the screen looks.** A state that must show *no value* (an uncomputable metric, a blocked suggestion) must show no value — not a placeholder zero. Generators reach for `0` by default; that is a contract violation, and it is the single most likely thing to slip through this step.
+- **Nothing ships in the handoff without a contract.** Every visible action, computed metric, navigation target and empty-state CTA must map to a P0 adapter operation / IO shape / screen, or be removed or marked P1/P2. Never transcribe a tool's embellishment as spec. Apply the contract-mapping gate (Phase 2) before closing.
