@@ -326,6 +326,7 @@ test('the ok/data/error envelope template enforces its invariants (a loose envel
     assert.equal(validate(payload({ data: null })), false, 'ok:true must carry data')
     assert.equal(validate(payload({ ok: false, data: {}, error: err({ code: 'INVALID_INPUT', message: 'm' }) })), false, 'ok:false must null out data')
     assert.equal(validate(payload({ ok: false, data: null })), false, 'ok:false must not report code NONE')
+    assert.equal(validate(payload({ error: err({ message: 'todo salió bien' }) })), false, 'on success the message is exactly "ok"')
     assert.equal(validate(payload({ error: err({ retryable: true }) })), false, 'success is never retryable')
     assert.equal(validate(payload({ error: err({ missing_fields: ['x'] }) })), false, 'missing_fields is scoped to MISSING_FIELDS')
     assert.equal(validate(payload({ ok: false, data: null, error: err({ code: 'MISSING_FIELDS', message: 'm', missing_fields: ['x'], retryable: true }) })), false, 'MISSING_FIELDS is not retryable: a retry cannot supply the field')

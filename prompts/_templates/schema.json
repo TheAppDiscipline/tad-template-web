@@ -87,7 +87,7 @@
     },
     "allOf": [
         {
-            "$comment": "Success: data MUST be present (non-null) and the error code MUST be NONE.",
+            "$comment": "Success: data MUST be present (non-null), the error code MUST be NONE and the message MUST be \"ok\" (never empty, never prose).",
             "if": {
                 "properties": {
                     "ok": {
@@ -105,10 +105,14 @@
                         "properties": {
                             "code": {
                                 "const": "NONE"
+                            },
+                            "message": {
+                                "const": "ok"
                             }
                         },
                         "required": [
-                            "code"
+                            "code",
+                            "message"
                         ]
                     }
                 },
