@@ -25,6 +25,16 @@ You will receive a JSON object with this shape (example):
 Respond **only** with valid JSON that EXACTLY matches the schema in:
 prompts/<feature_name>/schema.json
 
+### Envelope fields (get these exactly right)
+These are the fields that most often break a live eval. The schema enforces them — match it:
+- `schema_version`: the EXACT version string your schema declares (e.g. `"v1"`). Do NOT emit `"1"`, `"1.0"` or `"v1.1"`.
+- `request_id`: echo the input's `request_id` verbatim.
+- `error` is ALWAYS present (never omit it), even on success.
+- `error.message`: ALWAYS a non-empty string — never `""`. Use `"ok"` when `error.code` is `"NONE"`.
+- `error.retryable`: `true` ONLY for transient errors (`PROVIDER_ERROR`, `INTERNAL_ERROR`), where retrying the identical request could succeed. `false` for `"NONE"` and for every input/policy error (`MISSING_FIELDS`, `INVALID_INPUT`, `AMBIGUOUS`, `POLICY_BLOCK`) — those need a changed input, not a blind retry.
+- `error.missing_fields`: non-empty ONLY for `MISSING_FIELDS`; otherwise `[]`.
+- On success (`ok: true`) `data` MUST be an object; on failure (`ok: false`) `data` MUST be `null`.
+
 ### Strict output rules
 - Do NOT write text outside the JSON.
 - Do NOT include Markdown.

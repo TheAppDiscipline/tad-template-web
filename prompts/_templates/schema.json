@@ -87,6 +87,7 @@
     },
     "allOf": [
         {
+            "$comment": "Success: data MUST be present (non-null) and the error code MUST be NONE.",
             "if": {
                 "properties": {
                     "ok": {
@@ -96,6 +97,9 @@
             },
             "then": {
                 "properties": {
+                    "data": {
+                        "type": "object"
+                    },
                     "error": {
                         "type": "object",
                         "properties": {
@@ -107,10 +111,14 @@
                             "code"
                         ]
                     }
-                }
+                },
+                "required": [
+                    "data"
+                ]
             }
         },
         {
+            "$comment": "Failure: data MUST be null and the error code MUST NOT be NONE.",
             "if": {
                 "properties": {
                     "ok": {
@@ -120,8 +128,113 @@
             },
             "then": {
                 "properties": {
+                    "data": {
+                        "type": "null"
+                    },
                     "error": {
-                        "type": "object"
+                        "type": "object",
+                        "properties": {
+                            "code": {
+                                "not": {
+                                    "const": "NONE"
+                                }
+                            }
+                        },
+                        "required": [
+                            "code"
+                        ]
+                    }
+                },
+                "required": [
+                    "error"
+                ]
+            }
+        },
+        {
+            "$comment": "retryable is true ONLY for transient errors. Every other code (including NONE) is false: they need a changed input, not a blind retry.",
+            "if": {
+                "required": [
+                    "error"
+                ],
+                "properties": {
+                    "error": {
+                        "type": "object",
+                        "required": [
+                            "code"
+                        ],
+                        "properties": {
+                            "code": {
+                                "enum": [
+                                    "PROVIDER_ERROR",
+                                    "INTERNAL_ERROR"
+                                ]
+                            }
+                        }
+                    }
+                }
+            },
+            "then": {
+                "properties": {
+                    "error": {
+                        "properties": {
+                            "retryable": {
+                                "const": true
+                            }
+                        }
+                    }
+                }
+            },
+            "else": {
+                "properties": {
+                    "error": {
+                        "properties": {
+                            "retryable": {
+                                "const": false
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "$comment": "missing_fields is non-empty ONLY for MISSING_FIELDS; empty for every other code.",
+            "if": {
+                "required": [
+                    "error"
+                ],
+                "properties": {
+                    "error": {
+                        "type": "object",
+                        "required": [
+                            "code"
+                        ],
+                        "properties": {
+                            "code": {
+                                "const": "MISSING_FIELDS"
+                            }
+                        }
+                    }
+                }
+            },
+            "then": {
+                "properties": {
+                    "error": {
+                        "properties": {
+                            "missing_fields": {
+                                "minItems": 1
+                            }
+                        }
+                    }
+                }
+            },
+            "else": {
+                "properties": {
+                    "error": {
+                        "properties": {
+                            "missing_fields": {
+                                "maxItems": 0
+                            }
+                        }
                     }
                 }
             }
