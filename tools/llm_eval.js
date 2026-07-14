@@ -89,6 +89,24 @@ function loadFixtureActual(feature, caseId, inlineActual) {
     return null
 }
 
+// Transient provider errors (e.g. Gemini 503 UNAVAILABLE "high demand") are
+// server-side capacity blips, not contract failures — retrying the same request
+// usually succeeds. Retry those a few times with linear backoff so the live gate
+// does not flake on them. Non-transient errors (schema, auth, quota 429) throw
+// immediately so they surface as real failures.
+async function generateJsonWithRetry(provider, args, maxAttempts = 4) {
+    for (let attempt = 1; ; attempt++) {
+        try {
+            return await provider.generateJson(args)
+        } catch (e) {
+            const msg = String(e?.message ?? e)
+            const transient = /\b503\b|UNAVAILABLE|overloaded|high demand/i.test(msg)
+            if (!transient || attempt >= maxAttempts) throw e
+            await new Promise(resolve => setTimeout(resolve, 1500 * attempt))
+        }
+    }
+}
+
 function resolveFeatures(featureArg) {
     if (featureArg) return [featureArg]
     return listConfiguredEvalFeatures()
@@ -152,7 +170,7 @@ async function runFeatureEval({ feature, mode, providerName, modelOverride, maxC
                     throw new Error(`No actual output found. Provide "actual" in evals OR create .tmp/llm_fixtures/${feature}/${id}.json`)
                 }
             } else if (mode === 'live') {
-                actual = await provider.generateJson({
+                actual = await generateJsonWithRetry(provider, {
                     model: modelOverride,
                     system,
                     input,
