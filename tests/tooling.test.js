@@ -5,6 +5,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import Ajv2020 from 'ajv/dist/2020.js'
+import addFormats from 'ajv-formats'
 import { createElement as h } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { TEMPLATE_STATE_CARDS } from '../src/app-shell-content.js'
@@ -303,6 +305,32 @@ test('resolveProviderResponseSchema prefers provider-specific, then aistudio, th
         assert.equal(other.source, 'aistudio-generic')
         assert.deepEqual(other.schema, aistudioSchema)
     })
+})
+
+test('the ok/data/error envelope template enforces its invariants (a loose envelope propagates to every new project)', () => {
+    const schema = JSON.parse(fs.readFileSync(path.join(repoRoot, 'prompts', '_templates', 'schema.json'), 'utf8'))
+    const ajv = new Ajv2020({ allErrors: true, strict: false })
+    addFormats(ajv)
+    const validate = ajv.compile(schema)
+
+    const err = (over = {}) => ({ code: 'NONE', message: 'ok', missing_fields: [], retryable: false, ...over })
+    const payload = (over = {}) => ({ schema_version: 'v1', request_id: 'r', ok: true, data: {}, error: err(), ...over })
+
+    // Accepted.
+    assert.equal(validate(payload()), true, 'the llm_smoke_test success payload must validate')
+    assert.equal(validate(payload({ schema_version: 'v2' })), true, 'schema_version stays a pattern: a project may ship v2')
+    assert.equal(validate(payload({ ok: false, data: null, error: err({ code: 'MISSING_FIELDS', message: 'm', missing_fields: ['x'], retryable: false }) })), true)
+    assert.equal(validate(payload({ ok: false, data: null, error: err({ code: 'PROVIDER_ERROR', message: 'm', retryable: true }) })), true, 'transient errors are retryable')
+
+    // Rejected: the laxities that used to let broken envelopes through.
+    assert.equal(validate(payload({ data: null })), false, 'ok:true must carry data')
+    assert.equal(validate(payload({ ok: false, data: {}, error: err({ code: 'INVALID_INPUT', message: 'm' }) })), false, 'ok:false must null out data')
+    assert.equal(validate(payload({ ok: false, data: null })), false, 'ok:false must not report code NONE')
+    assert.equal(validate(payload({ error: err({ retryable: true }) })), false, 'success is never retryable')
+    assert.equal(validate(payload({ error: err({ missing_fields: ['x'] }) })), false, 'missing_fields is scoped to MISSING_FIELDS')
+    assert.equal(validate(payload({ ok: false, data: null, error: err({ code: 'MISSING_FIELDS', message: 'm', missing_fields: ['x'], retryable: true }) })), false, 'MISSING_FIELDS is not retryable: a retry cannot supply the field')
+    assert.equal(validate(payload({ ok: false, data: null, error: err({ code: 'AMBIGUOUS', message: 'm', retryable: true }) })), false, 'AMBIGUOUS is not retryable: a retry cannot disambiguate')
+    assert.equal(validate(payload({ ok: false, data: null, error: err({ code: 'MISSING_FIELDS', message: 'm', missing_fields: [], retryable: false }) })), false, 'MISSING_FIELDS must name the missing fields')
 })
 
 test('OpenAI provider payload keeps json_object only as the no-schema compatibility fallback', () => {
