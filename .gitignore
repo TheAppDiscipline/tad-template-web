@@ -45,6 +45,9 @@ build_output.txt
 !.env.example.supabase
 !.env.example.firebase
 
+# Local MCP credentials and per-user server configuration
+.mcp.json
+
 # Playwright artifacts
 playwright-report
 test-results
