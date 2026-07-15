@@ -14,7 +14,14 @@ const args = minimist(process.argv.slice(2));
 const projectRoot = resolveProjectRoot(args['project-dir']);
 const statusMode = args.status === true;
 
-const SEMANTIC_PACKET_RULES: Record<string, { status?: string; headings?: string[] }> = {
+type SemanticPacketRule = {
+  status?: string;
+  headings?: string[];
+  /** Advisory completeness checks for packets already promoted to ready. */
+  readyHeadings?: string[];
+};
+
+const SEMANTIC_PACKET_RULES: Record<string, SemanticPacketRule> = {
   'STEP_2_ARCHITECTURE_PACKET': {
     headings: ['Architecture', 'Data model'],
   },
@@ -24,6 +31,7 @@ const SEMANTIC_PACKET_RULES: Record<string, { status?: string; headings?: string
   },
   'STEP_5_SLICE_PACKET': {
     headings: ['Goal', 'Scope', 'Contracts', 'Acceptance criteria'],
+    readyHeadings: ['Provider Impact', 'AI Impact', 'Files to touch', 'Manual Verification', 'Estimate'],
   },
   'DEPLOY_READINESS_PACKET': {
     headings: ['Platform checks'],
@@ -213,6 +221,19 @@ function checkPacketSemantics(root: string, issues: ValidationIssue[]) {
           file: fileName,
           message: `${packetName} incomplete: missing ${heading}`,
         });
+      }
+    }
+
+    if (parsed.status === 'ready') {
+      for (const heading of rules.readyHeadings ?? []) {
+        if (!hasPacketHeading(parsed.body, heading)) {
+          issues.push({
+            severity: 'warning',
+            file: fileName,
+            message: `${packetName} ready packet advisory: missing ${heading}`,
+            detail: 'Add the implementation-planning section before handing the slice to Step 5.',
+          });
+        }
       }
     }
   }

@@ -93,7 +93,7 @@ function isOwnershipScoped(expr) {
 // A trivial helper (`select true`) is NOT collected — it can't launder a policy.
 function collectOwnershipFunctions(content) {
   const names = new Set();
-  const fnRe = /create\s+(?:or\s+replace\s+)?function\s+(?:public\.)?([a-z_][a-z0-9_]*)\s*\([\s\S]*?\bas\s+\$([a-z0-9_]*)\$([\s\S]*?)\$\2\$/gi;
+  const fnRe = /create\s+(?:or\s+replace\s+)?function\s+(?:[a-z_][a-z0-9_]*\.)?([a-z_][a-z0-9_]*)\s*\([\s\S]*?\bas\s+\$([a-z0-9_]*)\$([\s\S]*?)\$\2\$/gi;
   let m;
   while ((m = fnRe.exec(content)) !== null) {
     if (isOwnershipScoped(m[3])) names.add(m[1].toLowerCase());
@@ -254,7 +254,9 @@ function lintFile(filePath, content, directoryOwnershipFns = new Set()) {
 
   // Check 7: SECURITY DEFINER functions and views without security_invoker.
   // Both execute with the *owner's* rights, bypassing the caller's RLS. Allowed
-  // only with an explicit marker (pin search_path on definer functions).
+  // only with an explicit marker and an empty search_path. An empty path forces
+  // every relation in the function body to be schema-qualified, preventing an
+  // attacker-controlled object from shadowing a trusted one.
   for (const match of content.matchAll(/security\s+definer/gi)) {
     const before = content.substring(0, match.index);
     const lineIdx = before.split('\n').length - 1;
@@ -267,6 +269,21 @@ function lintFile(filePath, content, directoryOwnershipFns = new Set()) {
         file: filePath,
         severity: 'error',
         message: 'SECURITY DEFINER runs with the function owner rights and bypasses the caller RLS. Prefer SECURITY INVOKER; if intentional, pin `set search_path = ...` and add "-- Discipline Loop:ALLOW_SECURITY_DEFINER" on the same line.',
+      });
+      continue;
+    }
+
+    const functionStart = content.toLowerCase().lastIndexOf('create', match.index);
+    const asMatch = /\bas\s+\$[a-z0-9_]*\$/i.exec(content.slice(match.index));
+    const headerEnd = asMatch ? match.index + asMatch.index : -1;
+    const functionHeader = functionStart >= 0 && headerEnd >= functionStart
+      ? content.slice(functionStart, headerEnd)
+      : '';
+    if (!/set\s+search_path\s*=\s*''/i.test(functionHeader)) {
+      issues.push({
+        file: filePath,
+        severity: 'error',
+        message: 'SECURITY DEFINER function must use `set search_path = \'\'` and schema-qualified objects. Add it before AS $$ to prevent search-path hijacking.',
       });
     }
   }

@@ -87,7 +87,7 @@ CREATE OR REPLACE FUNCTION public.is_trip_member(trip_id UUID)
 RETURNS BOOLEAN
 LANGUAGE SQL
 SECURITY DEFINER -- Discipline Loop:ALLOW_SECURITY_DEFINER
-SET search_path = public
+SET search_path = ''
 AS $$
     SELECT EXISTS (
         SELECT 1 FROM public.trips
@@ -147,6 +147,60 @@ USING (true);
 
         assert.equal(result.status, 1, getOutput(result))
         assert.match(getOutput(result), /evaluates to true/)
+    })
+})
+
+test('migration templates pin SECURITY DEFINER helpers to an empty search path', () => {
+    for (const template of ['01_core_collaborative.sql', '01_core_view_only.sql']) {
+        const sql = fs.readFileSync(path.join(repoRoot, 'supabase', 'migrations_templates', template), 'utf8')
+
+        assert.match(sql, /create schema if not exists private/i)
+        assert.match(sql, /create or replace function private\.is_space_member/i)
+        assert.match(sql, /set search_path = ''/i)
+        assert.match(sql, /from public\.memberships/i)
+        assert.match(sql, /private\.is_space_owner/i)
+        assert.doesNotMatch(sql, /set search_path = public/i)
+        assert.doesNotMatch(sql, /public\.is_space_(?:member|owner)/i)
+    }
+})
+
+test('migration lint rejects SECURITY DEFINER functions without an empty search path', () => {
+    withTempProject((dir) => {
+        const migrations = path.join(dir, 'supabase', 'migrations')
+        fs.mkdirSync(migrations, { recursive: true })
+        fs.writeFileSync(path.join(migrations, '0001_insecure_definer.sql'), `
+CREATE TABLE IF NOT EXISTS public.items (
+    id UUID PRIMARY KEY,
+    owner_id UUID NOT NULL
+);
+ALTER TABLE public.items ENABLE ROW LEVEL SECURITY;
+
+CREATE OR REPLACE FUNCTION private.is_item_owner(item_id UUID)
+RETURNS BOOLEAN
+LANGUAGE SQL
+SECURITY DEFINER -- Discipline Loop:ALLOW_SECURITY_DEFINER
+SET search_path = public
+AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM public.items
+        WHERE items.id = item_id
+        AND items.owner_id = auth.uid()
+    );
+$$;
+
+CREATE POLICY "item owners can read"
+ON public.items
+FOR SELECT
+USING (private.is_item_owner(id));
+`, 'utf8')
+
+        const result = spawnSync(process.execPath, [path.join(repoRoot, 'tools', 'migration_lint.js')], {
+            cwd: dir,
+            encoding: 'utf8',
+        })
+
+        assert.equal(result.status, 1, getOutput(result))
+        assert.match(getOutput(result), /must use `set search_path = ''`/)
     })
 })
 

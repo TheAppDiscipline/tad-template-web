@@ -114,6 +114,18 @@ test('discipline validate rejects an incomplete slice completion packet', () => 
   assert.match(getOutput(result), /SLICE_COMPLETION_PACKET incomplete: missing Deploy signal/)
 })
 
+test('discipline validate warns when a ready Step 5 packet lacks implementation planning sections', () => {
+  const projectRoot = createDisciplineProject({
+    'STEP_5_SLICE_PACKET.md': `# STEP_5_SLICE_PACKET\n\nSTATUS: ready\n\n## Goal\n- x\n\n## Scope\n- x\n\n## Contracts\n- x\n\n## Acceptance criteria\n- x\n`,
+  })
+
+  const result = runTsx('tools/discipline/validate-discipline.ts', ['--project-dir', projectRoot])
+
+  assert.equal(result.status, 0, getOutput(result))
+  assert.match(getOutput(result), /STEP_5_SLICE_PACKET ready packet advisory: missing Files to touch/)
+  assert.match(getOutput(result), /STEP_5_SLICE_PACKET ready packet advisory: missing Manual Verification/)
+})
+
 test('discipline validate explains packet heading before STATUS ordering', () => {
   const projectRoot = createDisciplineProject({
     'STEP_4_EXECUTION_PACKET.md': `STATUS: validated\n\n# STEP_4_EXECUTION_PACKET\n\n## Product summary\n- x\n\n## Slice\n- S0\n`,
@@ -1691,6 +1703,21 @@ test('run: refuses a dirty tree without --allow-dirty (exit 2)', () => {
   const res = runTsx('tools/discipline/run.ts', ['--slice', '1', '--project-dir', repo])
   assert.equal(res.status, 2, getOutput(res))
   assert.match(getOutput(res), /not clean|allow-dirty/i)
+  fs.rmSync(repo, { recursive: true, force: true })
+})
+
+test('run: refuses malformed explicit status markers instead of treating them as ready', () => {
+  const gitProbe = spawnSync('git', ['--version'], { encoding: 'utf8' })
+  if (gitProbe.status !== 0) return
+  const repo = makeRunFixtureRepo()
+  const taskPlanPath = path.join(repo, 'task_plan.md')
+  const taskPlan = fs.readFileSync(taskPlanPath, 'utf8')
+  fs.writeFileSync(taskPlanPath, taskPlan.replace('## Slice 1 - Feature', '## Slice 1 - Feature [blocked: Slice 0]'), 'utf8')
+
+  const result = runTsx('tools/discipline/run.ts', ['--slice', '1', '--dry-run', '--allow-dirty', '--project-dir', repo])
+
+  assert.equal(result.status, 2, getOutput(result))
+  assert.match(getOutput(result), /invalid marker: blocked: Slice 0/)
   fs.rmSync(repo, { recursive: true, force: true })
 })
 

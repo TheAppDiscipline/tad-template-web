@@ -58,7 +58,7 @@ export function makeRunId(now = Date.now(), rand = crypto.randomBytes(5)): strin
 export interface SliceStatus {
   found: boolean;
   status: string | null;
-  /** True when the status is a ready-to-run state (or unset, which we treat as ready). */
+  /** True only when the status is explicitly ready, or absent for legacy plans. */
   ready: boolean;
 }
 
@@ -66,9 +66,8 @@ export interface SliceStatus {
  * Parse a slice's status from task_plan.md §Ready Slices leniently. Slices are
  * headings like `## Slice 3 - Name`; an optional `- Status: <value>` line inside
  * the section (or a bracketed marker in the heading) sets the status. Missing
- * status is treated as ready (the plan format does not require the line). A
- * status containing "in-progress", "blocked", "done", "cloud", or "hold" is NOT
- * ready.
+ * status is treated as ready for legacy plans, but an explicit unrecognized or
+ * malformed marker is refused rather than silently promoted to ready.
  */
 export function parseSliceStatus(taskPlan: string, sliceId: string): SliceStatus {
   const lines = taskPlan.split('\n');
@@ -101,16 +100,21 @@ export function parseSliceStatus(taskPlan: string, sliceId: string): SliceStatus
   const section = lines.slice(start, end).join('\n');
   // Status from a `Status:` line or a bracketed marker in the heading.
   let status: string | null = null;
-  const statusLine = section.match(/^[-*]?\s*status\s*:\s*(.+)$/im);
-  if (statusLine) status = statusLine[1].trim();
+  const statusLine = section.match(/^[-*]?\s*(?:\*\*)?status(?:\*\*)?\s*:\s*(.+)$/im);
+  if (statusLine) status = normalizeSliceStatus(statusLine[1]);
   else {
-    const bracket = heading.match(/\[(ready|in-progress[a-z-]*|blocked|done|hold)\]/i);
-    if (bracket) status = bracket[1].trim();
+    const bracket = heading.match(/\[([^\]]+)\]/);
+    if (bracket) status = normalizeSliceStatus(bracket[1]);
   }
 
-  const notReady = /in-progress|in_progress|blocked|done|complete|cloud|hold|wip/i;
-  const ready = status === null ? true : !notReady.test(status);
+  const ready = status === null || status.toLowerCase() === 'ready';
   return { found: true, status, ready };
+}
+
+function normalizeSliceStatus(raw: string): string {
+  const value = raw.trim();
+  const recognized = /^(ready|in-progress(?:[a-z-]*)?|in_progress(?:_[a-z_]*)?|blocked|done|complete|cloud|hold|wip)$/i;
+  return recognized.test(value) ? value : `invalid marker: ${value}`;
 }
 
 // --- STEP_5 packet location -------------------------------------------------

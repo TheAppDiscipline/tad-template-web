@@ -141,6 +141,7 @@ Run `npm run discipline:validate` before closing a pipeline branch or opening a 
 - canonical anchors in `discipline.md`, `task_plan.md`, `findings.md` and `progress.md`
 - required directories under `.discipline/`
 - semantic completeness of key packets such as `STEP_5_SLICE_PACKET`, `DEPLOY_READINESS_PACKET`, `POST_DEPLOY_FEEDBACK_PACKET` and `PROD_HARDENING_PACKET`
+- ready `STEP_5_SLICE_PACKET`s also need `Provider Impact`, `AI Impact`, `Files to touch`, `Manual Verification`, and `Estimate` before implementation; missing sections warn so legacy packets remain compatible
 
 ## Backend Adapter Pattern
 

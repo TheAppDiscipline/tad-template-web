@@ -3,6 +3,13 @@
 
 create extension if not exists "pgcrypto";
 
+-- This is a generic shared-space baseline. If the product creates exactly one
+-- personal space at first login, add an app-specific idempotent RPC plus a
+-- matching unique constraint; do not implement that bootstrap with client inserts.
+create schema if not exists private;
+revoke all on schema private from public;
+grant usage on schema private to authenticated;
+
 create or replace function public.set_updated_at()
 returns trigger
 language plpgsql
@@ -59,39 +66,48 @@ alter table public.notifications enable row level security;
 -- does `select ... from memberships` triggers the memberships policy again ->
 -- "infinite recursion detected in policy for relation memberships". These helpers
 -- run with definer rights (RLS bypassed inside the function), breaking the cycle.
--- They still scope to the caller: `user_id = auth.uid()`. search_path is pinned.
-create or replace function public.is_space_member(p_space_id uuid)
+-- They still scope to the caller: `user_id = auth.uid()`. The empty search_path
+-- requires fully qualified objects and prevents shadowing attacks.
+create or replace function private.is_space_member(p_space_id uuid)
 returns boolean
 language sql
 security definer  -- Discipline Loop:ALLOW_SECURITY_DEFINER (breaks RLS recursion on memberships)
-set search_path = public
+set search_path = ''
 stable
 as $$
   select exists (
     select 1 from public.memberships
-    where space_id = p_space_id and user_id = auth.uid()
+    where memberships.space_id = p_space_id and memberships.user_id = auth.uid()
   );
 $$;
 
-create or replace function public.is_space_owner(p_space_id uuid)
+revoke all on function private.is_space_member(uuid) from public;
+grant execute on function private.is_space_member(uuid) to authenticated;
+
+create or replace function private.is_space_owner(p_space_id uuid)
 returns boolean
 language sql
 security definer  -- Discipline Loop:ALLOW_SECURITY_DEFINER (breaks RLS recursion on memberships)
-set search_path = public
+set search_path = ''
 stable
 as $$
   select exists (
     select 1 from public.memberships
-    where space_id = p_space_id and user_id = auth.uid() and role = 'owner'
+    where memberships.space_id = p_space_id
+      and memberships.user_id = auth.uid()
+      and memberships.role = 'owner'
   );
 $$;
+
+revoke all on function private.is_space_owner(uuid) from public;
+grant execute on function private.is_space_owner(uuid) to authenticated;
 
 -- SPACES
 drop policy if exists spaces_select_member on public.spaces;
 create policy spaces_select_member
 on public.spaces for select
 to authenticated
-using (created_by = auth.uid() or public.is_space_member(id));
+using (created_by = auth.uid() or private.is_space_member(id));
 
 drop policy if exists spaces_insert_owner on public.spaces;
 create policy spaces_insert_owner
@@ -103,21 +119,21 @@ drop policy if exists spaces_update_owner on public.spaces;
 create policy spaces_update_owner
 on public.spaces for update
 to authenticated
-using (created_by = auth.uid() or public.is_space_owner(id))
-with check (created_by = auth.uid() or public.is_space_owner(id));
+using (created_by = auth.uid() or private.is_space_owner(id))
+with check (created_by = auth.uid() or private.is_space_owner(id));
 
 drop policy if exists spaces_delete_owner on public.spaces;
 create policy spaces_delete_owner
 on public.spaces for delete
 to authenticated
-using (created_by = auth.uid() or public.is_space_owner(id));
+using (created_by = auth.uid() or private.is_space_owner(id));
 
 -- MEMBERSHIPS (owner manages invites; bootstrap allowed)
 drop policy if exists memberships_select_member on public.memberships;
 create policy memberships_select_member
 on public.memberships for select
 to authenticated
-using (public.is_space_member(space_id));
+using (private.is_space_member(space_id));
 
 drop policy if exists memberships_insert_owner on public.memberships;
 create policy memberships_insert_owner
@@ -132,44 +148,44 @@ with check (
       where s.id = memberships.space_id and s.created_by = auth.uid()
     )
   )
-  or public.is_space_owner(memberships.space_id)
+  or private.is_space_owner(memberships.space_id)
 );
 
 drop policy if exists memberships_update_owner on public.memberships;
 create policy memberships_update_owner
 on public.memberships for update
 to authenticated
-using (public.is_space_owner(space_id))
-with check (public.is_space_owner(space_id));
+using (private.is_space_owner(space_id))
+with check (private.is_space_owner(space_id));
 
 drop policy if exists memberships_delete_owner on public.memberships;
 create policy memberships_delete_owner
 on public.memberships for delete
 to authenticated
-using (public.is_space_owner(space_id));
+using (private.is_space_owner(space_id));
 
 -- NOTIFICATIONS
 drop policy if exists notifications_select_own on public.notifications;
 create policy notifications_select_own
 on public.notifications for select
 to authenticated
-using (notifications.user_id = auth.uid() and public.is_space_member(notifications.space_id));
+using (notifications.user_id = auth.uid() and private.is_space_member(notifications.space_id));
 
 drop policy if exists notifications_update_own_read on public.notifications;
 create policy notifications_update_own_read
 on public.notifications for update
 to authenticated
-using (notifications.user_id = auth.uid() and public.is_space_member(notifications.space_id))
-with check (notifications.user_id = auth.uid() and public.is_space_member(notifications.space_id));
+using (notifications.user_id = auth.uid() and private.is_space_member(notifications.space_id))
+with check (notifications.user_id = auth.uid() and private.is_space_member(notifications.space_id));
 
 drop policy if exists notifications_insert_owner on public.notifications;
 create policy notifications_insert_owner
 on public.notifications for insert
 to authenticated
-with check (public.is_space_owner(notifications.space_id));
+with check (private.is_space_owner(notifications.space_id));
 
 drop policy if exists notifications_delete_owner on public.notifications;
 create policy notifications_delete_owner
 on public.notifications for delete
 to authenticated
-using (public.is_space_owner(notifications.space_id));
+using (private.is_space_owner(notifications.space_id));
