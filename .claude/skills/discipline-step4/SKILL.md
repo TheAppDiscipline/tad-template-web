@@ -7,6 +7,17 @@ description: "Automate Discipline Loop Step 4: expand the validated STEP_4_EXECU
 
 This skill runs the full Step 4: it expands the slices from the validated STEP_4_EXECUTION_PACKET into executable slices with scope, contracts, acceptance criteria, and DoD, generates the STEP_5_SLICE_PACKET for the first ready slice, emits patch blocks, and leaves the paste-readies ready for Step 5.
 
+## Execution policy (self-contained)
+
+Read these optional keys from `discipline.md` §0 Profile. Defaults apply when they are absent:
+
+- `STEP4_EXPANSION_MODE`: `batch` (default) expands the next 2–3 unblocked slices; `full` expands every slice in `STEP_4_EXECUTION_PACKET`.
+- `READY_PROMOTION`: `per_packet` (default and the only supported value) means a slice becomes `ready` only when its own `STEP_5_SLICE_PACKET` exists and its dependencies are `done`.
+- `DOCTRINE_VERSION`: informational compatibility marker; report its value when present.
+
+Do not require the vault or any external path to apply this policy.
+If `STEP4_EXPANSION_MODE` is not `batch|full`, or `READY_PROMOTION` is not `per_packet`, stop and ask the operator to correct `discipline.md`.
+
 No external tools required. Claude generates everything directly.
 
 ## What the user sees
@@ -77,7 +88,11 @@ Run /discipline-step2 to validate the architecture before expanding slices.
 
 **Read all available packets.** Build a mental map of the whole project before expanding.
 
-**For each slice listed in the STEP_4_EXECUTION_PACKET:**
+**Determine the expansion set before writing:**
+- `STEP4_EXPANSION_MODE=full`: select every slice listed in `STEP_4_EXECUTION_PACKET`.
+- `STEP4_EXPANSION_MODE=batch` or absent: select the next 2–3 slices whose dependencies are not blocked, preserving execution order and any already `done` slices.
+
+**For each selected slice:**
 
 Expand it with the following detail:
 
@@ -258,10 +273,12 @@ CONTENT:
 | # | Slice | Complexity | Dependencies | Status |
 |---|---|---|---|---|
 | 0 | <name> | S/M/L | none | ready |
-| 1 | <name> | S/M/L | 0 | ready |
-| 2 | <name> | S/M/L | 0 | ready |
+| 1 | <name> | S/M/L | 0 | planned (awaiting its own STEP_5_SLICE_PACKET) |
+| 2 | <name> | S/M/L | 0 | planned (awaiting its own STEP_5_SLICE_PACKET) |
 ...
 ```
+
+Only the selected slice with an emitted packet and satisfied dependencies may be `ready`. Preserve slices already marked `done`; detailed expansion alone never promotes a slice.
 
 Save to: `.discipline/patches/pending/TASK_PLAN_PATCH_BLOCK.md`
 
@@ -384,6 +401,7 @@ Next step: /discipline-step5 (Implement Slice <N>: <name>)
 - Acceptance criteria must be verifiable. "Works well" is not a criterion. "The user can create an item and see it in the list" is.
 - Scope OUT is as important as Scope IN. Explicitly documenting what does NOT belong in each slice prevents scope creep during implementation.
 - The contracts copied into the STEP_5_SLICE_PACKET must be exact, not summarized. Step 5 implements directly from this packet.
+- Never require the vault at execution time. Enforce `STEP4_EXPANSION_MODE` and `READY_PROMOTION` from `discipline.md` instead.
 - Do not recommend premature optimization in the slices. The bootstrap should be minimal and functional.
 - Patch blocks must be exact and pasteable, not narrative suggestions.
 - If `progress.md` indicates a slice other than the first, respect that indication. The operator may be resuming a partial pipeline.
