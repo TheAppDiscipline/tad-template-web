@@ -65,6 +65,32 @@ Missing: <list of missing files>
 10. `task_plan.md`
 11. `findings.md`
 
+**Starter code and templates (read when the selected backend uses them):**
+12. The migration, rules, or persistence template for the selected backend.
+13. The shared backend types and the implementation for the selected backend.
+14. The existing tests or fixtures that create, read, or update the same data.
+
+### Contract-to-scaffold check
+
+Before producing permissions, migrations, or a `STATUS: validated` execution packet, compare
+the proposed contracts with the starter files that already exist in the repository. This keeps
+the plan aligned with the application people will actually build on.
+
+For every table, collection, or shared data shape that the plan creates or changes, record:
+
+- its physical name in the starter project;
+- its final fields, including fields that will be removed;
+- its access rules, timestamps, and automatic behaviors;
+- the shared type or API shape that represents it; and
+- the adapters, tests, or fixtures that must change with it.
+
+If the plan differs from the starter project, Output 3 must state the exact final shape and the
+exact delta from the starter. Output 6 must update the relevant project contracts and task plan.
+Do not mark the architecture validated while it names a table or field that does not exist, or
+while an adapter, type, or test still promises a different shape. Keeping the starter default is
+always valid when it already meets the product contract; this check only makes deliberate
+differences explicit.
+
 ### Phase 1: Generate the 6 outputs
 
 Use Extended Thinking for each output. Include "think hard about this" internally to activate deep reasoning.
@@ -228,3 +254,5 @@ Next step: <determine per config>
 - Do not recommend premature optimization.
 - Patch blocks must be exact and pasteable, not narrative suggestions.
 - The validated STEP_4_EXECUTION_PACKET replaces any earlier draft version.
+- A validated contract must agree with the relevant starter schema, shared types, adapters, and
+  fixtures, or must name the exact changes that will bring them into agreement.

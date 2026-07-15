@@ -77,6 +77,18 @@ Run /discipline-step2 to validate the architecture before expanding slices.
 13. `.discipline/step2-outputs/Step2_02_Permissions_Security.md` - permissions and security
 14. `.discipline/step2-outputs/Step2_03_Migrations_Backend.md` - migrations and backend
 
+### Reconcile the plan with the starter project
+
+Before expanding a slice that touches stored data, permissions, or a backend adapter, read the
+relevant starter migration or rules file, shared types, selected-provider adapter, and existing
+tests or fixtures. Compare them with the validated contract.
+
+For every difference, make the slice say exactly what changes: the physical name, fields,
+timestamps or automatic behaviors, access rules, shared type, adapter, and tests. Put those
+files in `Files to touch` and make the result verifiable. If the difference changes a product or
+architecture decision that is not already resolved, stop and return it to Step 2; do not promote
+the slice to `ready` by asking Step 5 to guess.
+
 ### Phase 1: Expand slices
 
 **Context for the expansion:** Before expanding, Claude should keep in mind:
@@ -139,7 +151,20 @@ Expand it with the following detail:
 9. **Complexity estimate**: S (< 1 hour), M (1-3 hours), L (3-8 hours). Based on:
    - S: One new file, a localized change, no new integrations
    - M: Several files, one new integration, moderate logic
-   - L: Multiple files, several integrations, complex logic or edge cases
+    - L: Multiple files, several integrations, complex logic or edge cases
+
+10. **Provider impact**: State which backend, hosting, authentication, or other provider
+    configuration the slice uses or changes. Write `None` when there is no provider impact.
+
+11. **Files to touch**: List the planned files and whether each is new or modified. Include
+    migrations, shared types, adapters, tests, and fixtures when the slice changes a data
+    contract.
+
+12. **Gates**: Name the automated checks that must pass for this slice, including the project
+    gate and any relevant backend or security check.
+
+13. **Manual verification**: Give the shortest real-world check that proves the slice works.
+    Include a failure or access-boundary check when the slice touches data or permissions.
 
 **Determine execution order.** Based on the dependencies:
 - Slice 0 is always bootstrap (setup, config, schema, seed data)
@@ -181,6 +206,14 @@ Estimated total: <sum of estimates>
 ### Dependencies
 ...
 ### Complexity
+...
+### Provider impact
+...
+### Files to touch
+...
+### Gates
+...
+### Manual verification
 ...
 
 ---
@@ -237,6 +270,18 @@ STATUS: ready
 
 ## DoD
 <definition of done>
+
+## Provider Impact
+<provider configuration used or changed; write "None" when there is no impact>
+
+## Files To Touch
+<new and modified files, including contract-related types, adapters, tests, and fixtures>
+
+## Gates
+<automated checks required before this slice is complete>
+
+## Manual Verification
+<short happy-path and failure or access-boundary check>
 
 ## Architecture Context
 <relevant extract from the STEP_4_EXECUTION_PACKET: locks, guardrails, decisions that affect this slice>
@@ -401,6 +446,9 @@ Next step: /discipline-step5 (Implement Slice <N>: <name>)
 - Acceptance criteria must be verifiable. "Works well" is not a criterion. "The user can create an item and see it in the list" is.
 - Scope OUT is as important as Scope IN. Explicitly documenting what does NOT belong in each slice prevents scope creep during implementation.
 - The contracts copied into the STEP_5_SLICE_PACKET must be exact, not summarized. Step 5 implements directly from this packet.
+- Before a data or backend slice is `ready`, reconcile its contract with the relevant starter
+  schema, shared types, adapters, and fixtures. An intentional difference is fine only when the
+  packet names the exact delta, files, tests, and verification that make every layer agree.
 - Never require the vault at execution time. Enforce `STEP4_EXPANSION_MODE` and `READY_PROMOTION` from `discipline.md` instead.
 - Do not recommend premature optimization in the slices. The bootstrap should be minimal and functional.
 - Patch blocks must be exact and pasteable, not narrative suggestions.
