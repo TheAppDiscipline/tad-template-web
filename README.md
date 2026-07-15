@@ -148,6 +148,7 @@ Start from `.mcp.json.example` and enable only the servers the project really ne
 Recommended order:
 - GitHub in read-only mode when you need PRs, Actions or issues in context
 - Playwright for browser verification in UI lanes
+- Stitch only during Step 3; it can modify design assets, so use a dedicated key and disable it after the approved handoff
 - Supabase only when the backend provider is Supabase
 
 Do not add write-heavy MCPs by default.

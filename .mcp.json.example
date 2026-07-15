@@ -19,6 +19,16 @@
       "args": ["@playwright/mcp@latest"]
     },
 
+    "_DISABLED_stitch": {
+      "_purpose": "Step 3 only: read, generate, and iterate Stitch screens/design systems so the agent can produce the UI_HANDOFF_PACKET without manual copy/paste. This changes design assets; enable it only for an active Step 3, use a dedicated Stitch API key, and remove or revoke it when the handoff is approved.",
+      "_setup": "Remove _DISABLED_, create an API key in Stitch, and set STITCH_API_KEY. The local proxy is used because it is compatible with Claude Code's stdio transport.",
+      "command": "npx",
+      "args": ["-y", "@_davideast/stitch-mcp", "proxy"],
+      "env": {
+        "STITCH_API_KEY": "replace-with-a-dedicated-Stitch-API-key"
+      }
+    },
+
     "_DISABLED_supabase": {
       "_purpose": "Read tables, RLS policies, and migrations in read-only mode. Useful for Step 2 architecture validation and RLS audits. To enable it, remove _DISABLED_, install @supabase/mcp-server, and configure SUPABASE_URL plus SUPABASE_ANON_KEY. Never use service_role here.",
       "command": "npx",
