@@ -14,6 +14,21 @@ const step = args.step?.toString();
 const useClipboard = args.clipboard === true;
 const openUrl = args.open === true;
 
+function optionalPacketsForStep5(slicePacket: string, configuredPackets: string[]): string[] {
+  const declaration = slicePacket.match(/^CONTEXT_PACKETS:\s*(.+?)\s*$/mi);
+  if (!declaration) {
+    disciplineWarn('STEP_5_SLICE_PACKET has no CONTEXT_PACKETS declaration; no optional context packets were included.');
+    return [];
+  }
+
+  const requested = new Set(declaration[1].split(',').map(value => value.trim().replace(/\.md$/, '')).filter(Boolean));
+  const supported = new Set(configuredPackets.map(packet => packet.replace(/\.md$/, '')));
+  const unknown = [...requested].filter(packet => packet !== 'none' && !supported.has(packet));
+  if (unknown.length > 0) disciplineWarn(`Ignoring unsupported Step 5 context packet(s): ${unknown.join(', ')}`);
+
+  return configuredPackets.filter(packet => requested.has(packet.replace(/\.md$/, '')));
+}
+
 export async function assemblePasteReady(root: string, stepId: string): Promise<string> {
   const config = STEP_ASSEMBLY_MAP[stepId];
   if (!config) disciplineError(`Step "${stepId}" is not valid. Valid steps: ${VALID_STEPS.join(', ')}`);
@@ -25,15 +40,23 @@ export async function assemblePasteReady(root: string, stepId: string): Promise<
 
   const sections: string[] = [];
   const missing: string[] = [];
+  const requiredPacketContents = new Map<string, string>();
 
   for (const p of config.requiredPackets) {
     const pp = path.join(packetsDir, p);
     if (!fs.existsSync(pp)) missing.push(p);
-    else sections.push(`### ${p.replace('.md', '')}\n\n${fs.readFileSync(pp, 'utf-8')}`);
+    else {
+      const content = fs.readFileSync(pp, 'utf-8');
+      requiredPacketContents.set(p, content);
+      sections.push(`### ${p.replace('.md', '')}\n\n${content}`);
+    }
   }
   if (missing.length > 0) disciplineError(`Missing required packets for Step ${stepId}:\n  ${missing.join('\n  ')}`);
 
-  for (const p of config.optionalPackets) {
+  const optionalPackets = stepId === '5'
+    ? optionalPacketsForStep5(requiredPacketContents.get('STEP_5_SLICE_PACKET.md') || '', config.optionalPackets)
+    : config.optionalPackets;
+  for (const p of optionalPackets) {
     const pp = path.join(packetsDir, p);
     if (fs.existsSync(pp)) sections.push(`### ${p.replace('.md', '')} (optional)\n\n${fs.readFileSync(pp, 'utf-8')}`);
   }

@@ -71,6 +71,38 @@ test('discipline assemble accepts Step 0a and writes step-0a-input.md', () => {
   assert.equal(fs.existsSync(path.join(projectRoot, '.discipline', 'paste-ready', 'step-0.1-input.md')), false)
 })
 
+test('discipline assemble Step 5 includes only the context packets declared by the slice', () => {
+  const projectRoot = createDisciplineProject({
+    'STEP_5_SLICE_PACKET.md': '# STEP_5_SLICE_PACKET\n\nCONTEXT_PACKETS: none\n',
+    'UI_HANDOFF_PACKET.md': '# UI_HANDOFF_PACKET\n\nUI_ONLY_CONTENT\n',
+    'AI_IMPLEMENTATION_PACKET.md': '# AI_IMPLEMENTATION_PACKET\n\nAI_ONLY_CONTENT\n',
+  })
+  fs.copyFileSync(
+    path.join(repoRoot, '.discipline', 'prompts', 'step-5-prompt.md'),
+    path.join(projectRoot, '.discipline', 'prompts', 'step-5-prompt.md'),
+  )
+
+  let result = runTsx('tools/discipline/assemble-paste-ready.ts', ['--step', '5', '--project-dir', projectRoot])
+  assert.equal(result.status, 0, getOutput(result))
+  let output = fs.readFileSync(path.join(projectRoot, '.discipline', 'paste-ready', 'step-5-input.md'), 'utf8')
+  assert.match(output, /Implementa únicamente el slice/)
+  assert.doesNotMatch(output, /UI_ONLY_CONTENT|AI_ONLY_CONTENT/)
+
+  fs.writeFileSync(path.join(projectRoot, '.discipline', 'packets', 'STEP_5_SLICE_PACKET.md'), '# STEP_5_SLICE_PACKET\n\nCONTEXT_PACKETS: UI_HANDOFF_PACKET\n', 'utf8')
+  result = runTsx('tools/discipline/assemble-paste-ready.ts', ['--step', '5', '--project-dir', projectRoot])
+  assert.equal(result.status, 0, getOutput(result))
+  output = fs.readFileSync(path.join(projectRoot, '.discipline', 'paste-ready', 'step-5-input.md'), 'utf8')
+  assert.match(output, /UI_ONLY_CONTENT/)
+  assert.doesNotMatch(output, /AI_ONLY_CONTENT/)
+
+  fs.writeFileSync(path.join(projectRoot, '.discipline', 'packets', 'STEP_5_SLICE_PACKET.md'), '# STEP_5_SLICE_PACKET\n\nCONTEXT_PACKETS: UI_HANDOFF_PACKET, AI_IMPLEMENTATION_PACKET\n', 'utf8')
+  result = runTsx('tools/discipline/assemble-paste-ready.ts', ['--step', '5', '--project-dir', projectRoot])
+  assert.equal(result.status, 0, getOutput(result))
+  output = fs.readFileSync(path.join(projectRoot, '.discipline', 'paste-ready', 'step-5-input.md'), 'utf8')
+  assert.match(output, /UI_ONLY_CONTENT/)
+  assert.match(output, /AI_ONLY_CONTENT/)
+})
+
 test('discipline assemble builds feedback and hardening handoffs', () => {
   const projectRoot = createDisciplineProject({
     'POST_DEPLOY_FEEDBACK_PACKET.md': `# POST_DEPLOY_FEEDBACK_PACKET\n\nSTATUS: ready\nSOURCE_STEP: Step 6\n\n## Recommended branch\n- Step 4 feedback loop\n`,
