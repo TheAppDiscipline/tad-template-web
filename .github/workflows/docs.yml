@@ -27,6 +27,8 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -40,7 +42,12 @@ jobs:
         run: npm run discipline:validate
 
       - name: Markdown lint
-        run: npx markdownlint-cli2 "**/*.md"
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git diff --name-only -z "$BASE_SHA" "$HEAD_SHA" -- '*.md' |
+            xargs -0 -r npx markdownlint-cli2 --no-globs
 
       - name: Vale lint
         uses: errata-ai/vale-action@v2

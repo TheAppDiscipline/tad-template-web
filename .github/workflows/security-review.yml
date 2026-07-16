@@ -14,11 +14,17 @@ jobs:
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 2
+
       - name: Skip when ANTHROPIC_API_KEY is not configured
         if: ${{ env.ANTHROPIC_API_KEY == '' }}
         run: echo "ANTHROPIC_API_KEY is not configured; skipping optional security review."
 
-      - uses: anthropics/claude-code-security-review@v1
+      - uses: anthropics/claude-code-security-review@0c6a49f1fa56a1d472575da86a94dbc1edb78eda
         if: ${{ env.ANTHROPIC_API_KEY != '' }}
         with:
-          anthropic_api_key: ${{ env.ANTHROPIC_API_KEY }}
+          comment-pr: true
+          claude-api-key: ${{ env.ANTHROPIC_API_KEY }}
