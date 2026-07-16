@@ -52,7 +52,7 @@ STEP_2_5_AI_PACKET is missing. Go back to /discipline-step1 to generate it.
 
 Read STEP_2_5_AI_PACKET. Extract:
 - Use case (what the user asks for, what the AI delivers)
-- Primary provider and model role (`Premium Reliable - Mechanical Work`, `Premium Reliable - Implementation`, `Premium Reliable - Critical Decisions`, or `Frontier-Budget - Implementation`). Resolve the concrete IDs against the living registry of models and tools in The App Discipline vault (sold separately)
+- Primary provider and model role (`Premium Reliable - Mechanical Work`, `Premium Reliable - Implementation`, `Premium Reliable - Critical Decisions`, or `Frontier-Budget - Implementation`). Resolve the concrete IDs on the provider's official models/pricing page, using the model-selection guide in The App Discipline vault (sold separately) to map the role
 - Deterministic fallback provider (a simple rule for when the LLM fails)
 - Latency budget p95 (typically <3s for synchronous UI, <10s async)
 - Cost budget per request (typically <$0.01 LITE, <$0.05 SHARED_SYNC)
@@ -331,7 +331,7 @@ CRITICAL: if you change the provider in Step 5, re-run `npm run ai:eval` before 
 - Invalid schema (AJV fails): show the AJV error, ask for a correction.
 - Malformed JSONL evals: show the problematic line, ask for a correction.
 - LLM Contract Gate <90%: do NOT continue, redirect to Phase 3 or 4.
-- Provider quota exhausted: offer to switch to a cheaper current role from the living model registry (89) in the vault (sold separately), or wait.
+- Provider quota exhausted: offer to switch to a cheaper role, resolving the concrete model on the provider's official page (the model-selection guide in the vault, sold separately, maps roles to what to look for), or wait.
 
 ---
 

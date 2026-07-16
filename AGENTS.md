@@ -157,7 +157,7 @@ Never rename or delete headings in `discipline.md`, `task_plan.md`, `findings.md
 
 ## Model Routing (Step 5)
 
-Choose the right **model role** based on slice complexity. Concrete model IDs, prices, lifecycle and free tiers live in the separately-sold The App Discipline vault's model registry; do not hardcode versions here.
+Choose the right **model role** based on slice complexity. Concrete model IDs, prices, lifecycle and free tiers live in each provider's official documentation, not in this template; the model-selection guide in the separately-sold The App Discipline vault maps each role to what to look for. Do not hardcode versions here.
 
 - **Simple slices** (CRUD, UI layout, static pages): Use `Premium Reliable - Mechanical Work`, `Premium Reliable - Async Agent`, or `Frontier-Budget - Implementation` when gates and review are strong.
 - **Complex slices** (business logic, multi-table operations, state management): Use `Premium Reliable - Implementation`.

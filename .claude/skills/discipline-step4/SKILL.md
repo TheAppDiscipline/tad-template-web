@@ -33,7 +33,7 @@ No external tools required. Claude generates everything directly.
 
 - Step 2 completed (`STEP_4_EXECUTION_PACKET.md` with STATUS: validated)
 - Node.js + npm (to run the Discipline Loop scripts)
-- **Recommended role: Premium Reliable - Implementation or Premium Reliable - Mechanical Work.** Slice expansion is structured work that does not require Critical Decisions. Frontier-Budget - Implementation is also valid for simple slices as long as you keep gates and review. Current concrete model: see the live model-and-tooling registry in The App Discipline vault (sold separately).
+- **Recommended role: Premium Reliable - Implementation or Premium Reliable - Mechanical Work.** Slice expansion is structured work that does not require Critical Decisions. Frontier-Budget - Implementation is also valid for simple slices as long as you keep gates and review. Current concrete model: resolve it on your provider's official models/pricing page, using the model-selection guide in The App Discipline vault (sold separately) to map the role.
 
 ---
 

@@ -34,7 +34,7 @@ No external tools required. Claude generates everything directly using Extended 
 
 ```
 ⚠️ This step requires the Premium Reliable - Critical Decisions role.
-Check the current concrete model in the Living Registry (89).
+Check the current concrete model on your provider's official models page (map the role via the model-selection guide in the vault).
 Do not use mechanical roles, free tiers, or Frontier-Budget without a Premium review for this step.
 ```
 

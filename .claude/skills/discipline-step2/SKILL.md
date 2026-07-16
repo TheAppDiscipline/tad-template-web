@@ -22,7 +22,7 @@ No external tools required. Claude generates everything directly using Extended 
 - `STEP_2_ARCHITECTURE_PACKET.md` must exist in `.discipline/packets/`
 - `STEP_4_EXECUTION_PACKET.draft.md` must exist in `.discipline/packets/`
 - Node.js + npm (to run the Discipline Loop scripts)
-- **Required role: Premium Reliable - Critical Decisions** with the strongest reasoning available. Resolve the concrete current model in the live model-and-tooling registry in The App Discipline vault (sold separately). You may use Frontier-Budget only for an early draft; locking the architecture requires Premium.
+- **Required role: Premium Reliable - Critical Decisions** with the strongest reasoning available. Resolve the concrete current model on your provider's official models/pricing page; the model-selection guide in The App Discipline vault (sold separately) maps this role to what to look for. You may use Frontier-Budget only for an early draft; locking the architecture requires Premium.
 
 ---
 
@@ -34,7 +34,7 @@ No external tools required. Claude generates everything directly using Extended 
 
 ```
 ⚠️ This step requires the Premium Reliable - Critical Decisions role.
-Check the concrete current model in the live model registry (89) before locking the architecture.
+Check the concrete current model on your provider's official models page (map the role via the model-selection guide in the vault) before locking the architecture.
 Do not use mechanical roles, free tiers, or Frontier-Budget without a Premium review for this lock.
 ```
 
