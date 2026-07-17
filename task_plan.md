@@ -15,11 +15,11 @@
 
 ## 4) Ready Slices
 
-## Slice 0 - Backend Choice & Bootstrap
+## Slice 0 - Bootstrap & Backend Confirmation
 ### Goal
-Verify backend connectivity and base project setup.
+Verify base project setup and the backend decision.
 #### Scope IN
-- Choose BACKEND_PROVIDER
+- Confirm BACKEND_PROVIDER in discipline.md (ships as LOCAL_ONLY; if you change it, run `npm run discipline:provider:generate`)
 - Install SDK if needed
 - Run `npm run backend:smoke`
 - Confirm gate passes

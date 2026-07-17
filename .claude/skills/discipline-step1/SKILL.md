@@ -82,16 +82,16 @@ Once the description covers all 4 axes, continue:
 | "web app", "opens in the browser", "PWA", or does not mention a platform | LANE | WEB |
 | "mobile app", "iPhone", "Android", "App Store" | LANE | MOBILE |
 | "Chrome/Firefox extension" | LANE | EXTENSION |
-| "API", "backend", "service" | LANE | BACKEND |
+| "API", "backend", "service" (no UI of its own) | LANE | WEB (a pure backend/API is outside the 4 official v1.0 lanes; confirm scope with the user before continuing) |
 | Few features, one type of user, personal use | PROFILE | LITE |
 | Several data types, sharing with family/closed group | PROFILE | SHARED_SYNC |
 | Public beta / first paying users, without a complete PROD scorecard | PROFILE | LAUNCH |
 | Roles, permissions, admin, multiple flows, commercial >=50 active | PROFILE | PROD |
 | "login", "create account", "users", "team", "members" | AUTH | MAGIC_LINK (default if no method is specified) |
-| "Google login", "sign in with Google" | AUTH | GOOGLE |
+| "Google login", "sign in with Google", social login | AUTH | MAGIC_LINK (OAuth/social is not a v1 AUTH_MODE — valid values: MAGIC_LINK, EMAIL_PASSWORD, BOTH, NONE; start with MAGIC_LINK and add social login later as its own slice) |
 | "no login", "no account", personal use without mentioning accounts | AUTH | NONE |
 | If AUTH=NONE and there is no mention of sharing or sync across devices | BACKEND | LOCAL_ONLY |
-| If it needs accounts, shared data, or sync | BACKEND | SUPABASE (default) |
+| If it needs accounts, shared data, or sync | BACKEND | SUPABASE (recommended cloud) |
 | Explicitly mentions "Firebase" or "Google Cloud" | BACKEND | FIREBASE |
 | "share", "team", "collaborate", "assign to others" | COLLAB | COLLABORATIVE |
 | "see other people's stuff", "share (read-only)", or no mention of collaboration | COLLAB | VIEW_ONLY |
@@ -101,7 +101,7 @@ Once the description covers all 4 axes, continue:
 | No mention of notifications | PUSH | false |
 
 Automatic inferences (not asked):
-- SYNC: If BACKEND=LOCAL_ONLY -> OFFLINE_FIRST, anything else -> FAST_UI
+- SYNC: If BACKEND=LOCAL_ONLY -> NONE (nothing to sync), anything else -> FAST_UI (SERVER_AUTHORITATIVE only for competitive concurrent actions; OFFLINE_FIRST only on real offline need)
 - HOSTING: Vercel (default)
 
 **Show the inferred configuration and ask for confirmation:**
@@ -111,7 +111,7 @@ Based on your description, this is the configuration I recommend:
 
 - Type: Web (LANE=WEB)
 - Complexity: Medium, several users, shared data (PROFILE=SHARED_SYNC)
-- Login: With Google (AUTH=GOOGLE)
+- Login: Magic link by email (AUTH=MAGIC_LINK)
 - Database: Supabase, quick to set up, good free tier (BACKEND=SUPABASE)
 - Collaboration: Users can edit shared data (COLLAB=COLLABORATIVE)
 - Sync: Fast UI with sync to the backend (SYNC=FAST_UI)
@@ -124,7 +124,7 @@ Is this good, or do you want to change something?
 
 The user can say "yes", "perfect", or "change X to Y". Adjust based on the feedback.
 
-Once confirmed, run it. Use `--force` if `discipline.md` already exists (to overwrite the empty switches):
+Once confirmed, run it. Use `--force` if `discipline.md` already exists (to overwrite the initial switches with the confirmed ones):
 
 ```bash
 npm run discipline:hydrate -- --lane <LANE> --profile <PROFILE> --backend <BACKEND> --auth <AUTH> --collab <COLLAB> --sync <SYNC> --ai <AI> --push <PUSH> --hosting <HOSTING> --force
@@ -255,7 +255,7 @@ Same logic as 1-7, but save to different locations:
 | 8 | Validation | `10_Validation.md` | `.discipline/step1-outputs/` |
 | 9 | STEP_2_ARCHITECTURE_PACKET | `STEP_2_ARCHITECTURE_PACKET.md` | `.discipline/packets/` |
 | 10 | STEP_2_5_AI_PACKET | `STEP_2_5_AI_PACKET.md` | `.discipline/packets/` (only if AI_FEATURES=enabled) |
-| 11 | STEP_3_STITCH_PACKET | `STEP_3_STITCH_PACKET.md` | `.discipline/packets/` (only if LANE is not BACKEND or CLI) |
+| 11 | STEP_3_STITCH_PACKET | `STEP_3_STITCH_PACKET.md` | `.discipline/packets/` (only if the app has UI screens to hand off) |
 | 12 | STEP_4_EXECUTION_PACKET | `STEP_4_EXECUTION_PACKET.draft.md` | `.discipline/packets/` (with STATUS: draft) |
 | 13 | REPO_READY_BLOCKS | `DISCIPLINE_MD_READY_BLOCK.md` + `TASK_PLAN_READY_BLOCK.md` | `.discipline/packets/` |
 

@@ -53,7 +53,7 @@ Read `discipline.md` and extract the `§0 Switches` section (or equivalent). Cap
 - `AUTH_MODE`
 - `AI_FEATURES`
 
-If `PROFILE` is not declared, flag a warning: "discipline.md does not declare PROFILE. SHARED_SYNC is the implicit default per NN #6, but making it explicit is recommended."
+If `PROFILE` is not declared, flag a warning: "discipline.md does not declare PROFILE. The template ships `PROFILE: LITE`; declare it explicitly (when undeclared, the Discipline Loop boot protocol falls back to SHARED_SYNC)."
 
 ### Phase 2: Read `progress.md`
 

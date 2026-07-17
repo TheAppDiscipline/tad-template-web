@@ -12,7 +12,7 @@ if (!VALID_LANES.includes(lane)) {
   console.error(`[Discipline Loop] Invalid lane: "${lane}". Valid values: ${VALID_LANES.join(', ')}`);
   process.exit(1);
 }
-const profile = (args.profile || 'SHARED_SYNC').toUpperCase();
+const profile = (args.profile || 'LITE').toUpperCase();
 const backend = (args.backend || 'LOCAL_ONLY').toUpperCase();
 const auth = (args.auth || 'NONE').toUpperCase();
 const collab = (args.collab || 'VIEW_ONLY').toUpperCase();
@@ -53,6 +53,9 @@ writeIfNew('discipline.md', `# discipline.md — Project Constitution
 - PUSH_PLUGIN: ${push}
 - AI_FEATURES: ${ai}
 - LANE: ${lane}
+- STEP4_EXPANSION_MODE: batch
+- READY_PROMOTION: per_packet
+- DOCTRINE_VERSION: 1.0
 
 ## Env Configuration
 - BACKEND_PROVIDER and AUTH_MODE above are materialized by \`npm run discipline:provider:generate\`.
@@ -129,7 +132,7 @@ writeIfNew('progress.md', `# progress.md — Current Status + Logs
 - (none)
 
 ## Next Actions
-- Choose BACKEND_PROVIDER, run discipline:provider:generate, then run backend:smoke when credentials exist
+- Choose BACKEND_PROVIDER, run discipline:provider:generate${lane === 'EXTENSION' ? '' : ', then run backend:smoke when credentials exist'}
 
 ## Deploy Notes
 - N/A

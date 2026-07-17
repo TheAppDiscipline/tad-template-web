@@ -138,11 +138,15 @@ For each audit in the list, apply the corresponding prompt from the auto-audit p
 
 #### Audit 4, perf
 
-**Commands:**
+**Commands (per lane):**
 ```bash
+# Web / Desktop (Vite)
 npm run build
 npx vite-bundle-visualizer  # or equivalent
 npx unlighthouse --site http://localhost:4173
+# Mobile (Expo): no local `npm run build`; EAS builds in the cloud.
+#   Inspect the JS bundle with `npx expo export` and review the output size.
+# Extension (WXT): `npm run build`, then inspect .output/ bundle sizes; Lighthouse N/A.
 ```
 
 **Logic:**

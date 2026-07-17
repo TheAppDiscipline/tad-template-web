@@ -12,7 +12,7 @@ NOTE: the skill does not pick the lane for the user. If you are unsure which lan
 ## What the user sees
 
 1. The skill confirms the lane (`web` / `mobile` / `desktop` / `extension`).
-2. It asks for the project name and initial profile (default `SHARED_SYNC` per NN #6).
+2. It asks for the project name and initial profile (default `LITE`, the template's shipped profile).
 3. It clones the official template from GitHub into the chosen directory.
 4. It runs `npm install` and verifies there are no install errors.
 5. It checks Node >= 22, Git >= 2.40 (per the non-programmer setup guide in the vault, sold separately).
@@ -61,7 +61,7 @@ Ask the user for:
 - **Lane** (web / mobile / desktop / extension). If it was not passed as an argument, ask.
 - **Project name** (slug-friendly, e.g. `my-app`).
 - **Target directory** (default: current directory + project name).
-- **Initial profile** (default SHARED_SYNC; options: LITE, SHARED_SYNC, LAUNCH, PROD). If LITE, also offer `BACKEND_PROVIDER=LOCAL_ONLY`.
+- **Initial profile** (default LITE; options: LITE, SHARED_SYNC, LAUNCH, PROD). `BACKEND_PROVIDER` ships as `LOCAL_ONLY` in every profile; a cloud backend (SUPABASE recommended) is chosen later, when the app needs accounts, shared data, or sync.
 
 Validate:
 - Lane is one of the 4 official lanes.
@@ -112,10 +112,10 @@ Run:
 npm run discipline:hydrate
 ```
 
-If the script exists (all official templates have it post-Wave 3.1), it generates `discipline.md` with the default switches. Then apply a patch to adjust the profile if it differs from the default:
+If the script exists (all official templates have it post-Wave 3.1), it ensures the Discipline Loop structure; in a fresh clone `discipline.md` already ships with the default switches (`PROFILE: LITE`, `BACKEND_PROVIDER: LOCAL_ONLY`, `AUTH_MODE: NONE`) and is kept as-is. Then apply a patch to adjust the profile if it differs from the default:
 
 ```bash
-# Only if profile != SHARED_SYNC (the template default)
+# Only if profile != LITE (the template default)
 echo "<patch block to set PROFILE=<profile>>" > .discipline/patches/pending/init-profile.md
 npm run discipline:patch
 ```
@@ -127,13 +127,13 @@ If `discipline:hydrate` does not exist (old template), create a minimal `discipl
 
 ## 0) Profile
 
-LANE=<lane>
-PROFILE=<profile>
-BACKEND_PROVIDER=<supabase|firebase|local_only>
-AUTH_MODE=<magic_link|none>
-COLLAB_MODE=<collaborative|single_user>
-SYNC_MODE=<fast_ui|server_authoritative|none>
-AI_FEATURES=<enabled|none>
+- LANE: <WEB|MOBILE|DESKTOP|EXTENSION>
+- PROFILE: <LITE|SHARED_SYNC|LAUNCH|PROD>
+- BACKEND_PROVIDER: <SUPABASE|FIREBASE|LOCAL_ONLY>
+- AUTH_MODE: <MAGIC_LINK|EMAIL_PASSWORD|BOTH|NONE>
+- COLLAB_MODE: <VIEW_ONLY|COLLABORATIVE>
+- SYNC_MODE: <FAST_UI|OFFLINE_FIRST|SERVER_AUTHORITATIVE|NONE>
+- AI_FEATURES: <none|enabled>
 ```
 
 ### Phase 6: Verify boot (optional)

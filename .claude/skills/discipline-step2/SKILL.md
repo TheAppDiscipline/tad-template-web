@@ -253,6 +253,7 @@ Next step: <determine per config>
 - Do not change the lane or the stack without strong justification.
 - Do not recommend premature optimization.
 - Patch blocks must be exact and pasteable, not narrative suggestions.
+- If the validated architecture changes `BACKEND_PROVIDER` or `AUTH_MODE` (via `DISCIPLINE_MD_PATCH_BLOCK`), tell the operator to run `npm run discipline:provider:generate` right after `npm run discipline:patch` and to commit the regenerated `src/config/provider.generated.*`; `npm run gate` fails on a stale provider artifact.
 - The validated STEP_4_EXECUTION_PACKET replaces any earlier draft version.
 - A validated contract must agree with the relevant starter schema, shared types, adapters, and
   fixtures, or must name the exact changes that will bring them into agreement.

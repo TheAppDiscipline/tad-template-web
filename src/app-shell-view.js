@@ -34,7 +34,7 @@ function renderChecklistItem(item) {
     return h('li', { key: item }, item)
 }
 
-export function AppShellView({ backendProvider, authMode, profile = 'SHARED_SYNC' }) {
+export function AppShellView({ backendProvider, authMode, profile = 'LITE' }) {
     return h('main', { className: 'app-shell' }, [
         h('section', { key: 'hero', className: 'panel hero' }, [
             h('p', { key: 'eyebrow', className: 'eyebrow' }, 'Discipline Loop Factory Template'),

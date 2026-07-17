@@ -14,7 +14,7 @@
 - (none)
 
 ## Next Actions
-- Choose BACKEND_PROVIDER and run backend:smoke
+- Choose BACKEND_PROVIDER, run discipline:provider:generate, then run backend:smoke when credentials exist
 
 ## Deploy Notes
 - N/A
