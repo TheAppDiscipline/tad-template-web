@@ -157,12 +157,12 @@ For each event, define:
 
     6: `Based on the idea and constraints, confirm or adjust the architecture switches for this app:
 
-- LANE: WEB | MOBILE | DESKTOP | BACKEND | WEB_SSR | CLI (already chosen during project setup. Confirm that it is correct.)
+- LANE: WEB | MOBILE | DESKTOP | EXTENSION (already chosen during project setup. Confirm that it is correct.)
 - PROFILE: LITE | SHARED_SYNC | LAUNCH | PROD
 - BACKEND_PROVIDER: SUPABASE | FIREBASE | LOCAL_ONLY
-- AUTH_MODE: MAGIC_LINK | GOOGLE | GITHUB | EMAIL_PASSWORD | NONE
+- AUTH_MODE: MAGIC_LINK | EMAIL_PASSWORD | BOTH | NONE
 - COLLAB_MODE: VIEW_ONLY | COLLABORATIVE
-- SYNC_MODE: FAST_UI | OFFLINE_FIRST
+- SYNC_MODE: FAST_UI | OFFLINE_FIRST | SERVER_AUTHORITATIVE | NONE
 - AI_FEATURES: none | enabled
 - PUSH_PLUGIN: true | false
 - HOSTING: Vercel | Cloudflare Pages | Netlify | Railway | other

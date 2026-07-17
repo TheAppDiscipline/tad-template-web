@@ -8,7 +8,7 @@ export type Profile = 'LITE' | 'SHARED_SYNC' | 'LAUNCH' | 'PROD';
 export type Backend = 'SUPABASE' | 'FIREBASE' | 'LOCAL_ONLY';
 export type AuthMode = 'MAGIC_LINK' | 'EMAIL_PASSWORD' | 'BOTH' | 'NONE';
 export type CollabMode = 'VIEW_ONLY' | 'COLLABORATIVE';
-export type SyncMode = 'FAST_UI' | 'OFFLINE_FIRST';
+export type SyncMode = 'FAST_UI' | 'OFFLINE_FIRST' | 'SERVER_AUTHORITATIVE' | 'NONE';
 
 // Parsed structures
 
