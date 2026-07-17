@@ -16,7 +16,7 @@
 ## 4) Ready Slices
 
 ## Slice 0 - Backend Choice & Bootstrap
-#### Goal
+### Goal
 Verify backend connectivity and base project setup.
 #### Scope IN
 - Choose BACKEND_PROVIDER

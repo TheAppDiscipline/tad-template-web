@@ -1,8 +1,43 @@
 {
+  // Docs CI runs this on every push and PR, so the rules must match how this
+  // content is actually written. It previously ran only on PRs, and every PR
+  // failed here before reaching Vale — which is why Vale had never executed once.
+  //
+  // Kept ON: rules that catch real defects (broken/empty/reversed links, bad
+  // anchors, hard tabs). Those can break the buyer's docs or the patch engine.
+  //
+  // Turned OFF: purely typographic rules this vault and these skills have never
+  // followed. Enforcing them would mean reformatting ~630 lines of prose across
+  // 4 lanes for zero functional gain, and any new note would trip them again.
   "config": {
     "default": true,
-    "MD013": { "line_length": 200 },
+
+    // Prose written for humans, not for a column limit. Skill frontmatter
+    // descriptions are single long lines by design.
+    "MD013": false,
+    // Blank-line spacing around lists, fences, headings and tables: layout only.
+    "MD022": false,
+    "MD031": false,
+    "MD032": false,
+    "MD058": false,
+    // List glyph/indent/numbering style: cosmetic, mixed across the vault.
+    "MD004": false,
+    "MD007": false,
+    "MD029": false,
+    // Table pipe padding: cosmetic; tables render identically either way.
+    "MD060": false,
+    // Fenced blocks without a language: many are plain output/paste blocks.
+    "MD040": false,
+    // Bold used as a sub-heading: deliberate in the walkthroughs.
+    "MD036": false,
+    // Repeated headings under different parents (e.g. "OpenAI" per section in
+    // LLM_TOOLS_README). Verified they never occur in discipline.md,
+    // task_plan.md, findings.md or progress.md, whose headings ARE the anchors
+    // the patch engine depends on.
+    "MD024": false,
+    // Inline HTML is used for callouts.
     "MD033": false,
+    // First line need not be a top-level heading (frontmatter comes first).
     "MD041": false
   },
   "globs": [
@@ -15,6 +50,9 @@
   ],
   "ignores": [
     "node_modules/**",
+    // Agent worktrees are a second checkout of this repo, not source. Git ignores
+    // them (.git/info/exclude); the local linter would otherwise lint an old copy.
+    "**/.claude/worktrees/**",
     "dist/**",
     ".discipline/backups/**",
     ".discipline/patches/applied/**"

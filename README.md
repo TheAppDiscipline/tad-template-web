@@ -2,7 +2,7 @@
 
 Template repository for building web applications following the **Discipline Loop** methodology.
 
-**Part of The App Discipline.** This is the public, MIT-licensed template (see `LICENSE`). The complete Discipline Loop methodology and vault (full system, playbooks, prompts, and extended materials) are a separate product, sold separately at https://theappdiscipline.gumroad.com/l/tad, and are **not** included in this repository.
+**Part of The App Discipline.** This is the public, MIT-licensed template (see `LICENSE`). The complete Discipline Loop methodology and vault (full system, playbooks, prompts, and extended materials) are a separate product, sold separately at <https://theappdiscipline.gumroad.com/l/tad>, and are **not** included in this repository.
 
 **Stack:** React 19 + Vite 8 + TypeScript (strict) + semantic design tokens
 

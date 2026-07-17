@@ -151,7 +151,7 @@ Expand it with the following detail:
 9. **Complexity estimate**: S (< 1 hour), M (1-3 hours), L (3-8 hours). Based on:
    - S: One new file, a localized change, no new integrations
    - M: Several files, one new integration, moderate logic
-    - L: Multiple files, several integrations, complex logic or edge cases
+   - L: Multiple files, several integrations, complex logic or edge cases
 
 10. **Provider impact**: State which backend, hosting, authentication, or other provider
     configuration the slice uses or changes. Write `None` when there is no provider impact.
