@@ -17,7 +17,7 @@ NOTE: the skill does not pick the lane for the user. If you are unsure which lan
 4. It runs `npm install` and verifies there are no install errors.
 5. It checks Node >= 22, Git >= 2.40 (per the non-programmer setup guide in the vault, sold separately).
 6. It initializes `discipline.md §0` with switches based on the chosen profile (via `discipline:hydrate` if the script exists).
-7. It offers to run `npm run dev` to verify the app boots.
+7. It offers to run the lane's dev command (`npm run dev`; `npm run start` on Mobile/Expo) to verify the app boots.
 8. It suggests the next command: `/discipline-step0a` (if the idea is not validated) or `/discipline-step1` (if it already is).
 
 ## Prerequisites
@@ -140,10 +140,10 @@ AI_FEATURES=<enabled|none>
 
 Offer the user:
 ```
-Do you want to verify that it boots? This runs `npm run dev` for 10 seconds to confirm the bundler builds the app without errors. (Y/N)
+Do you want to verify that it boots? This runs the lane's dev command for 10 seconds to confirm the bundler builds the app without errors. (Y/N)
 ```
 
-If Y, run `npm run dev &` in the background, wait 10s, and verify:
+If Y, run the lane's dev command in the background (`npm run dev &`; on Mobile/Expo the script is `npm run start &` — there is no `dev`), wait 10s, and verify:
 - Web/Desktop: HTTP 200 on localhost:5173 or equivalent.
 - Mobile: Expo CLI prints the QR without errors.
 - Extension: WXT prints "ready" without errors.
@@ -171,7 +171,7 @@ Verification:
 - ✓ npm install complete (<N> packages)
 - ✓ tools/discipline/ present
 <if the boot verification ran:>
-- ✓ npm run dev boots without errors
+- ✓ the lane's dev command boots without errors
 
 Recommended next step:
 <if IDEA_VALIDATION_PACKET does not exist:>
