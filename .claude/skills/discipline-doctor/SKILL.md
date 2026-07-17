@@ -118,7 +118,7 @@ Output in tabular format:
 
 | Area | Status | Detail |
 |---|---|---|
-| Profile declared | OK / WARNING | <PROFILE or "not declared, default SHARED_SYNC"> |
+| Profile declared | OK / WARNING | <PROFILE or "not declared (template ships LITE; boot fallback SHARED_SYNC)"> |
 | `progress.md` | OK / WARNING | <N lines; warning if >150> |
 | Slices done | <N> | Last: <title of the last slice> |
 | Validated packets | <N> | <short list of the main ones> |
