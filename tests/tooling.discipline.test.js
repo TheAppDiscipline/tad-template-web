@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { decide as decideDbTypes, parseBackendProvider } from '../tools/check_db_types.js'
+import { decide as decideDbTypes, detectProvider } from '../tools/check_db_types.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(__dirname, '..')
@@ -95,7 +95,7 @@ test('discipline assemble Step 5 includes only the context packets declared by t
   let result = runTsx('tools/discipline/assemble-paste-ready.ts', ['--step', '5', '--project-dir', projectRoot])
   assert.equal(result.status, 0, getOutput(result))
   let output = fs.readFileSync(path.join(projectRoot, '.discipline', 'paste-ready', 'step-5-input.md'), 'utf8')
-  assert.match(output, /Implementa únicamente el slice/)
+  assert.match(output, /Implement only the slice/)
   assert.doesNotMatch(output, /UI_ONLY_CONTENT|AI_ONLY_CONTENT/)
 
   fs.writeFileSync(path.join(projectRoot, '.discipline', 'packets', 'STEP_5_SLICE_PACKET.md'), '# STEP_5_SLICE_PACKET\n\nCONTEXT_PACKETS: UI_HANDOFF_PACKET\n', 'utf8')
@@ -905,12 +905,46 @@ test('check-db-types: generated == committed, tolerant of CRLF -> ok exit 0', ()
   assert.equal(r.level, 'ok')
 })
 
-test('check-db-types: parseBackendProvider ignores empty values and VITE_BACKEND_PROVIDER', () => {
-  assert.equal(parseBackendProvider('- BACKEND_PROVIDER:\n- LANE: WEB'), null)
-  assert.equal(parseBackendProvider('- BACKEND_PROVIDER: SUPABASE'), 'SUPABASE')
-  assert.equal(parseBackendProvider('- VITE_BACKEND_PROVIDER: Provider selection.'), null)
-  assert.equal(parseBackendProvider('- backend_provider = supabase'), 'SUPABASE')
-  assert.equal(parseBackendProvider('- BACKEND_PROVIDER: local-mock'), 'LOCAL-MOCK')
+test('check-db-types: reads the generated provider contract rather than environment fallbacks', () => {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'discipline-provider-'))
+  fs.mkdirSync(path.join(projectRoot, 'src', 'config'), { recursive: true })
+  fs.writeFileSync(path.join(projectRoot, 'src', 'config', 'provider.generated.json'), JSON.stringify({
+    schema: 'discipline.provider-config/v1', backendProvider: 'SUPABASE', authMode: 'MAGIC_LINK',
+  }), 'utf8')
+  assert.equal(detectProvider(projectRoot), 'SUPABASE')
+  fs.rmSync(projectRoot, { recursive: true, force: true })
+})
+
+test('provider contract check rejects a stale generated artifact', () => {
+  const projectRoot = createDisciplineProject()
+  try {
+    const artifact = path.join(projectRoot, 'src', 'config', 'provider.generated.json')
+    fs.mkdirSync(path.dirname(artifact), { recursive: true })
+    fs.writeFileSync(artifact, JSON.stringify({
+      schema: 'discipline.provider-config/v1', backendProvider: 'SUPABASE', authMode: 'MAGIC_LINK',
+    }), 'utf8')
+
+    const result = runTsx('tools/discipline/provider-config.ts', ['--check', '--project-dir', projectRoot])
+    assert.notEqual(result.status, 0)
+    assert.match(getOutput(result), /provider\.generated\.json is stale/)
+  } finally {
+    fs.rmSync(projectRoot, { recursive: true, force: true })
+  }
+})
+
+test('provider consumer check rejects a new direct environment consumer', () => {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'discipline-provider-consumer-'))
+  try {
+    const rogue = path.join(projectRoot, 'src', 'config', 'rogue.ts')
+    fs.mkdirSync(path.dirname(rogue), { recursive: true })
+    fs.writeFileSync(rogue, 'export const provider = import.meta.env.VITE_BACKEND_PROVIDER\n', 'utf8')
+
+    const result = runTsx('tools/discipline/check-provider-consumers.ts', ['--project-dir', projectRoot])
+    assert.notEqual(result.status, 0)
+    assert.match(getOutput(result), /src[\\/]config[\\/]rogue\.ts:1/)
+  } finally {
+    fs.rmSync(projectRoot, { recursive: true, force: true })
+  }
 })
 
 test('discipline patch matches an NFD heading against its NFC anchor', () => {

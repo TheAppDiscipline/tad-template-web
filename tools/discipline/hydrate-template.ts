@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import minimist from 'minimist';
 import { disciplineInfo } from './lib/types.js';
+import { generateProviderConfig } from './provider-config.js';
 
 const args = minimist(process.argv.slice(2));
 const projectDir = path.resolve(args['project-dir'] || process.cwd());
@@ -12,11 +13,6 @@ if (!VALID_LANES.includes(lane)) {
   process.exit(1);
 }
 const profile = (args.profile || 'SHARED_SYNC').toUpperCase();
-// The backend is chosen in Step 2 (validate architecture / choose provider), so
-// hydrate must not presuppose one: it defaults to the provider that works with no
-// credentials, matching .env.example and the runtime default. It used to default
-// to SUPABASE, which wrote a constitution claiming a backend the project had no
-// keys for. Pass --backend=SUPABASE|FIREBASE once Step 2 decides.
 const backend = (args.backend || 'LOCAL_ONLY').toUpperCase();
 const auth = (args.auth || 'NONE').toUpperCase();
 const collab = (args.collab || 'VIEW_ONLY').toUpperCase();
@@ -26,8 +22,7 @@ const push = args.push === 'true' ? 'true' : 'false';
 const hosting = args.hosting || 'Vercel';
 const force = args.force === true;
 
-const dirs = ['.discipline/packets', '.discipline/patches/pending', '.discipline/patches/applied', '.discipline/paste-ready', '.discipline/prompts', '.discipline/backups'];
-for (const dir of dirs) {
+for (const dir of ['.discipline/packets', '.discipline/patches/pending', '.discipline/patches/applied', '.discipline/paste-ready', '.discipline/prompts', '.discipline/backups']) {
   const full = path.join(projectDir, dir);
   if (!fs.existsSync(full)) { fs.mkdirSync(full, { recursive: true }); disciplineInfo(`Created: ${dir}/`); }
 }
@@ -35,33 +30,130 @@ for (const dir of dirs) {
 function writeIfNew(relPath: string, content: string) {
   const full = path.join(projectDir, relPath);
   if (fs.existsSync(full) && !force) { disciplineInfo(`Already exists: ${relPath} (skipped, use --force to overwrite)`); return; }
-  if (fs.existsSync(full) && force) { disciplineInfo(`Overwriting: ${relPath}`); }
+  if (fs.existsSync(full) && force) disciplineInfo(`Overwriting: ${relPath}`);
   fs.writeFileSync(full, content, 'utf-8');
   if (!force) disciplineInfo(`Created: ${relPath}`);
 }
 
-writeIfNew('discipline.md', `# discipline.md \u2014 Project Constitution\n\n## 0) Profile\n- PROJECT_NAME: <APP_NAME>\n- PRIMARY_GOAL: <one sentence>\n- NORTH_STAR_METRIC: <measurable metric>\n\n- PROFILE: ${profile}\n- BACKEND_PROVIDER: ${backend}\n- AUTH_MODE: ${auth}\n- COLLAB_MODE: ${collab}\n- STACK:\n  - Frontend: ${lane === 'WEB' ? 'PWA (Web)' : lane}\n  - Hosting: ${hosting}\n  - Backend: ${backend}\n- SYNC_MODE: ${sync}\n- PUSH_PLUGIN: ${push}\n- AI_FEATURES: ${ai}\n- LANE: ${lane}\n\n## Env Configuration\n- VITE_BACKEND_PROVIDER: Provider selection.\n- VITE_AUTH_MODE: Authentication strategy.\n\n### Supabase Env\n- VITE_SUPABASE_URL\n- VITE_SUPABASE_ANON_KEY\n\n### Firebase Env\n- VITE_FIREBASE_API_KEY\n- VITE_FIREBASE_AUTH_DOMAIN\n- VITE_FIREBASE_PROJECT_ID\n- VITE_FIREBASE_APP_ID\n\n## 1) Non-Negotiables\n- Data-First contracts\n- One Writer Per Slice\n- Gates: lint + typecheck + tests\n\n## 2) Tenancy & Permissions\n\n## 3) Data Model\n\n## 4) API / IO Shapes\n\n## 5) Sync Rules\n\n## 6) UI State Model\n- loading, empty, error\n\n## 7) Event / Notifications Model\n\n## 8) Design Tokens Contract\n\n## 9) Testing / Gates Contract\n\n## 10) LLM Contracts\n> Only if AI_FEATURES=enabled\n\n## 11) Universal Definition of Done\n`);
+writeIfNew('discipline.md', `# discipline.md — Project Constitution
 
-writeIfNew('task_plan.md', `# task_plan.md\n\n## 1) Current Goal\n\n## 2) Definition of Ready\n\n## 3) Definition of Done\n\n## 4) Ready Slices\n\n## 5) Deferred / Later\n\n## 6) Risks and Dependencies\n`);
+## 0) Profile
+- PROJECT_NAME: <APP_NAME>
+- PRIMARY_GOAL: <one sentence>
+- NORTH_STAR_METRIC: <measurable metric>
+- PROFILE: ${profile}
+- BACKEND_PROVIDER: ${backend}
+- AUTH_MODE: ${auth}
+- COLLAB_MODE: ${collab}
+- STACK:
+  - Frontend: ${lane === 'WEB' ? 'PWA (Web)' : lane}
+  - Hosting: ${hosting}
+  - Backend: ${backend}
+- SYNC_MODE: ${sync}
+- PUSH_PLUGIN: ${push}
+- AI_FEATURES: ${ai}
+- LANE: ${lane}
 
-writeIfNew('findings.md', `# findings.md\n\n## Decisions\n\n## Open Questions\n\n## Risks\n\n## Constraints\n\n## Assumptions\n\n## Deferred\n`);
+## Env Configuration
+- BACKEND_PROVIDER and AUTH_MODE above are materialized by \`npm run discipline:provider:generate\`.
+- .env stores credentials only; it must not declare provider or auth mode.
 
-writeIfNew('progress.md', `# progress.md \u2014 Current Status + Logs\n\n## Current Status\n- Working on: N/A\n- Next: Fill discipline.md (Step 1)\n- Blockers: none\n\n## Last Completed Slices\n1) (empty)\n2) (empty)\n3) (empty)\n\n## Open Errors\n- (none)\n\n## Next Actions\n- Choose BACKEND_PROVIDER and run backend:smoke\n\n## Deploy Notes\n- N/A\n\n---\n`);
+## 1) Non-Negotiables
+- Data-First contracts
+- One Writer Per Slice
+- Gates: lint + typecheck + tests
 
-writeIfNew('.discipline/run-log.md', `# Run Log\n\n| Date | Step | Tool | Input | Output | Notes |\n|---|---|---|---|---|---|\n`);
+## 2) Tenancy & Permissions
 
-writeIfNew('.discipline/prompts/step-5-prompt.md', `Implementa únicamente el slice definido en STEP_5_SLICE_PACKET dentro del repositorio abierto.
+## 3) Data Model
 
-Antes de editar:
-1. Lee el packet y los archivos que indique.
-2. Respeta su Scope IN, Scope OUT, contratos y archivos permitidos.
-3. Si incluye contexto visual o de IA, úsalo solo para este slice.
-4. Si falta información esencial, detente y explica exactamente qué falta.
+## 4) API / IO Shapes
 
-Al terminar:
-1. Ejecuta los gates indicados por el packet.
-2. No cierres con cambios fuera de alcance ni con el gate fallando.
-3. Devuelve un SLICE_COMPLETION_PACKET con los cambios y la evidencia del gate.
+## 5) Sync Rules
+
+## 6) UI State Model
+- loading, empty, error
+
+## 7) Event / Notifications Model
+
+## 8) Design Tokens Contract
+
+## 9) Testing / Gates Contract
+
+## 10) LLM Contracts
+> Only if AI_FEATURES=enabled
+
+## 11) Universal Definition of Done
+`);
+writeIfNew('task_plan.md', `# task_plan.md
+
+## 1) Current Goal
+
+## 2) Definition of Ready
+
+## 3) Definition of Done
+
+## 4) Ready Slices
+
+## 5) Deferred / Later
+
+## 6) Risks and Dependencies
+`);
+writeIfNew('findings.md', `# findings.md
+
+## Decisions
+
+## Open Questions
+
+## Risks
+
+## Constraints
+
+## Assumptions
+
+## Deferred
+`);
+writeIfNew('progress.md', `# progress.md — Current Status + Logs
+
+## Current Status
+- Working on: N/A
+- Next: Fill discipline.md (Step 1)
+- Blockers: none
+
+## Last Completed Slices
+1) (empty)
+2) (empty)
+3) (empty)
+
+## Open Errors
+- (none)
+
+## Next Actions
+- Choose BACKEND_PROVIDER, run discipline:provider:generate, then run backend:smoke when credentials exist
+
+## Deploy Notes
+- N/A
+
+---
+`);
+writeIfNew('.discipline/run-log.md', `# Run Log
+
+| Date | Step | Tool | Input | Output | Notes |
+|---|---|---|---|---|---|
+`);
+writeIfNew('.discipline/prompts/step-5-prompt.md', `Implement only the slice defined in STEP_5_SLICE_PACKET in the open repository.
+
+Before editing:
+1. Read the packet and every file it names.
+2. Respect its Scope IN, Scope OUT, contracts, and allowed files.
+3. If it includes visual or AI context, use it only for this slice.
+4. If essential information is missing, stop and explain exactly what is missing.
+
+When finished:
+1. Run the gates named by the packet.
+2. Do not finish with out-of-scope changes or a failing gate.
+3. Return a SLICE_COMPLETION_PACKET with the changes and gate evidence.
 `);
 
+generateProviderConfig(projectDir);
 disciplineInfo(`\nProject hydrated. Lane: ${lane} | Profile: ${profile} | Backend: ${backend}`);

@@ -16,6 +16,6 @@ export async function getBackend(): Promise<Backend> {
             return mod.backend
         }
         default:
-            throw new Error(`Unknown VITE_BACKEND_PROVIDER: ${BACKEND_PROVIDER}`)
+            throw new Error(`Unknown provider in generated contract: ${BACKEND_PROVIDER}`)
     }
 }

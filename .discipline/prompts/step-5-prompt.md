@@ -1,14 +1,14 @@
-Implementa únicamente el slice definido en `STEP_5_SLICE_PACKET` dentro del repositorio abierto.
+Implement only the slice defined in `STEP_5_SLICE_PACKET` in the open repository.
 
-Antes de editar:
+Before editing:
 
-1. Lee el packet y los archivos que indique.
-2. Respeta su Scope IN, Scope OUT, contratos y archivos permitidos.
-3. Si incluye contexto visual o de IA, úsalo solo para este slice.
-4. Si falta información esencial, detente y explica exactamente qué falta.
+1. Read the packet and every file it names.
+2. Respect its Scope IN, Scope OUT, contracts, and allowed files.
+3. If it includes visual or AI context, use it only for this slice.
+4. If essential information is missing, stop and explain exactly what is missing.
 
-Al terminar:
+When finished:
 
-1. Ejecuta los gates indicados por el packet.
-2. No cierres con cambios fuera de alcance ni con el gate fallando.
-3. Devuelve un `SLICE_COMPLETION_PACKET` con los cambios y la evidencia del gate.
+1. Run the gates named by the packet.
+2. Do not finish with out-of-scope changes or a failing gate.
+3. Return a `SLICE_COMPLETION_PACKET` with the changes and gate evidence.

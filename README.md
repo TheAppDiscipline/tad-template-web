@@ -15,9 +15,10 @@ Template repository for building web applications following the **Discipline Loo
 1. Click **Use this template** to create a new repository.
 2. Clone your new repository.
 3. Install dependencies: `npm install`
-4. Configure your backend in `.env` using `.env.example`
-5. Run the gate: `npm run gate`
-6. Start dev server: `npm run dev`
+4. Run the gate: `npm run gate`
+5. Start dev server: `npm run dev`
+
+The template starts with `LOCAL_ONLY`, so no `.env` is needed for the first run. `.env` holds credentials only after you choose a cloud backend in `discipline.md`.
 
 ## Recommended Operating Mode
 
@@ -55,19 +56,25 @@ Use `discipline:patch` and `discipline:assemble` manually only as fallback.
 
 ## Backend Selection
 
-Configure in `.env` via `VITE_BACKEND_PROVIDER`:
+Choose the provider in `discipline.md`, then generate the versioned runtime contract:
+
+```bash
+npm run discipline:provider:generate
+```
+
+The initial contract is `LOCAL_ONLY` / `NONE` and works without credentials. Do not set `VITE_BACKEND_PROVIDER` or `VITE_AUTH_MODE`; those former architecture variables are rejected.
 
 | Provider | Install | Use case |
 |---|---|---|
-| **SUPABASE** (default) | `npm i @supabase/supabase-js` | Relational data + RLS security |
+| **SUPABASE** | `npm i @supabase/supabase-js` | Relational data + RLS security |
 | **FIREBASE** | `npm i firebase` | Firestore + Auth |
-| **LOCAL_ONLY** | none | Rapid prototyping with localStorage |
+| **LOCAL_ONLY** (initial) | none | Rapid prototyping with localStorage |
 
-Verify: `npm run backend:smoke`
+After choosing a cloud provider, copy its credential example (`.env.example.supabase` or `.env.example.firebase`) to `.env`, fill the credentials, then run `npm run gate:integration`.
 
 ### Firebase Production Setup
 
-When `VITE_BACKEND_PROVIDER=FIREBASE`, install the Firebase SDK, configure `.env` from `.env.example.firebase`, and deploy the checked-in Firestore artifacts before running launch/prod smoke tests:
+When `discipline.md` selects `BACKEND_PROVIDER: FIREBASE`, install the Firebase SDK, configure `.env` from `.env.example.firebase`, and deploy the checked-in Firestore artifacts before running launch/prod smoke tests:
 
 ```bash
 firebase deploy --only firestore:rules,firestore:indexes

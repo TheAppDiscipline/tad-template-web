@@ -1,0 +1,5 @@
+{
+  "schema": "discipline.provider-config/v1",
+  "backendProvider": "LOCAL_ONLY",
+  "authMode": "NONE"
+}

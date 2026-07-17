@@ -1,6 +1,20 @@
 name: Docs CI
 
 on:
+  push:
+    branches: ["**"]
+    paths:
+      - "**/*.md"
+      - ".discipline/**"
+      - "discipline.md"
+      - "task_plan.md"
+      - "findings.md"
+      - "progress.md"
+      - "tools/discipline/**"
+      - ".github/workflows/docs.yml"
+      - ".markdownlint-cli2.jsonc"
+      - ".vale.ini"
+      - ".vale/**"
   pull_request:
     paths:
       - "**/*.md"
@@ -42,12 +56,22 @@ jobs:
         run: npm run discipline:validate
 
       - name: Markdown lint
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          git diff --name-only -z "$BASE_SHA" "$HEAD_SHA" -- '*.md' |
-            xargs -0 -r npx markdownlint-cli2 --no-globs
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+            head="${{ github.event.pull_request.head.sha }}"
+          else
+            base="${{ github.event.before }}"
+            head="${{ github.sha }}"
+          fi
+
+          if [ "$base" = "0000000000000000000000000000000000000000" ]; then
+            git diff-tree --root --no-commit-id --name-only -z -r "$head" -- '*.md' |
+              xargs -0 -r npx markdownlint-cli2 --no-globs
+          else
+            git diff --name-only -z "$base" "$head" -- '*.md' |
+              xargs -0 -r npx markdownlint-cli2 --no-globs
+          fi
 
       - name: Vale lint
         uses: errata-ai/vale-action@v2

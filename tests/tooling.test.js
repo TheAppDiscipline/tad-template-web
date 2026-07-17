@@ -282,14 +282,36 @@ function createFirestoreMock() {
     return { docs, firestore }
 }
 
-test('backend smoke test explains the missing SUPABASE SDK', () => {
-    const result = runNode('tools/backend_smoke_test.js', [], {
-        VITE_BACKEND_PROVIDER: 'SUPABASE',
-    })
+test('backend smoke fails clearly when the generated SUPABASE contract lacks credentials', () => {
+    withTempProject((projectRoot) => {
+        fs.mkdirSync(path.join(projectRoot, 'src', 'config'), { recursive: true })
+        fs.writeFileSync(path.join(projectRoot, 'src', 'config', 'provider.generated.json'), JSON.stringify({
+            schema: 'discipline.provider-config/v1',
+            backendProvider: 'SUPABASE',
+            authMode: 'MAGIC_LINK',
+        }), 'utf8')
 
-    assert.notEqual(result.status, 0)
-    assert.match(getOutput(result), /SUPABASE backend smoke test/)
-    assert.match(getOutput(result), /npm install @supabase\/supabase-js/)
+        const result = runNode('tools/backend_smoke_test.js', ['--project-dir', projectRoot])
+
+        assert.notEqual(result.status, 0)
+        assert.match(getOutput(result), /SUPABASE is selected by discipline\.md but missing credentials/)
+        assert.match(getOutput(result), /VITE_SUPABASE_URL/)
+  })
+})
+
+test('backend smoke passes with a generated LOCAL_ONLY contract', () => {
+    withTempProject((projectRoot) => {
+        fs.mkdirSync(path.join(projectRoot, 'src', 'config'), { recursive: true })
+        fs.writeFileSync(path.join(projectRoot, 'src', 'config', 'provider.generated.json'), JSON.stringify({
+            schema: 'discipline.provider-config/v1',
+            backendProvider: 'LOCAL_ONLY',
+            authMode: 'NONE',
+        }), 'utf8')
+
+        const result = runNode('tools/backend_smoke_test.js', ['--project-dir', projectRoot])
+        assert.equal(result.status, 0, getOutput(result))
+        assert.match(getOutput(result), /LOCAL_ONLY/)
+    })
 })
 
 test('LLM provider loader reports the missing SDK with an install command', async () => {
@@ -472,15 +494,12 @@ test('App.tsx exports a valid app root and no longer ships the Vite counter demo
     assert.match(appSource, /export default App/)
 })
 
-test('runtime config falls back to Discipline Loop defaults and normalizes valid overrides', () => {
+test('runtime config comes only from the generated provider contract', () => {
     assert.deepEqual(resolveRuntimeConfig({}), DEFAULT_RUNTIME_CONFIG)
     assert.deepEqual(resolveRuntimeConfig({
         VITE_BACKEND_PROVIDER: 'local_only',
         VITE_AUTH_MODE: 'none',
-    }), {
-        BACKEND_PROVIDER: 'LOCAL_ONLY',
-        AUTH_MODE: 'NONE',
-    })
+    }), DEFAULT_RUNTIME_CONFIG)
     assert.deepEqual(resolveRuntimeConfig({
         VITE_BACKEND_PROVIDER: 'broken',
         VITE_AUTH_MODE: 'also-broken',

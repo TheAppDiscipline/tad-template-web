@@ -21,13 +21,13 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { readProviderConfig } from './provider-config.js';
 
 const ROOT = process.cwd();
 const MIGRATION_DIRS = [
   path.join(ROOT, 'supabase', 'migrations'),
   path.join(ROOT, 'supabase', 'migrations_templates'),
 ];
-const SUPABASE_ENV_VALUES = new Set(['SUPABASE']);
 
 function walkSql(dir) {
   const out = [];
@@ -43,24 +43,8 @@ function walkSql(dir) {
   return out;
 }
 
-function readDisciplineProvider() {
-  const file = path.join(ROOT, 'discipline.md');
-  if (!fs.existsSync(file)) return null;
-  const content = fs.readFileSync(file, 'utf8');
-  const match = content.match(/^\s*-\s*BACKEND_PROVIDER:\s*([A-Z_]+)/im)
-    ?? content.match(/^\s*BACKEND_PROVIDER:\s*([A-Z_]+)/im);
-  return match ? match[1].trim().toUpperCase() : null;
-}
-
 function isSupabaseSelected() {
-  const values = [
-    process.env.BACKEND_PROVIDER,
-    process.env.VITE_BACKEND_PROVIDER,
-    process.env.EXPO_PUBLIC_BACKEND_PROVIDER,
-    readDisciplineProvider(),
-  ];
-
-  return values.some((value) => SUPABASE_ENV_VALUES.has(String(value ?? '').trim().toUpperCase()));
+  return readProviderConfig(ROOT).backendProvider === 'SUPABASE';
 }
 
 // Returns an array of { table, column, file } for every FK declaration found.

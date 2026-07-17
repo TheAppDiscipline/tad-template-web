@@ -17,35 +17,12 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { execSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
+import { readProviderConfig } from './provider-config.js'
 
 export const TYPES_REL = 'src/lib/backend/supabase/database.types.ts'
 
-/**
- * Parse BACKEND_PROVIDER from discipline.md text. Pure, testable.
- * - Does not cross newlines (empty `BACKEND_PROVIDER:` -> null).
- * - Does not match `VITE_BACKEND_PROVIDER` / `EXPO_PUBLIC_BACKEND_PROVIDER`.
- */
-export function parseBackendProvider(text) {
-  const m = String(text ?? '').match(
-    /(?:^|[^A-Za-z_])BACKEND_PROVIDER[ \t]*[:=][ \t]*([A-Za-z][A-Za-z_-]*)/im,
-  )
-  return m ? m[1].toUpperCase() : null
-}
-
 export function detectProvider(root) {
-  const dpath = path.join(root, 'discipline.md')
-  if (fs.existsSync(dpath)) {
-    const p = parseBackendProvider(fs.readFileSync(dpath, 'utf8'))
-    if (p) return p
-  }
-  for (const v of [
-    process.env.BACKEND_PROVIDER,
-    process.env.VITE_BACKEND_PROVIDER,
-    process.env.EXPO_PUBLIC_BACKEND_PROVIDER,
-  ]) {
-    if (v && String(v).trim()) return String(v).trim().toUpperCase()
-  }
-  return null
+  return readProviderConfig(root).backendProvider
 }
 
 // Normalize line endings + trailing whitespace so a Windows CRLF checkout of the

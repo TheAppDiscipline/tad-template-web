@@ -12,8 +12,8 @@
 - PRIMARY_GOAL:
 - NORTH_STAR_METRIC:
 - PROFILE:
-- BACKEND_PROVIDER:
-- AUTH_MODE:
+- BACKEND_PROVIDER: LOCAL_ONLY
+- AUTH_MODE: NONE
 - COLLAB_MODE:
 - STACK:
   - Frontend: PWA (Web)
@@ -28,8 +28,8 @@
 - DOCTRINE_VERSION: 1.0
 
 ## Env Configuration
-- VITE_BACKEND_PROVIDER: Provider selection.
-- VITE_AUTH_MODE: Authentication strategy.
+- Backend and auth are selected in this file, then materialized by `npm run discipline:provider:generate`.
+- `.env` stores credentials only; it must not declare provider or auth mode.
 
 ### Supabase Env
 - VITE_SUPABASE_URL
