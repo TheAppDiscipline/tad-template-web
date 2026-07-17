@@ -217,6 +217,21 @@ function evaluateItems(
 
     total += 1;
 
+    // Reaching here with not_applicable means the item declared no applies_when
+    // (the conditional cases both `continue` above), so nothing states WHEN the
+    // item stops applying and the validator cannot check the claim. Without this
+    // branch the item falls through every case below and passes in silence:
+    // Gate D would print "Passed: 0/10" and still exit 0.
+    if (item.status === 'not_applicable') {
+      const msg =
+        `[${item.id}] ${item.name} — not_applicable without applies_when (${severity}); ` +
+        `nothing declares when this item stops applying, so the claim is unverifiable. ` +
+        `Either add an applies_when condition (syntax: applies_when: "BILLING == true"), ` +
+        `or use done / not_done / deferred.`;
+      if (severity === 'CRITICAL') errors.push(msg); else warnings.push(msg);
+      continue;
+    }
+
     // A5: blocking:false only honored for the audited allowlist.
     const blockingFalseAllowed = item.blocking === false && BLOCKING_FALSE_ALLOWLIST.has(item.id);
 

@@ -62,6 +62,16 @@ function writeScorecard(projectRoot, content) {
   fs.writeFileSync(path.join(projectRoot, '.discipline', 'scorecard.yaml'), content, 'utf8')
 }
 
+// applies_when is evaluated against the switches parsed out of discipline.md, so the same
+// scorecard means different things depending on this value. The template ships without a
+// BILLING switch, which reads as false ("" != "true") and makes a `BILLING == true` item
+// inapplicable.
+function setSwitch(projectRoot, key, value) {
+  const disciplinePath = path.join(projectRoot, 'discipline.md')
+  const content = fs.readFileSync(disciplinePath, 'utf8')
+  fs.writeFileSync(disciplinePath, `${content}\n- ${key}: ${value}\n`, 'utf8')
+}
+
 test('discipline assemble accepts Step 0a and writes step-0a-input.md', () => {
   const projectRoot = createDisciplineProject()
   const result = runTsx('tools/discipline/assemble-paste-ready.ts', ['--step', '0a', '--project-dir', projectRoot])
@@ -224,6 +234,66 @@ launch:
 
   assert.equal(result.status, 0, getOutput(result))
   assert.match(getOutput(result), /done without evidence \(RECOMMENDED\)/)
+})
+
+test('scorecard launch rejects critical not_applicable items without applies_when', () => {
+  const projectRoot = createDisciplineProject()
+  writeScorecard(projectRoot, `meta:
+  project: Fixture
+  profile_target: LAUNCH
+launch:
+  critical:
+    - id: L1
+      name: Privacy policy published
+      status: not_applicable
+      severity: CRITICAL
+`)
+
+  const result = runTsx('tools/discipline/validate-scorecard.ts', ['--mode', 'launch', '--project-dir', projectRoot])
+
+  assert.notEqual(result.status, 0, getOutput(result))
+  assert.match(getOutput(result), /not_applicable without applies_when \(CRITICAL\)/)
+})
+
+test('scorecard launch rejects not_applicable when applies_when is true (escape attempt)', () => {
+  const projectRoot = createDisciplineProject()
+  setSwitch(projectRoot, 'BILLING', 'true')
+  writeScorecard(projectRoot, `meta:
+  project: Fixture
+  profile_target: LAUNCH
+launch:
+  critical:
+    - id: L1
+      name: Billing flow audited
+      status: not_applicable
+      severity: CRITICAL
+      applies_when: "BILLING == true"
+`)
+
+  const result = runTsx('tools/discipline/validate-scorecard.ts', ['--mode', 'launch', '--project-dir', projectRoot])
+
+  assert.notEqual(result.status, 0, getOutput(result))
+  assert.match(getOutput(result), /escape attempt/)
+})
+
+test('scorecard launch accepts not_applicable when applies_when is false', () => {
+  const projectRoot = createDisciplineProject()
+  setSwitch(projectRoot, 'BILLING', 'false')
+  writeScorecard(projectRoot, `meta:
+  project: Fixture
+  profile_target: LAUNCH
+launch:
+  critical:
+    - id: L1
+      name: Billing flow audited
+      status: not_applicable
+      severity: CRITICAL
+      applies_when: "BILLING == true"
+`)
+
+  const result = runTsx('tools/discipline/validate-scorecard.ts', ['--mode', 'launch', '--project-dir', projectRoot])
+
+  assert.equal(result.status, 0, getOutput(result))
 })
 
 test('discipline validate triggers Gate D for PROFILE=LAUNCH', () => {

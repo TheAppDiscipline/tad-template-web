@@ -7,6 +7,8 @@
 #   1. Copy this file to `.discipline/scorecard.yaml`.
 #   2. Fill each item with `status` (done | not_done | deferred | not_applicable).
 #      For critical items marked `done`, add `evidence` (URL, path, or verifiable note).
+#      `not_applicable` is NOT a free pass: it is only accepted alongside an
+#      `applies_when` condition that evaluates to false (see the rule summary below).
 #   3. Run `npm run discipline:validate:launch` until it passes with 0 errors.
 #
 # Complete launch rules are part of The App Discipline vault, sold separately.
@@ -17,6 +19,12 @@
 #       For honest handoffs (infrastructure that cannot exist locally yet: public deploy,
 #       Sentry, uptime, HSTS, etc.), use `deferred` + `blocking: false` + `deferred_reason`.
 #       Never mark something `done` if you did not actually do it.
+#   - `not_applicable` without `applies_when` -> FAIL (critical) / warning (recommended).
+#       An item only stops applying when a switch says so, and the validator checks that
+#       switch against discipline.md. Declaring an item inapplicable with nothing to check
+#       is an unverifiable claim, so it is rejected rather than silently passed.
+#       With `applies_when` present: false -> the item is skipped; true + `not_applicable`
+#       -> FAIL (escape attempt).
 #   - launch.recommended `deferred` requires `deferred_reason` + future `expires_on`.
 #
 # Newly copied, this scorecard intentionally fails Gate D because every item is `not_done`.
