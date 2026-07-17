@@ -152,7 +152,7 @@ Consolidate everything validated into the canonical format with 12 sections:
 2. MVP BOUNDARY
 3. ARCHITECTURE LOCKS
 4. DATA / ACCESS / SYNC CONTRACTS
-5. SLICE DRAFT
+5. SLICE (the slice draft)
 6. SLICE ORDER / DEPENDENCIES
 7. BOOTSTRAP REQUIREMENTS
 8. PROVIDER IMPACT
@@ -160,6 +160,8 @@ Consolidate everything validated into the canonical format with 12 sections:
 10. INTERACTION SURFACE SUMMARY
 11. RISKS / EDGE CASES
 12. IMPLEMENTATION GUARDRAILS
+
+Use the section names as literal `##` headings without the numbers: `discipline:validate` requires the exact heading lines `Product summary` and `Slice` in this packet.
 
 Add `STATUS: validated` at the top.
 
@@ -252,7 +254,7 @@ Next step: <determine per config>
 - Do not invent business logic. If information is missing, document the assumption in findings.md.
 - Do not change the lane or the stack without strong justification.
 - Do not recommend premature optimization.
-- Patch blocks must be exact and pasteable, not narrative suggestions.
+- Patch blocks must be exact and pasteable, not narrative suggestions. Every patch block requires an `ANCHOR` line, including `PATCH_MODE: append` (the anchor names the heading to append under).
 - If the validated architecture changes `BACKEND_PROVIDER` or `AUTH_MODE` (via `DISCIPLINE_MD_PATCH_BLOCK`), tell the operator to run `npm run discipline:provider:generate` right after `npm run discipline:patch` and to commit the regenerated `src/config/provider.generated.*`; `npm run gate` fails on a stale provider artifact.
 - The validated STEP_4_EXECUTION_PACKET replaces any earlier draft version.
 - A validated contract must agree with the relevant starter schema, shared types, adapters, and

@@ -34,7 +34,7 @@ Playwright and external accounts are not needed.
 
 Check whether `discipline.md` exists in the current directory and whether its switches are configured. Read `discipline.md` and check whether the key fields have values (PROFILE, BACKEND_PROVIDER, AUTH_MODE). If they are empty or placeholders (e.g., `PROFILE:` with no value), the switches are NOT configured.
 
-**If the switches are ALREADY configured:** continue to Phase 1.
+**If the switches are ALREADY configured:** do not skip the identity check. A fresh clone lands here (the template ships `PROFILE: LITE`, `BACKEND_PROVIDER: LOCAL_ONLY`, `AUTH_MODE: NONE`) with `PROJECT_NAME`/`PRIMARY_GOAL`/`NORTH_STAR_METRIC` still as placeholders and COLLAB_MODE/SYNC_MODE/AI_FEATURES/PUSH_PLUGIN empty. Ask for the app description (block below), confirm the full switch set with the same inference table, and edit `discipline.md` §0 in place: fill the identity fields and every empty switch line with the confirmed values (do NOT run `discipline:hydrate --force`; direct edits preserve the richer committed file). If `BACKEND_PROVIDER` or `AUTH_MODE` changed, run `npm run discipline:provider:generate`. Then continue to Phase 1.
 
 **If `discipline.md` does NOT exist OR the switches are empty:**
 
@@ -124,7 +124,7 @@ Is this good, or do you want to change something?
 
 The user can say "yes", "perfect", or "change X to Y". Adjust based on the feedback.
 
-Once confirmed, run it. Use `--force` if `discipline.md` already exists (to overwrite the initial switches with the confirmed ones):
+Once confirmed, apply it. If `discipline.md` does NOT exist yet (bare directory), create the base with hydrate; if it already exists (the normal case in a cloned template), skip this command and edit `discipline.md` §0 directly with the confirmed values instead:
 
 ```bash
 npm run discipline:hydrate -- --lane <LANE> --profile <PROFILE> --backend <BACKEND> --auth <AUTH> --collab <COLLAB> --sync <SYNC> --ai <AI> --push <PUSH> --hosting <HOSTING> --force

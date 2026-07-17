@@ -104,7 +104,7 @@ export function getPrompt(number: number, _c: DisciplineConfig): string {
 9. Risks and assumptions:
    - maximum 8`,
 
-    2: `Generate 10-15 prioritized user stories using P0 / P1 / P2.
+    2: `Generate prioritized user stories using P0 / P1 / P2 (10-15 for a mid-sized app; a deliberately tiny MVP earns fewer honest stories - never pad with invented ones).
 
 Rules:
 - P0 stories must represent the true MVP.
@@ -260,12 +260,12 @@ Include, in this order:
 3. P0 STORIES
 - only the most important P0 stories
 
-4. DATA MODEL SUMMARY
+4. DATA MODEL
 - minimum entities
 - key relationships
 - if applicable: spaces, memberships, roles, space_id
 
-5. ARCHITECTURE SWITCHES
+5. ARCHITECTURE
 - LANE
 - PROFILE
 - BACKEND_PROVIDER
@@ -286,7 +286,8 @@ Rules:
 - It must fit in one pasteable block.
 - Do not explain theory.
 - Do not repeat unnecessary text.
-- Use a clear format that an architecture model can consume directly.`,
+- Use a clear format that an architecture model can consume directly.
+- Use the section names as literal "##" headings without the numbers: discipline:validate requires the exact heading lines "Architecture" and "Data model" in this packet.`,
 
     10: `If AI_FEATURES=enabled, now generate one block called STEP_2_5_AI_PACKET.
 
@@ -379,7 +380,7 @@ It must be self-contained and leave Step 4 almost ready, even though Step 2 may 
 - minimum sync rules
 
 ## Slice
-- Slice 0 to Slice 4
+- Slice 0 to Slice 4 for a typical MVP (a very small app may honestly need only Slice 0 and Slice 1; do not invent filler slices)
 - short goal
 - tentative scope
 - obvious dependencies
@@ -415,7 +416,7 @@ Rules:
 - They must be ready to paste into the repo template.
 - Do not explain anything outside the blocks.
 - DISCIPLINE_MD_READY_BLOCK must include switches, summarized data model, access rules, sync rules, and notification rules.
-- TASK_PLAN_READY_BLOCK must include Slice 0 to Slice 4.`,
+- TASK_PLAN_READY_BLOCK must include the real slices (Slice 0 to Slice 4 for a typical MVP; fewer for a deliberately tiny app).`,
   };
 
   return prompts[number] || '';

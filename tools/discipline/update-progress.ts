@@ -21,8 +21,12 @@ export async function updateProgress(root: string): Promise<void> {
   const outcome = extractField(packet.body, 'OUTCOME') || 'shipped';
   const gatesPassed = extractField(packet.body, 'GATES') || 'yes';
   const scopeDelivered = extractSection(packet.body, 'SCOPE DELIVERED');
-  const openIssues = extractSection(packet.body, 'OPEN ISSUES');
-  const nextRec = extractField(packet.body, 'NEXT') || extractField(packet.body, 'RECOMMENDATION');
+  const openIssues = normalizeNone(extractSection(packet.body, 'OPEN ISSUES'));
+  const nextRecSource =
+    extractField(packet.body, 'NEXT') ||
+    extractField(packet.body, 'RECOMMENDATION') ||
+    normalizeNone(extractSection(packet.body, 'NEXT RECOMMENDATION'));
+  const nextRec = nextRecSource ? firstItem(nextRecSource) : null;
 
   let progress = fs.readFileSync(progressPath, 'utf-8');
   const date = new Date().toISOString().slice(0, 10);
@@ -36,7 +40,7 @@ export async function updateProgress(root: string): Promise<void> {
   progress = updateField(progress, 'Blockers:', openIssues ? 'see Open Errors' : 'none');
   progress = shiftHistory(progress, `${sliceName} \u2014 ${date} \u2014 ${outcome}`);
 
-  const logEntry = `\n### ${date} \u2014 ${sliceName}\n- **Status:** ${outcome}\n- **Gates:** ${gatesPassed}\n${scopeDelivered ? `- **Scope:** ${scopeDelivered.split('\n')[0]}` : ''}\n${nextRec ? `- **Next:** ${nextRec}` : ''}\n`;
+  const logEntry = `\n### ${date} \u2014 ${sliceName}\n- **Status:** ${outcome}\n- **Gates:** ${gatesPassed}\n${scopeDelivered ? `- **Scope:** ${firstItem(scopeDelivered)}` : ''}\n${nextRec ? `- **Next:** ${nextRec}` : ''}\n`;
   const sepIdx = progress.indexOf('\n---\n');
   progress = sepIdx !== -1 ? progress.slice(0, sepIdx + 5) + '\n' + logEntry + progress.slice(sepIdx + 5) : progress + '\n---\n' + logEntry;
 
@@ -47,6 +51,25 @@ export async function updateProgress(root: string): Promise<void> {
 function extractSliceNumber(body: string): number { return parseInt(body.match(/slice[:\s]*(\d+)/i)?.[1] || '0', 10); }
 function extractField(body: string, name: string): string | null { return body.match(new RegExp(`^[-*]?\\s*${name}[:\\s]+(.+)`, 'im'))?.[1]?.trim() || null; }
 function extractSection(body: string, name: string): string | null { return body.match(new RegExp(`###?\\s+${name}\\s*\\n([\\s\\S]*?)(?=\\n###?\\s|$)`, 'i'))?.[1]?.trim() || null; }
+// A section whose content is just "none" (any bullet/case/punctuation) counts as empty:
+// the skill templates instruct writing "- none" when there is nothing to report.
+function normalizeNone(text: string | null): string | null {
+  if (!text) return null;
+  const bare = text.replace(/[^a-z0-9]/gi, '').toLowerCase();
+  return bare === '' || bare === 'none' || bare === 'na' ? null : text;
+}
+// First logical item of a section: joins wrapped continuation lines of the first
+// bullet instead of truncating at the first physical newline.
+function firstItem(text: string): string {
+  const lines = text.split('\n');
+  const collected = [lines[0]];
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.trim() === '' || /^\s*[-*]/.test(line) || /^#{1,6}\s/.test(line)) break;
+    collected.push(line.trim());
+  }
+  return collected.join(' ').replace(/\s+/g, ' ').trim();
+}
 function updateField(content: string, field: string, value: string): string { const p = new RegExp(`(${field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})\\s*.+`, 'i'); return p.test(content) ? content.replace(p, `$1 ${value}`) : content; }
 
 function shiftHistory(content: string, newEntry: string): string {
