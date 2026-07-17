@@ -185,18 +185,21 @@ Uses `LLM_PROVIDER` and calls the real model. Validates:
 * Valid JSON schema
 * Expected partial match
 
+<!-- markdownlint-disable-next-line MD024 -->
 ### OpenAI
 ```bash
 LLM_PROVIDER=openai OPENAI_API_KEY=... OPENAI_MODEL=<model-id> \
 node tools/llm_eval.js --feature=extract_tasks --mode=live
 ```
 
+<!-- markdownlint-disable-next-line MD024 -->
 ### Gemini
 ```bash
 LLM_PROVIDER=gemini GEMINI_API_KEY=... GEMINI_MODEL=<model-id> \
 node tools/llm_eval.js --feature=extract_tasks --mode=live
 ```
 
+<!-- markdownlint-disable-next-line MD024 -->
 ### Anthropic
 ```bash
 LLM_PROVIDER=anthropic ANTHROPIC_API_KEY=... ANTHROPIC_MODEL=<model-id> \

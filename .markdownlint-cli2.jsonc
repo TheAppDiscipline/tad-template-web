@@ -30,15 +30,19 @@
     "MD040": false,
     // Bold used as a sub-heading: deliberate in the walkthroughs.
     "MD036": false,
-    // Repeated headings under different parents (e.g. "OpenAI" per section in
-    // LLM_TOOLS_README). Verified they never occur in discipline.md,
-    // task_plan.md, findings.md or progress.md, whose headings ARE the anchors
-    // the patch engine depends on.
-    "MD024": false,
     // Inline HTML is used for callouts.
     "MD033": false,
     // First line need not be a top-level heading (frontmatter comes first).
     "MD041": false
+
+    // MD024 (duplicate headings) stays ON globally: the headings in
+    // discipline.md / task_plan.md / findings.md / progress.md ARE the anchors
+    // the patch engine depends on, so uniqueness is a real invariant.
+    // The only legitimate duplicates (OpenAI/Gemini/Anthropic repeated per
+    // section) live in tools/LLM_TOOLS_README.md, which carries its own
+    // tools/.markdownlint.jsonc turning MD024 off for that one file. That
+    // per-directory config is markdownlint-cli2's native, version-stable
+    // mechanism (the `overrides` key is not honored by the pinned v0.23.x).
   },
   "globs": [
     "**/*.md",
