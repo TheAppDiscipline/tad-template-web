@@ -487,6 +487,40 @@ test('runtime config falls back to Discipline Loop defaults and normalizes valid
     }), DEFAULT_RUNTIME_CONFIG)
 })
 
+// A no-.env clone must resolve to a provider that actually works without
+// credentials. Defaulting to SUPABASE made the zero-config path claim a backend
+// whose required vars could not be set yet.
+test('zero-config default is a provider that needs no credentials', () => {
+    assert.equal(DEFAULT_RUNTIME_CONFIG.BACKEND_PROVIDER, 'LOCAL_ONLY')
+    assert.equal(DEFAULT_RUNTIME_CONFIG.AUTH_MODE, 'NONE')
+    assert.equal(resolveRuntimeConfig({}).BACKEND_PROVIDER, 'LOCAL_ONLY')
+})
+
+// The .env.example is a documented step (`cp .env.example .env`). Copied as-is it
+// must boot: it used to declare SUPABASE with no URL/key, so env-check threw on
+// the buyer's first run.
+test('.env.example copied as-is resolves to a working provider', () => {
+    const example = fs.readFileSync(path.join(repoRoot, '.env.example'), 'utf8')
+    const env = Object.fromEntries(
+        example
+            .split(/\r?\n/)
+            .filter(line => /^\s*[A-Z]/.test(line))
+            .map(line => line.split('=', 2))
+            .map(([k, v]) => [k.trim(), (v ?? '').trim()]),
+    )
+
+    const resolved = resolveRuntimeConfig(env)
+    assert.equal(resolved.BACKEND_PROVIDER, 'LOCAL_ONLY')
+    assert.equal(resolved.AUTH_MODE, 'NONE')
+
+    // Any provider the example declares uncommented must not need credentials the
+    // example does not ship.
+    if (resolved.BACKEND_PROVIDER === 'SUPABASE') {
+        assert.ok(env.VITE_SUPABASE_URL, '.env.example declares SUPABASE without VITE_SUPABASE_URL')
+        assert.ok(env.VITE_SUPABASE_ANON_KEY, '.env.example declares SUPABASE without VITE_SUPABASE_ANON_KEY')
+    }
+})
+
 test('LOCAL_ONLY backend keeps a stable personal space and owner membership', async () => {
     const backend = createLocalBackend({
         storage: createMemoryStorage(),

@@ -6,19 +6,31 @@
  * so misconfiguration surfaces as a clear error rather than a silent fallback.
  */
 
+import { resolveRuntimeConfig } from './runtime.shared.js'
+
 const env = import.meta.env
 
 // --- Valid values ---
 const VALID_PROVIDERS = ['SUPABASE', 'FIREBASE', 'LOCAL_ONLY']
 const VALID_AUTH_MODES = ['MAGIC_LINK', 'EMAIL_PASSWORD', 'BOTH', 'NONE']
 
-const provider = (env.VITE_BACKEND_PROVIDER as string | undefined)?.trim().toUpperCase()
-const authMode = (env.VITE_AUTH_MODE as string | undefined)?.trim().toUpperCase()
+// Validate the EFFECTIVE provider (what the app will actually run), not the raw
+// env var. Reading the raw value meant an unset VITE_BACKEND_PROVIDER skipped
+// every provider-specific check while the runtime still resolved a default, so a
+// project with no .env passed env-check and then ran against a backend whose
+// required vars were never verified. One resolver, one answer.
+const provider = resolveRuntimeConfig(env).BACKEND_PROVIDER
+
+// The raw values still matter for typo reporting: resolveRuntimeConfig silently
+// falls back to the default on an invalid value, and a typo must not look like a
+// deliberate default.
+const rawProvider = (env.VITE_BACKEND_PROVIDER as string | undefined)?.trim().toUpperCase()
+const rawAuthMode = (env.VITE_AUTH_MODE as string | undefined)?.trim().toUpperCase()
 
 const errors: string[] = []
 
 // --- Provider must be valid if set ---
-if (provider && !VALID_PROVIDERS.includes(provider)) {
+if (rawProvider && !VALID_PROVIDERS.includes(rawProvider)) {
     errors.push(
         `VITE_BACKEND_PROVIDER="${env.VITE_BACKEND_PROVIDER}" is not valid. ` +
         `Allowed: ${VALID_PROVIDERS.join(' | ')}`
@@ -26,7 +38,7 @@ if (provider && !VALID_PROVIDERS.includes(provider)) {
 }
 
 // --- Auth mode must be valid if set ---
-if (authMode && !VALID_AUTH_MODES.includes(authMode)) {
+if (rawAuthMode && !VALID_AUTH_MODES.includes(rawAuthMode)) {
     errors.push(
         `VITE_AUTH_MODE="${env.VITE_AUTH_MODE}" is not valid. ` +
         `Allowed: ${VALID_AUTH_MODES.join(' | ')}`

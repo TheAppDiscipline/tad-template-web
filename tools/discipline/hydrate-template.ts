@@ -12,8 +12,13 @@ if (!VALID_LANES.includes(lane)) {
   process.exit(1);
 }
 const profile = (args.profile || 'SHARED_SYNC').toUpperCase();
-const backend = (args.backend || 'SUPABASE').toUpperCase();
-const auth = (args.auth || 'MAGIC_LINK').toUpperCase();
+// The backend is chosen in Step 2 (validate architecture / choose provider), so
+// hydrate must not presuppose one: it defaults to the provider that works with no
+// credentials, matching .env.example and the runtime default. It used to default
+// to SUPABASE, which wrote a constitution claiming a backend the project had no
+// keys for. Pass --backend=SUPABASE|FIREBASE once Step 2 decides.
+const backend = (args.backend || 'LOCAL_ONLY').toUpperCase();
+const auth = (args.auth || 'NONE').toUpperCase();
 const collab = (args.collab || 'VIEW_ONLY').toUpperCase();
 const sync = (args.sync || 'FAST_UI').toUpperCase();
 const ai = (args.ai || 'none').toLowerCase();

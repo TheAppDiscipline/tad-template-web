@@ -1,6 +1,11 @@
+// Zero-config default: a fresh clone with no .env runs LOCAL_ONLY and works.
+// It used to default to SUPABASE, which meant no-.env resolved to a provider
+// whose credentials could not possibly be set yet: the app claimed a backend it
+// did not have. Pick a backend by setting VITE_BACKEND_PROVIDER; env-check then
+// enforces that provider's required vars.
 export const DEFAULT_RUNTIME_CONFIG = Object.freeze({
-    BACKEND_PROVIDER: 'SUPABASE',
-    AUTH_MODE: 'MAGIC_LINK',
+    BACKEND_PROVIDER: 'LOCAL_ONLY',
+    AUTH_MODE: 'NONE',
 })
 
 const VALID_BACKEND_PROVIDERS = new Set(['SUPABASE', 'FIREBASE', 'LOCAL_ONLY'])
