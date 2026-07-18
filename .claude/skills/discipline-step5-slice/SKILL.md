@@ -171,7 +171,7 @@ Write `.discipline/packets/SLICE_COMPLETION_PACKET.md` using the canonical struc
 - <file 2>
 
 ### Gates passed
-- GATE_STATE: passed | failed | unverified
+- GATE_STATE: <replace with exactly one of: passed | failed | unverified>
 - npm run gate: <evidence, e.g. 0 failures>
 - <other smoke/evals as evidence>
 

@@ -131,10 +131,12 @@ export async function handlePacket(root: string, filePath: string) {
   const next = detectNext(root);
   if (next) {
     // Durable guard, re-derived from disk on EVERY event (not a per-event flag): never auto-advance
-    // PAST a completion whose gate is not green. detectNext returns '4-reentry' whenever a
-    // SLICE_COMPLETION_PACKET merely exists, so a stale non-green completion left in packets/ could
-    // otherwise be advanced by a later, unrelated packet event.
-    if (next === '4-reentry' && completionGateState(root) !== 'passed') {
+    // while any persisted completion gate is non-green. This applies to every next-step branch,
+    // not only 4-reentry: detectNext gives deploy/feedback/hardening packets higher priority than
+    // SLICE_COMPLETION_PACKET, so guarding only 4-reentry let a later high-priority packet bypass
+    // a stale failed or unverified completion.
+    const completionPath = path.join(root, '.discipline', 'packets', 'SLICE_COMPLETION_PACKET.md');
+    if (fs.existsSync(completionPath) && completionGateState(root) !== 'passed') {
       disciplineWarn('  Completion gate is not green; not assembling or opening the next handoff. Declare "GATE_STATE: passed" and re-drop the packet.');
       logNotes.push('advance-blocked');
     } else {
