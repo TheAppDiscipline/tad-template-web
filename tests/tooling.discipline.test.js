@@ -2141,3 +2141,59 @@ test('discipline:progress is idempotent across days (stable packet fingerprint, 
   const lastCompleted = (progress.match(/^\d+\) Slice 3 - item list/gm) || []).length
   assert.equal(lastCompleted, 1, 'reprocessing on a later day must not duplicate Last Completed')
 })
+
+test('discipline:progress logs a green only for an explicit gate pass (allowlist, not blocklist)', () => {
+  const gatesOf = (gateLine) => {
+    const root = createDisciplineProject({
+      'SLICE_COMPLETION_PACKET.md': ['## SLICE_COMPLETION_PACKET', '', '### Slice', '- Slice 3 - x', '',
+        '### Outcome', '- done', '', '### Gates passed', gateLine, ''].join('\n'),
+    })
+    assert.equal(runProgress(root).status, 0)
+    return fs.readFileSync(path.join(root, 'progress.md'), 'utf8').match(/- \*\*Gates:\*\* (.+)/)[1]
+  }
+  // A deferral phrase is not in any failure blocklist, but must never read as a green.
+  assert.match(gatesOf('- deferred until CI credentials are available'), /^no /)
+  assert.match(gatesOf('- npm run gate'), /^unverified /) // bare command is not an explicit pass
+  assert.equal(gatesOf('- npm run gate: PASS'), 'yes')
+  assert.match(gatesOf('- npm run gate: FAILED'), /^no /)
+})
+
+test('discipline:progress picks up an open issue added to an already-logged packet', () => {
+  const projectRoot = createDisciplineProject({
+    'SLICE_COMPLETION_PACKET.md': ['## SLICE_COMPLETION_PACKET', '', '### Slice', '- Slice 3 - x', '',
+      '### Outcome', '- blocked', '', '### Gates passed', '- npm run gate: FAILED', '', '### Open issues', '- none', ''].join('\n'),
+  })
+  const packetPath = path.join(projectRoot, '.discipline', 'packets', 'SLICE_COMPLETION_PACKET.md')
+  assert.equal(runProgress(projectRoot).status, 0)
+  // Add a real open issue to the same packet and reprocess: it must land, not be swallowed by a no-op.
+  fs.writeFileSync(packetPath, ['## SLICE_COMPLETION_PACKET', '', '### Slice', '- Slice 3 - x', '',
+    '### Outcome', '- blocked', '', '### Gates passed', '- npm run gate: FAILED', '', '### Open issues',
+    '- Auth token refresh races on slow networks', ''].join('\n'), 'utf8')
+  assert.equal(runProgress(projectRoot).status, 0)
+  const progress = fs.readFileSync(path.join(projectRoot, 'progress.md'), 'utf8')
+  assert.match(progress, /## Open Errors\r?\n- Auth token refresh races on slow networks/)
+  assert.match(progress, /- Blockers: see Open Errors/)
+  assert.equal((progress.match(/^### \d{4}-\d{2}-\d{2} /gm) || []).length, 1, 'must not duplicate the log block')
+})
+
+test('discipline:watch does not assemble the next handoff when the completion packet is refused', () => {
+  const projectRoot = createDisciplineProject({
+    // No ### Outcome and no ### Gates passed -> updateProgress refuses.
+    'SLICE_COMPLETION_PACKET.md': '## SLICE_COMPLETION_PACKET\n\n### Slice\n- Slice 1\n\n### Scope delivered\n- did stuff\n',
+  })
+  const packetPath = path.join(projectRoot, '.discipline', 'packets', 'SLICE_COMPLETION_PACKET.md')
+  const tester = path.join(projectRoot, 'handle-refuse-tester.mjs')
+  const watchUrl = pathToImport(path.join(repoRoot, 'tools', 'discipline', 'watch.ts'))
+  fs.writeFileSync(tester, [
+    `import { handlePacket } from '${watchUrl}'`,
+    `await handlePacket(${JSON.stringify(projectRoot)}, ${JSON.stringify(packetPath)})`,
+    `console.log('done')`,
+  ].join('\n'), 'utf8')
+  const result = spawnSync(process.execPath, [tsxCli, tester], { cwd: repoRoot, env: process.env, encoding: 'utf8', timeout: 30000 })
+  assert.equal(result.status, 0, getOutput(result))
+  assert.match(getOutput(result), /Refused progress.md update/)
+  assert.match(getOutput(result), /not assembling or opening the next handoff/)
+  const pasteReadyDir = path.join(projectRoot, '.discipline', 'paste-ready')
+  const files = fs.existsSync(pasteReadyDir) ? fs.readdirSync(pasteReadyDir) : []
+  assert.equal(files.length, 0, `no handoff may be assembled on refusal, found: ${files.join(', ')}`)
+})

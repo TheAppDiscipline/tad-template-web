@@ -45,31 +45,30 @@ export async function updateProgress(root: string): Promise<void> {
 
   const date = new Date().toISOString().slice(0, 10);
 
-  // Idempotency keyed on a stable packet fingerprint (slice name + log body, both derived only
-  // from the packet, never the date), so reprocessing the same packet on a LATER day is still a
-  // no-op. The slice name disambiguates two slices that happen to share the same body.
-  const logBody = buildLogBody(outcome, gatesPassed, scopeDelivered, nextRec);
-  if (progress.includes(`— ${sliceName}\n${logBody}`)) {
-    disciplineInfo(`progress.md already records ${sliceName} (${outcome}); no change.`);
-    return;
-  }
-
   let nextSlice = 'pending';
   const tpPath = path.join(root, 'task_plan.md');
   if (fs.existsSync(tpPath)) {
     nextSlice = detectNextSlice(fs.readFileSync(tpPath, 'utf-8').replace(/\r\n/g, '\n'), sliceNumber) || 'all slices completed';
   }
 
+  // Each mutation below is individually idempotent, so reprocessing the SAME packet is a no-op
+  // while a genuine edit (e.g. a newly added open issue) still lands. The old whole-packet
+  // early-return skipped these mutations entirely, so a later-added open issue was silently lost.
   progress = updateField(progress, 'Working on:', nextSlice);
   progress = updateField(progress, 'Next:', nextRec || 'pending');
   progress = updateField(progress, 'Blockers:', openIssues.length ? 'see Open Errors' : 'none');
   if (openIssues.length) progress = mergeOpenErrors(progress, openIssues);
-  progress = shiftHistory(progress, sliceName, `${sliceName} — ${date} — ${outcome}`);
+  progress = shiftHistory(progress, sliceName, outcome, `${sliceName} — ${date} — ${outcome}`);
 
-  progress = insertLog(progress, `### ${date} — ${sliceName}\n${logBody}`);
+  // The log block is keyed on a date-independent fingerprint (slice name + body), so reprocessing
+  // the same packet on a later day never stacks a duplicate; a changed body inserts a fresh block.
+  const logBody = buildLogBody(outcome, gatesPassed, scopeDelivered, nextRec);
+  if (!progress.includes(`— ${sliceName}\n${logBody}`)) {
+    progress = insertLog(progress, `### ${date} — ${sliceName}\n${logBody}`);
+  }
 
   fs.writeFileSync(progressPath, progress.replace(/\n/g, eol), 'utf-8');
-  disciplineInfo(`progress.md updated: ${sliceName} (${outcome}). Next: ${nextSlice}`);
+  disciplineInfo(`progress.md updated: ${sliceName} (${outcome}, gates: ${gatesPassed}). Next: ${nextSlice}`);
 }
 
 function escapeRe(s: string): string { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
@@ -149,16 +148,23 @@ function extractOutcome(body: string): string | null {
   return hit || raw.split(/[.;,]/)[0].trim().slice(0, 40) || null;
 }
 
-// Reflect the real gate result. Returns null when no gate result is stated (caller refuses).
-// Any failure OR non-execution signal ("FAILED", "NOT RUN", "skipped", "pending"...) is treated
-// as not-green, so an un-run or unknown gate is never logged as "yes" (that was a false green).
+// Reflect the real gate result. Returns null when no gate section exists (caller refuses).
+// "yes" requires an EXPLICIT success token (allowlist): a bare blocklist would let any un-listed
+// phrase (e.g. "deferred until CI credentials are available") fall through to a false "yes".
+// Failure/non-execution -> "no (...)"; present but not clearly pass/fail -> "unverified (...)".
 function extractGates(body: string): string | null {
-  const raw = firstMeaningful(inlineField(body, 'GATES'), sectionItems(body, 'Gates passed').concat(sectionItems(body, 'Gates')));
-  if (!raw) return null;
-  if (/\b(fail|failed|failing|error|errors|red|broken|not\s*run|not\s*executed|notrun|un-?run|skip|skipped|pending|todo|n\/?a|unknown)\b/i.test(raw) || /[✗✘]/.test(raw)) {
+  const inline = inlineField(body, 'GATES');
+  const items = inline ? [cleanBullet(inline)] : meaningfulItems(sectionItems(body, 'Gates passed').concat(sectionItems(body, 'Gates')));
+  if (!items.length) return null;
+  const raw = items.join('; ');
+  // Checked first so "passed, then one failed" is a "no", not a "yes".
+  if (/\b(fail|failed|failing|fails|failure|error|errors|red|broken|not\s*run|not\s*executed|notrun|un-?run|un-?executed|skip|skipped|pending|deferred|blocked|todo|later|until|unless|waiting|tbd|n\/?a)\b/i.test(raw) || /[✗✘]/.test(raw)) {
     return `no (${firstLine(raw).slice(0, 60)})`;
   }
-  return 'yes';
+  if (/\b(pass|passed|passes|passing|green|ok|okay|yes|true|success|successful|succeeded)\b/i.test(raw) || /[✓✔]/.test(raw)) {
+    return 'yes';
+  }
+  return `unverified (${firstLine(raw).slice(0, 60)})`;
 }
 
 // The body of a log entry, derived only from the packet (no date), so it doubles as a stable
@@ -188,10 +194,11 @@ function updateField(content: string, field: string, value: string): string {
 }
 
 // Push newEntry to the top of the 3-slot "## Last Completed Slices" list. Preserves the blank
-// line before the next heading (the old version consumed it, welding the list to the heading)
-// and is idempotent across dates (refreshes the top entry when it is for the same slice instead
-// of stacking a second one, since the entry text carries the date).
-function shiftHistory(content: string, sliceName: string, newEntry: string): string {
+// line before the next heading (the old version consumed it, welding the list to the heading).
+// Idempotent across dates: if the top entry is already this slice at the same outcome it is left
+// untouched (the entry text carries the date, so a naive compare would refresh it every day); an
+// outcome change refreshes it in place; a different slice is prepended.
+function shiftHistory(content: string, sliceName: string, outcome: string, newEntry: string): string {
   const lines = content.split('\n');
   const idx = lines.findIndex((l) => l.trim().startsWith('## Last Completed Slices'));
   if (idx === -1) return content;
@@ -202,8 +209,11 @@ function shiftHistory(content: string, sliceName: string, newEntry: string): str
     else if (lines[i].trim() === '') continue;
     else break;
   }
-  if (entries[0] && entries[0].startsWith(`${sliceName} —`)) entries[0] = newEntry;
-  else entries.unshift(newEntry);
+  if (entries[0] && entries[0].startsWith(`${sliceName} —`)) {
+    if (!entries[0].endsWith(`— ${outcome}`)) entries[0] = newEntry; // same slice, changed outcome
+  } else {
+    entries.unshift(newEntry);
+  }
   const top3 = entries.slice(0, 3);
   const out: string[] = [];
   for (let i = 0; i < lines.length; i++) {

@@ -171,8 +171,8 @@ Write `.discipline/packets/SLICE_COMPLETION_PACKET.md` using the canonical struc
 - <file 2>
 
 ### Gates passed
-- npm run gate
-- <other smoke/evals if applicable>
+- npm run gate: PASS
+- <other smoke/evals: PASS | FAIL, e.g. `npm run ai:eval: PASS`>
 
 ### Manual verification
 - happy path: OK
@@ -191,6 +191,8 @@ Write `.discipline/packets/SLICE_COMPLETION_PACKET.md` using the canonical struc
 ### Deploy signal
 - not_ready | ready_for_preview | ready_for_production_candidate
 ```
+
+`### Outcome` and `### Gates passed` are mandatory: `discipline:progress` refuses a packet that omits either (it will not invent a green), and it only logs `Gates: yes` when it sees an explicit pass (`PASS` / `yes` / `passed`). A gate that failed or did not run (`FAILED`, `NOT RUN`, `deferred ...`) is recorded honestly as `no`/`unverified`, never `yes`.
 
 ### Phase 6: Deploy signal and possible outputs
 

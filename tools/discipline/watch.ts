@@ -90,6 +90,7 @@ export async function handlePacket(root: string, filePath: string) {
   const logNotes: string[] = [];
   let assembledStep: StepId | null = null;
   let assembledOK = false;
+  let completionRefused = false;
 
   // Hold the writer lock around both mutations (patch application and progress
   // update) so a single packet's state changes are atomic against any other
@@ -116,33 +117,40 @@ export async function handlePacket(root: string, filePath: string) {
 
     if (fileName.includes('SLICE_COMPLETION_PACKET')) {
       disciplineInfo('  Updating progress...');
-      // updateProgress refuses (throws) an incomplete packet (missing outcome/gate) rather than
-      // recording a false green. Tolerate that as a warning so the lock releases cleanly and the
-      // rest of the packet's handling (assemble/log) still runs; the packet stays for the human.
+      // updateProgress refuses (throws) an incomplete packet (missing/unknown outcome or gate)
+      // rather than recording a false green. Catch it so the writer lock releases cleanly and mark
+      // the completion refused; below we then do NOT advance the pipeline. The assembler only
+      // checks a packet EXISTS, not that it is valid, so without this guard an invalid completion
+      // would auto-assemble and open the next step's handoff. The packet stays for the human.
       try {
         await updateProgress(root);
         logNotes.push('progress-updated');
       } catch (err) {
-        disciplineWarn(`  Skipped progress.md update: ${err instanceof Error ? err.message : err}`);
-        logNotes.push('progress-skipped');
+        disciplineWarn(`  Refused progress.md update: ${err instanceof Error ? err.message : err}`);
+        logNotes.push('progress-refused');
+        completionRefused = true;
       }
     }
   });
 
-  const next = detectNext(root);
-  if (next) {
-    try {
-      const assembled = await assemblePasteReady(root, next);
-      const outputFile = STEP_ASSEMBLY_MAP[next].outputFile;
-      disciplineInfo(`  Paste-ready assembled for Step ${next}: .discipline/paste-ready/${outputFile}`);
-      copyToClipboard(assembled);
-      openTool(next);
-      assembledStep = next;
-      assembledOK = true;
-      logNotes.push(`next=${next}`);
-    } catch {
-      disciplineWarn(`  Could not assemble Step ${next} (required packets may be missing).`);
-      logNotes.push(`assemble-failed=${next}`);
+  if (completionRefused) {
+    disciplineWarn('  Completion packet is incomplete; not assembling or opening the next handoff. Fix the packet and re-drop it.');
+  } else {
+    const next = detectNext(root);
+    if (next) {
+      try {
+        const assembled = await assemblePasteReady(root, next);
+        const outputFile = STEP_ASSEMBLY_MAP[next].outputFile;
+        disciplineInfo(`  Paste-ready assembled for Step ${next}: .discipline/paste-ready/${outputFile}`);
+        copyToClipboard(assembled);
+        openTool(next);
+        assembledStep = next;
+        assembledOK = true;
+        logNotes.push(`next=${next}`);
+      } catch {
+        disciplineWarn(`  Could not assemble Step ${next} (required packets may be missing).`);
+        logNotes.push(`assemble-failed=${next}`);
+      }
     }
   }
 
