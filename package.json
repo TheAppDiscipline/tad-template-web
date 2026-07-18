@@ -49,6 +49,7 @@
     "discipline:patch": "tsx tools/discipline/apply-patch.ts",
     "discipline:patch:dry-run": "tsx tools/discipline/apply-patch.ts --dry-run",
     "discipline:assemble": "tsx tools/discipline/assemble-paste-ready.ts",
+    "discipline:step4-origin": "tsx tools/discipline/step4-origin.ts",
     "discipline:progress": "tsx tools/discipline/update-progress.ts",
     "discipline:log": "tsx tools/discipline/log-run.ts",
     "discipline:validate": "tsx tools/discipline/validate-discipline.ts",

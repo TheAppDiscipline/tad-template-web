@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { watch as chokidarWatch } from 'chokidar';
 import minimist from 'minimist';
 import { disciplineInfo, disciplineWarn, type StepId } from './lib/types.js';
+import { routeFromPackets, resolveStep4Origin } from './lib/step4-origin.js';
 import { resolveProjectRoot } from './lib/discipline-config.js';
 import { copyToClipboard as writeTextToClipboard } from './lib/clipboard.js';
 import { extractEmbeddedPatches } from './lib/parse-patch.js';
@@ -22,38 +23,39 @@ export function detectNext(root: string): StepId | null {
   const dir = path.join(root, '.discipline', 'packets');
   if (!fs.existsSync(dir)) return null;
 
-  const fileNames = new Set(fs.readdirSync(dir));
-
-  if (fileNames.has('PROD_HARDENING_PACKET.md')) return '4-hardening';
-
-  if (fileNames.has('POST_DEPLOY_FEEDBACK_PACKET.md')) {
-    const feedbackBranch = detectFeedbackBranch(root);
-    if (feedbackBranch) return feedbackBranch;
+  // The watcher shares BOTH the route AND the advance conditions with the direct /discipline-step4
+  // command, so it can never advance where that command would stop. routeFromPackets is the pure
+  // router (which packet -> which step); for a Step 4 origin, resolveStep4Origin then authorizes the
+  // advance with the same coherence the skill enforces (STEP_4_EXECUTION_PACKET validated for every
+  // mode, completion gate green for reentry, feedback branch declared for feedback).
+  const route = routeFromPackets(root);
+  switch (route.kind) {
+    case 'step4': {
+      const res = resolveStep4Origin(root);
+      if (res.status === 'chosen') return res.mode ?? null;
+      disciplineWarn(
+        `  Step 4 origin (${route.mode}) not ready to advance; not assembling or opening the next handoff. ` +
+          `Reason: ${res.reason ?? 'not coherent'}`,
+      );
+      return null;
+    }
+    case 'redirect':
+      return route.step;
+    case 'collision':
+      disciplineWarn(
+        `  Ambiguous Step 4 origin (${route.modes.join(', ')} all present); not auto-advancing. ` +
+          'Choose with /discipline-step4 --mode <x>. Expected in Fase 1 (no consumption model yet).',
+      );
+      return null;
+    case 'feedback-unclear':
+      disciplineWarn(
+        '  POST_DEPLOY_FEEDBACK_PACKET does not declare a clear recommended branch (Step 4 vs Step 7); ' +
+          'not auto-advancing. Declare it and re-drop the packet.',
+      );
+      return null;
+    case 'none':
+      return null;
   }
-
-  if (fileNames.has('DEPLOY_READINESS_PACKET.md')) return '6';
-  if (fileNames.has('SLICE_COMPLETION_PACKET.md')) return '4-reentry';
-  if (fileNames.has('STEP_5_SLICE_PACKET.md')) return '5';
-  if (fileNames.has('STEP_4_EXECUTION_PACKET.md')) return '4';
-  if (fileNames.has('STEP_2_ARCHITECTURE_PACKET.md') && !fileNames.has('STEP_4_EXECUTION_PACKET.md')) return '2';
-  return null;
-}
-
-function detectFeedbackBranch(root: string): StepId | null {
-  const packetPath = path.join(root, '.discipline', 'packets', 'POST_DEPLOY_FEEDBACK_PACKET.md');
-  if (!fs.existsSync(packetPath)) return null;
-
-  const content = fs.readFileSync(packetPath, 'utf-8');
-
-  if (/recommended branch[\s\S]{0,120}(step 4|feedback loop|mini-fix|mini fix)/i.test(content)) {
-    return '4-feedback';
-  }
-
-  if (/recommended branch[\s\S]{0,120}(step 7|product|hardening)/i.test(content)) {
-    return '7';
-  }
-
-  return '7';
 }
 
 function copyToClipboard(content: string) {

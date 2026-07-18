@@ -5,7 +5,22 @@ description: "Automate Discipline Loop Step 4: expand the validated STEP_4_EXECU
 
 # /discipline-step4 - Automate Step 4 of the Discipline Loop pipeline
 
-This skill runs the full Step 4: it expands the slices from the validated STEP_4_EXECUTION_PACKET into executable slices with scope, contracts, acceptance criteria, and DoD, generates the STEP_5_SLICE_PACKET for the first ready slice, emits patch blocks, and leaves the paste-readies ready for Step 5.
+This skill runs the full Step 4: it first resolves which origin it is running for (first expansion, reentry from Step 5, feedback from Step 6, or hardening from Step 7), then expands the slices into executable slices with scope, contracts, acceptance criteria, and DoD, generates the STEP_5_SLICE_PACKET for the first ready slice, emits patch blocks, and leaves the paste-readies ready for Step 5.
+
+## Origin resolution (fail-loud)
+
+Step 4 has four origins, and this skill must not guess between them:
+
+| Origin (`--mode`) | Comes from | Trigger packet |
+|---|---|---|
+| `4` | first expansion | validated `STEP_4_EXECUTION_PACKET`, no active reentry |
+| `4-reentry` | Step 5 | `SLICE_COMPLETION_PACKET` (completion gate passed) |
+| `4-feedback` | Step 6 | `POST_DEPLOY_FEEDBACK_PACKET` recommending a Step 4 mini-fix |
+| `4-hardening` | Step 7 | `PROD_HARDENING_PACKET` |
+
+The origin is resolved by the shared `discipline:step4-origin` resolver (the SAME code the watcher uses, so the direct command and the watcher can never disagree). This is **orthogonal** to `STEP4_EXPANSION_MODE` (`batch`/`full`), which controls *how many* slices to expand, not *where the work comes from*.
+
+Honest limitation: Phase 1 validates structural and transitional coherence, not currency. Without a consumption model, one residual packet from a previous round is indistinguishable from an active one. Never tell the user a packet is "the live handoff"; if the resolver stops, surface exactly why.
 
 ## Execution policy (self-contained)
 
@@ -22,12 +37,13 @@ No external tools required. Claude generates everything directly.
 
 ## What the user sees
 
-1. The skill checks that the STEP_4_EXECUTION_PACKET exists and has STATUS: validated
-2. Reads all available packets and the project context
-3. Expands each slice with detailed scope, contracts, acceptance criteria, and complexity
-4. Generates the STEP_5_SLICE_PACKET for the first ready slice
-5. Emits patch blocks for task_plan.md, discipline.md, and findings.md
-6. Applies patches, assembles paste-readies, and reports a summary
+1. The skill resolves the origin (input/reentry/feedback/hardening) and reports it, or stops if it is ambiguous or incoherent
+2. It checks that the STEP_4_EXECUTION_PACKET exists and has STATUS: validated, plus the packets that origin requires
+3. Reads all available packets and the project context
+4. Expands each slice with detailed scope, contracts, acceptance criteria, and complexity
+5. Generates the STEP_5_SLICE_PACKET for the first ready slice
+6. Emits patch blocks for task_plan.md, discipline.md, and findings.md
+7. Applies patches, assembles paste-readies, and reports a summary
 
 ## Prerequisites
 
@@ -39,7 +55,37 @@ No external tools required. Claude generates everything directly.
 
 ## Internal implementation
 
-### Phase 0: Verify inputs
+### Phase 0a: Resolve the origin (fail-loud)
+
+Before reading anything else, resolve which origin this run is for. Pass through the operator's
+`--mode` if they gave one (`/discipline-step4 --mode 4-feedback`):
+
+```bash
+npm run discipline:step4-origin -- --json            # or: -- --json --mode <4|4-reentry|4-feedback|4-hardening>
+```
+
+Act on the exit code (do NOT re-derive the decision yourself; the resolver is the single source of truth):
+
+- **exit 0 (chosen):** the `mode` field is the origin. Announce it with its evidence, for example:
+  `Origin: 4-reentry - a SLICE_COMPLETION_PACKET is present and its completion gate passed.`
+  Then continue to Phase 0b. Repeat the "coherence, not currency" caveat verbatim from the evidence;
+  do not claim the packet is definitively the live handoff.
+- **exit 3 (ambiguous):** two or more reentry handoffs are present at once. STOP, show the candidates,
+  and ask the operator to re-run with an explicit `--mode`. This is EXPECTED in Fase 1 (no consumption
+  model yet): the normal Step 5 -> 6 -> 7 flow leaves the earlier packets on disk, so a hardening pass
+  collides with the lingering completion packet. Do not pick one yourself, and do not tell the operator
+  to delete packets as the routine remedy: `--mode` is the intended resolution (Fase 2 will make it
+  automatic).
+- **exit 2 (invalid):** the resolved (or requested) mode is not coherent, OR the pipeline points to
+  another step (a redirect). STOP and show the reason verbatim (execution packet not validated,
+  completion gate not green, the feedback recommends Step 7, the feedback branch is undeclared, or
+  nothing to expand) and name the step to run instead. Do not proceed.
+
+`--mode` chooses the branch but never skips validation: the resolver still checks the STEP_4_EXECUTION_PACKET
+is validated (required for EVERY mode), the completion gate (reentry), and the feedback branch (feedback),
+and returns `invalid` if any fails.
+
+### Phase 0b: Verify inputs
 
 Read the contents of these files. If the required one does not exist or is not validated, stop with a clear message.
 
@@ -57,6 +103,15 @@ If it exists but does not have `STATUS: validated` (still a draft or has no STAT
 The STEP_4_EXECUTION_PACKET is not validated (current STATUS: <status>).
 Run /discipline-step2 to validate the architecture before expanding slices.
 ```
+
+**Required for the resolved origin (in addition to STEP_4_EXECUTION_PACKET):**
+- `4-reentry`: `.discipline/packets/SLICE_COMPLETION_PACKET.md` - the slice just closed in Step 5
+- `4-feedback`: `.discipline/packets/POST_DEPLOY_FEEDBACK_PACKET.md` - real-usage feedback from Step 6
+- `4-hardening`: `.discipline/packets/PROD_HARDENING_PACKET.md` - the hardening backlog from Step 7
+
+The resolver already confirmed these are present and coherent for the mode; read them so the
+expansion incorporates the reentry context (a new slice from feedback, or a hardening item),
+not just the original plan.
 
 **Optional (read if they exist, they enrich the slices):**
 2. `.discipline/packets/UI_HANDOFF_PACKET.md` - per-screen and per-state UI descriptions
@@ -353,7 +408,7 @@ TARGET_FILE: findings.md
 PATCH_MODE: append
 
 CONTENT:
-## Step 4 - Slice expansion (<date>)
+## Step 4 - Slice expansion (origin: <mode>, <date>)
 
 ### Scope decisions
 - <decision 1: what was included/excluded and why>
@@ -399,6 +454,7 @@ Show the user:
 ```
 Step 4 complete.
 
+Origin: <mode> (input | reentry | feedback | hardening)
 Slices expanded: <N>
 Total complexity: <X>S / <Y>M / <Z>L (estimated: <total hours>h)
 
@@ -428,6 +484,8 @@ Next step: /discipline-step5 (Implement Slice <N>: <name>)
 
 ## Error handling
 
+- If `discipline:step4-origin` exits 3 (ambiguous): stop, show the candidate modes, and ask the operator to re-run with `--mode <x>`. Expected in Fase 1 (packets linger with no consumption model); `--mode` is the remedy, not deleting packets. Never pick one silently.
+- If `discipline:step4-origin` exits 2 (invalid): stop, show the reason verbatim (execution packet not validated, completion gate not green, feedback recommends Step 7, feedback branch not declared, or nothing to expand), and name the step to run instead.
 - If `STEP_4_EXECUTION_PACKET` does not exist: stop with "Run /discipline-step2 first."
 - If `STEP_4_EXECUTION_PACKET` does not have STATUS validated: stop with a message telling the user to run /discipline-step2 to validate.
 - If the EXECUTION_PACKET has no slices defined: stop with "The STEP_4_EXECUTION_PACKET contains no slices. Review the output of Step 2."
@@ -440,6 +498,8 @@ Next step: /discipline-step5 (Implement Slice <N>: <name>)
 
 ## Critical rules
 
+- Never guess the origin. Resolve it with `discipline:step4-origin`; on ambiguous or invalid, stop and ask. `--mode` chooses the branch but never skips the resolver's validation.
+- Do not claim currency. The resolver proves structural/transitional coherence only (Phase 1 has no consumption model); a single residual packet reads as coherent. Say so if relevant.
 - Use Extended Thinking for slice expansion. The value of this step is precise scope and verifiable acceptance criteria.
 - Do not invent slices that are not in the STEP_4_EXECUTION_PACKET. Only expand the ones that already exist. If the expansion reveals that a slice should be split, document the reason and propose the split, but do not apply it unless the execution packet reflects it.
 - Do not change the slice order without strong justification documented in findings.md.
