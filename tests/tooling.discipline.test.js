@@ -2098,3 +2098,46 @@ test('discipline:progress preserves CRLF line endings without mixing in bare LF'
   const bareLf = lines.filter((l) => !l.endsWith('\r')).length
   assert.equal(bareLf, 0, 'a CRLF file must not gain bare-LF lines from injected content')
 })
+
+test('discipline:progress refuses a packet with no outcome (fail-closed, no false green)', () => {
+  const projectRoot = createDisciplineProject({
+    'SLICE_COMPLETION_PACKET.md': [
+      '## SLICE_COMPLETION_PACKET', '', '### Slice', '- Slice 3 - thing', '',
+      '### Scope delivered', '- did the thing', '', '### Gates passed', '- npm run gate', '',
+    ].join('\n'),
+  })
+  const before = fs.readFileSync(path.join(projectRoot, 'progress.md'), 'utf8')
+  const result = runProgress(projectRoot)
+  assert.notEqual(result.status, 0, 'CLI must exit non-zero on an incomplete packet')
+  assert.match(getOutput(result), /Refusing to record a slice with an unknown outcome/)
+  assert.equal(fs.readFileSync(path.join(projectRoot, 'progress.md'), 'utf8'), before, 'progress.md untouched when refused')
+})
+
+test('discipline:progress never logs an un-run or unknown gate as passed', () => {
+  const projectRoot = createDisciplineProject({
+    'SLICE_COMPLETION_PACKET.md': [
+      '## SLICE_COMPLETION_PACKET', '', '### Slice', '- Slice 3 - thing', '',
+      '### Outcome', '- done', '', '### Scope delivered', '- did it', '',
+      '### Gates passed', '- npm run gate: NOT RUN', '',
+    ].join('\n'),
+  })
+  assert.equal(runProgress(projectRoot).status, 0)
+  const progress = fs.readFileSync(path.join(projectRoot, 'progress.md'), 'utf8')
+  assert.doesNotMatch(progress, /Gates:\*\* yes/) // "NOT RUN" must not be a green
+  assert.match(progress, /- \*\*Gates:\*\* no \(/)
+  assert.match(progress, /NOT RUN/)
+})
+
+test('discipline:progress is idempotent across days (stable packet fingerprint, not the date)', () => {
+  const projectRoot = createDisciplineProject({ 'SLICE_COMPLETION_PACKET.md': CANONICAL_COMPLETION_PACKET })
+  const progressPath = path.join(projectRoot, 'progress.md')
+  assert.equal(runProgress(projectRoot).status, 0)
+  // Simulate the entry having been logged on an earlier day, then reprocess the same packet.
+  fs.writeFileSync(progressPath, fs.readFileSync(progressPath, 'utf8').replace(/\d{4}-\d{2}-\d{2}/g, '2020-01-01'), 'utf8')
+  assert.equal(runProgress(projectRoot).status, 0)
+  const progress = fs.readFileSync(progressPath, 'utf8')
+  const logBlocks = (progress.match(/^### \d{4}-\d{2}-\d{2} /gm) || []).length
+  assert.equal(logBlocks, 1, 'reprocessing on a later day must not add a second log block')
+  const lastCompleted = (progress.match(/^\d+\) Slice 3 - item list/gm) || []).length
+  assert.equal(lastCompleted, 1, 'reprocessing on a later day must not duplicate Last Completed')
+})

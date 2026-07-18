@@ -621,7 +621,13 @@ async function processPacketsUnderLock(root: string): Promise<void> {
     }
     if (packetFiles.some((f) => f.includes('SLICE_COMPLETION_PACKET'))) {
       disciplineInfo('SLICE_COMPLETION_PACKET present; updating progress.md...');
-      await updateProgress(root);
+      // updateProgress refuses (throws) an incomplete packet rather than recording a false green.
+      // Tolerate it as a warning (see this function's doc comment) so the run keeps going.
+      try {
+        await updateProgress(root);
+      } catch (err) {
+        disciplineWarn(`Skipped progress.md update: ${err instanceof Error ? err.message : err}`);
+      }
     }
   } finally {
     releaseWriterLock(root);

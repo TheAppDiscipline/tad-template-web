@@ -116,8 +116,16 @@ export async function handlePacket(root: string, filePath: string) {
 
     if (fileName.includes('SLICE_COMPLETION_PACKET')) {
       disciplineInfo('  Updating progress...');
-      await updateProgress(root);
-      logNotes.push('progress-updated');
+      // updateProgress refuses (throws) an incomplete packet (missing outcome/gate) rather than
+      // recording a false green. Tolerate that as a warning so the lock releases cleanly and the
+      // rest of the packet's handling (assemble/log) still runs; the packet stays for the human.
+      try {
+        await updateProgress(root);
+        logNotes.push('progress-updated');
+      } catch (err) {
+        disciplineWarn(`  Skipped progress.md update: ${err instanceof Error ? err.message : err}`);
+        logNotes.push('progress-skipped');
+      }
     }
   });
 

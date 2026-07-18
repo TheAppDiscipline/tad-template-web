@@ -29,6 +29,13 @@ export async function updateProgress(root: string): Promise<void> {
     sectionItems(body, 'Next recommendation'),
   );
 
+  // Fail-closed: refuse to record a completion whose outcome or gate result is not stated,
+  // instead of defaulting to an optimistic shipped/yes (that default is itself a false green).
+  // Throw (not disciplineError, which process.exit()s) so watch/run tolerate it as a warning and
+  // keep the process alive; the CLI path turns the throw into a clear non-zero exit.
+  if (!outcome) throw new Error('SLICE_COMPLETION_PACKET has no "### Outcome" (done | partial | blocked). Refusing to record a slice with an unknown outcome.');
+  if (!gatesPassed) throw new Error('SLICE_COMPLETION_PACKET has no "### Gates passed" section. Refusing to record a slice with an unknown gate result.');
+
   // Preserve the file's existing newline style: reading the template on Windows yields CRLF,
   // and re-emitting with bare '\n' used to leave the untouched lines on CRLF and the injected
   // ones on LF (a mixed-EOL file that reads as fully modified). Work in LF, restore on write.
@@ -37,6 +44,15 @@ export async function updateProgress(root: string): Promise<void> {
   let progress = raw.replace(/\r\n/g, '\n');
 
   const date = new Date().toISOString().slice(0, 10);
+
+  // Idempotency keyed on a stable packet fingerprint (slice name + log body, both derived only
+  // from the packet, never the date), so reprocessing the same packet on a LATER day is still a
+  // no-op. The slice name disambiguates two slices that happen to share the same body.
+  const logBody = buildLogBody(outcome, gatesPassed, scopeDelivered, nextRec);
+  if (progress.includes(`— ${sliceName}\n${logBody}`)) {
+    disciplineInfo(`progress.md already records ${sliceName} (${outcome}); no change.`);
+    return;
+  }
 
   let nextSlice = 'pending';
   const tpPath = path.join(root, 'task_plan.md');
@@ -48,10 +64,9 @@ export async function updateProgress(root: string): Promise<void> {
   progress = updateField(progress, 'Next:', nextRec || 'pending');
   progress = updateField(progress, 'Blockers:', openIssues.length ? 'see Open Errors' : 'none');
   if (openIssues.length) progress = mergeOpenErrors(progress, openIssues);
-  progress = shiftHistory(progress, `${sliceName} — ${date} — ${outcome}`);
+  progress = shiftHistory(progress, sliceName, `${sliceName} — ${date} — ${outcome}`);
 
-  const logEntry = buildLogEntry(date, sliceName, outcome, gatesPassed, scopeDelivered, nextRec);
-  progress = insertLog(progress, logEntry);
+  progress = insertLog(progress, `### ${date} — ${sliceName}\n${logBody}`);
 
   fs.writeFileSync(progressPath, progress.replace(/\n/g, eol), 'utf-8');
   disciplineInfo(`progress.md updated: ${sliceName} (${outcome}). Next: ${nextSlice}`);
@@ -124,28 +139,32 @@ function extractSliceNumber(body: string): number {
   return parseInt(body.match(/slice[^\S\n]*[:#-]?[^\S\n]*(\d+)/i)?.[1] || '0', 10);
 }
 
-// Read the real outcome instead of assuming success: the canonical packet writes
-// "### Outcome\n- blocked", so defaulting to "shipped" used to log a false green.
-function extractOutcome(body: string): string {
+// Read the real outcome instead of assuming success. Returns null when no outcome is stated so
+// the caller refuses to record the slice, rather than defaulting to an optimistic "shipped".
+function extractOutcome(body: string): string | null {
   const raw = firstMeaningful(inlineField(body, 'OUTCOME'), sectionItems(body, 'Outcome'));
-  if (!raw) return 'shipped';
+  if (!raw) return null;
   const known = ['done', 'shipped', 'partial', 'blocked', 'ready', 'wip', 'in-progress'];
   const hit = known.find((k) => raw.toLowerCase().startsWith(k));
-  return hit || raw.split(/[.;,]/)[0].trim().slice(0, 40) || 'shipped';
+  return hit || raw.split(/[.;,]/)[0].trim().slice(0, 40) || null;
 }
 
-// Reflect the real gate result. "### Gates passed\n- npm run gate: FAILED" must not become "yes".
-function extractGates(body: string): string {
+// Reflect the real gate result. Returns null when no gate result is stated (caller refuses).
+// Any failure OR non-execution signal ("FAILED", "NOT RUN", "skipped", "pending"...) is treated
+// as not-green, so an un-run or unknown gate is never logged as "yes" (that was a false green).
+function extractGates(body: string): string | null {
   const raw = firstMeaningful(inlineField(body, 'GATES'), sectionItems(body, 'Gates passed').concat(sectionItems(body, 'Gates')));
-  if (!raw) return 'not reported';
-  const t = raw.trim().toLowerCase();
-  if (/^(yes|pass|passed|green|ok|true|all green)\b/.test(t)) return 'yes';
-  if (/^(no|fail|failed|red|false)\b/.test(t) || /\b(fail|failed|error|✗|✘)\b/i.test(raw)) return `no (${firstLine(raw).slice(0, 60)})`;
+  if (!raw) return null;
+  if (/\b(fail|failed|failing|error|errors|red|broken|not\s*run|not\s*executed|notrun|un-?run|skip|skipped|pending|todo|n\/?a|unknown)\b/i.test(raw) || /[✗✘]/.test(raw)) {
+    return `no (${firstLine(raw).slice(0, 60)})`;
+  }
   return 'yes';
 }
 
-function buildLogEntry(date: string, sliceName: string, outcome: string, gates: string, scope: string | null, next: string | null): string {
-  const parts = [`### ${date} — ${sliceName}`, `- **Status:** ${outcome}`, `- **Gates:** ${gates}`];
+// The body of a log entry, derived only from the packet (no date), so it doubles as a stable
+// idempotency fingerprint for reprocessing the same packet on a later day.
+function buildLogBody(outcome: string, gates: string, scope: string | null, next: string | null): string {
+  const parts = [`- **Status:** ${outcome}`, `- **Gates:** ${gates}`];
   if (scope) parts.push(`- **Scope:** ${scope}`);
   if (next) parts.push(`- **Next:** ${next}`);
   return parts.join('\n');
@@ -170,8 +189,9 @@ function updateField(content: string, field: string, value: string): string {
 
 // Push newEntry to the top of the 3-slot "## Last Completed Slices" list. Preserves the blank
 // line before the next heading (the old version consumed it, welding the list to the heading)
-// and is idempotent (an identical newest entry is not stacked).
-function shiftHistory(content: string, newEntry: string): string {
+// and is idempotent across dates (refreshes the top entry when it is for the same slice instead
+// of stacking a second one, since the entry text carries the date).
+function shiftHistory(content: string, sliceName: string, newEntry: string): string {
   const lines = content.split('\n');
   const idx = lines.findIndex((l) => l.trim().startsWith('## Last Completed Slices'));
   if (idx === -1) return content;
@@ -182,7 +202,8 @@ function shiftHistory(content: string, newEntry: string): string {
     else if (lines[i].trim() === '') continue;
     else break;
   }
-  if (entries[0] !== newEntry) entries.unshift(newEntry);
+  if (entries[0] && entries[0].startsWith(`${sliceName} —`)) entries[0] = newEntry;
+  else entries.unshift(newEntry);
   const top3 = entries.slice(0, 3);
   const out: string[] = [];
   for (let i = 0; i < lines.length; i++) {
