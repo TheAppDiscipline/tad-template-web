@@ -2156,6 +2156,10 @@ test('discipline:progress logs a green only for an explicit gate pass (allowlist
   assert.match(gatesOf('- npm run gate'), /^unverified /) // bare command is not an explicit pass
   assert.equal(gatesOf('- npm run gate: PASS'), 'yes')
   assert.match(gatesOf('- npm run gate: FAILED'), /^no /)
+  // A negated success word must not read as a pass (the positive allowlist alone missed this).
+  assert.match(gatesOf('- npm run gate: NOT PASSED'), /^no /)
+  assert.match(gatesOf("- build isn't green yet"), /^no /)
+  assert.match(gatesOf('- gate did not pass'), /^no /)
 })
 
 test('discipline:progress picks up an open issue added to an already-logged packet', () => {
@@ -2196,4 +2200,44 @@ test('discipline:watch does not assemble the next handoff when the completion pa
   const pasteReadyDir = path.join(projectRoot, '.discipline', 'paste-ready')
   const files = fs.existsSync(pasteReadyDir) ? fs.readdirSync(pasteReadyDir) : []
   assert.equal(files.length, 0, `no handoff may be assembled on refusal, found: ${files.join(', ')}`)
+})
+
+function runHandlePacket(projectRoot) {
+  const packetPath = path.join(projectRoot, '.discipline', 'packets', 'SLICE_COMPLETION_PACKET.md')
+  const tester = path.join(projectRoot, 'handle-tester.mjs')
+  const watchUrl = pathToImport(path.join(repoRoot, 'tools', 'discipline', 'watch.ts'))
+  fs.writeFileSync(tester, [
+    `import { handlePacket } from '${watchUrl}'`,
+    `await handlePacket(${JSON.stringify(projectRoot)}, ${JSON.stringify(packetPath)})`,
+    `console.log('done')`,
+  ].join('\n'), 'utf8')
+  return spawnSync(process.execPath, [tsxCli, tester], { cwd: repoRoot, env: process.env, encoding: 'utf8', timeout: 30000 })
+}
+
+test('discipline:watch does not advance the pipeline when the gate is not green (unverified)', () => {
+  const projectRoot = createDisciplineProject({
+    // Recognized packet, valid outcome, but a bare gate command -> gate state "unverified".
+    'SLICE_COMPLETION_PACKET.md': ['## SLICE_COMPLETION_PACKET', '', '### Slice', '- Slice 1', '',
+      '### Outcome', '- done', '', '### Gates passed', '- npm run gate', '', '### Deploy signal', '- ready_for_preview', ''].join('\n'),
+  })
+  const result = runHandlePacket(projectRoot)
+  assert.equal(result.status, 0, getOutput(result))
+  // Progress is still recorded honestly (gate: unverified) ...
+  assert.match(fs.readFileSync(path.join(projectRoot, 'progress.md'), 'utf8'), /- \*\*Gates:\*\* unverified/)
+  // ... but the watcher must NOT assemble/open the next handoff.
+  assert.match(getOutput(result), /Gate is not green/)
+  const pasteReadyDir = path.join(projectRoot, '.discipline', 'paste-ready')
+  const files = fs.existsSync(pasteReadyDir) ? fs.readdirSync(pasteReadyDir) : []
+  assert.equal(files.length, 0, `an unverified gate must not auto-advance, found: ${files.join(', ')}`)
+})
+
+test('discipline:watch advances the pipeline only on a green gate', () => {
+  const projectRoot = createDisciplineProject({
+    'SLICE_COMPLETION_PACKET.md': ['## SLICE_COMPLETION_PACKET', '', '### Slice', '- Slice 1', '',
+      '### Outcome', '- done', '', '### Gates passed', '- npm run gate: PASS', '', '### Deploy signal', '- ready_for_preview', ''].join('\n'),
+  })
+  const result = runHandlePacket(projectRoot)
+  assert.equal(result.status, 0, getOutput(result))
+  assert.match(fs.readFileSync(path.join(projectRoot, 'progress.md'), 'utf8'), /- \*\*Gates:\*\* yes/)
+  assert.doesNotMatch(getOutput(result), /Gate is not green/) // a green gate is allowed to advance
 })

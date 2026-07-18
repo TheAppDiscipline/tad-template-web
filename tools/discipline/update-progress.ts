@@ -9,7 +9,11 @@ import { parsePacketFile } from './lib/parse-packet.js';
 const args = minimist(process.argv.slice(2));
 const projectRoot = resolveProjectRoot(args['project-dir']);
 
-export async function updateProgress(root: string): Promise<void> {
+// The gate result is modelled as an explicit state, not inferred from a single positive word:
+// only 'passed' is a green, and watch advances the pipeline only on 'passed'.
+export type GateState = 'passed' | 'failed' | 'unverified';
+
+export async function updateProgress(root: string): Promise<{ gate: GateState }> {
   const progressPath = path.join(root, 'progress.md');
   const packetPath = path.join(root, '.discipline', 'packets', 'SLICE_COMPLETION_PACKET.md');
   if (!fs.existsSync(progressPath)) disciplineError('progress.md not found. Run discipline:hydrate first.');
@@ -21,7 +25,7 @@ export async function updateProgress(root: string): Promise<void> {
   const sliceNumber = packet.slice || extractSliceNumber(body);
   const sliceName = extractSliceName(body) || `Slice ${sliceNumber}`;
   const outcome = extractOutcome(body);
-  const gatesPassed = extractGates(body);
+  const gate = extractGates(body);
   const scopeDelivered = joinItems(sectionItems(body, 'Scope delivered'));
   const openIssues = meaningfulItems(sectionItems(body, 'Open issues'));
   const nextRec = firstMeaningful(
@@ -34,7 +38,8 @@ export async function updateProgress(root: string): Promise<void> {
   // Throw (not disciplineError, which process.exit()s) so watch/run tolerate it as a warning and
   // keep the process alive; the CLI path turns the throw into a clear non-zero exit.
   if (!outcome) throw new Error('SLICE_COMPLETION_PACKET has no "### Outcome" (done | partial | blocked). Refusing to record a slice with an unknown outcome.');
-  if (!gatesPassed) throw new Error('SLICE_COMPLETION_PACKET has no "### Gates passed" section. Refusing to record a slice with an unknown gate result.');
+  if (!gate) throw new Error('SLICE_COMPLETION_PACKET has no "### Gates passed" section. Refusing to record a slice with an unknown gate result.');
+  const gatesPassed = gateLabel(gate);
 
   // Preserve the file's existing newline style: reading the template on Windows yields CRLF,
   // and re-emitting with bare '\n' used to leave the untouched lines on CRLF and the injected
@@ -69,6 +74,7 @@ export async function updateProgress(root: string): Promise<void> {
 
   fs.writeFileSync(progressPath, progress.replace(/\n/g, eol), 'utf-8');
   disciplineInfo(`progress.md updated: ${sliceName} (${outcome}, gates: ${gatesPassed}). Next: ${nextSlice}`);
+  return { gate: gate.state };
 }
 
 function escapeRe(s: string): string { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
@@ -148,23 +154,35 @@ function extractOutcome(body: string): string | null {
   return hit || raw.split(/[.;,]/)[0].trim().slice(0, 40) || null;
 }
 
-// Reflect the real gate result. Returns null when no gate section exists (caller refuses).
-// "yes" requires an EXPLICIT success token (allowlist): a bare blocklist would let any un-listed
-// phrase (e.g. "deferred until CI credentials are available") fall through to a false "yes".
-// Failure/non-execution -> "no (...)"; present but not clearly pass/fail -> "unverified (...)".
-function extractGates(body: string): string | null {
+// Success words, used both to detect a pass and (when negated) a non-pass.
+const GATE_SUCCESS = String.raw`pass(?:ed|es|ing)?|green|ok(?:ay)?|success(?:ful)?|succeed(?:ed|s)?|verified|clean`;
+
+// Classify the gate text into an explicit state. Negations and failures are tested BEFORE any
+// success token, so a negated success ("NOT PASSED", "isn't green", "did not pass") can never be
+// read as a pass -- the flaw a bare positive allowlist had. Ambiguous prose stays 'unverified'.
+function gateStateOf(raw: string): GateState {
+  const t = raw.toLowerCase();
+  const negatedSuccess = new RegExp(String.raw`\b(?:not|no|non|never|without|un|isn'?t|aren'?t|wasn'?t|weren'?t|didn'?t|doesn'?t|don'?t|can'?t|couldn'?t|fail(?:s|ed|ing)?\s+to)\s*-?\s*(?:${GATE_SUCCESS})\b`);
+  const failure = /\b(fail|failed|failing|fails|failure|error|errors|red|broken|not\s*run|not\s*executed|notrun|un-?run|un-?executed|skip|skipped|pending|deferred|blocked|todo|later|until|unless|waiting|tbd|n\/?a)\b/;
+  if (failure.test(t) || negatedSuccess.test(t) || /[✗✘]/.test(raw)) return 'failed';
+  if (new RegExp(String.raw`\b(?:${GATE_SUCCESS}|yes|true)\b`).test(t) || /[✓✔]/.test(raw)) return 'passed';
+  return 'unverified';
+}
+
+// Returns the gate state + its raw text, or null when no gate section exists (caller refuses).
+function extractGates(body: string): { state: GateState; raw: string } | null {
   const inline = inlineField(body, 'GATES');
   const items = inline ? [cleanBullet(inline)] : meaningfulItems(sectionItems(body, 'Gates passed').concat(sectionItems(body, 'Gates')));
   if (!items.length) return null;
   const raw = items.join('; ');
-  // Checked first so "passed, then one failed" is a "no", not a "yes".
-  if (/\b(fail|failed|failing|fails|failure|error|errors|red|broken|not\s*run|not\s*executed|notrun|un-?run|un-?executed|skip|skipped|pending|deferred|blocked|todo|later|until|unless|waiting|tbd|n\/?a)\b/i.test(raw) || /[✗✘]/.test(raw)) {
-    return `no (${firstLine(raw).slice(0, 60)})`;
-  }
-  if (/\b(pass|passed|passes|passing|green|ok|okay|yes|true|success|successful|succeeded)\b/i.test(raw) || /[✓✔]/.test(raw)) {
-    return 'yes';
-  }
-  return `unverified (${firstLine(raw).slice(0, 60)})`;
+  return { state: gateStateOf(raw), raw };
+}
+
+// Human-readable gate label for the progress log.
+function gateLabel(gate: { state: GateState; raw: string }): string {
+  if (gate.state === 'passed') return 'yes';
+  if (gate.state === 'failed') return `no (${firstLine(gate.raw).slice(0, 60)})`;
+  return `unverified (${firstLine(gate.raw).slice(0, 60)})`;
 }
 
 // The body of a log entry, derived only from the packet (no date), so it doubles as a stable

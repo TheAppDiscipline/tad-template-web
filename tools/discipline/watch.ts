@@ -90,7 +90,7 @@ export async function handlePacket(root: string, filePath: string) {
   const logNotes: string[] = [];
   let assembledStep: StepId | null = null;
   let assembledOK = false;
-  let completionRefused = false;
+  let blockAdvance = false;
 
   // Hold the writer lock around both mutations (patch application and progress
   // update) so a single packet's state changes are atomic against any other
@@ -117,24 +117,25 @@ export async function handlePacket(root: string, filePath: string) {
 
     if (fileName.includes('SLICE_COMPLETION_PACKET')) {
       disciplineInfo('  Updating progress...');
-      // updateProgress refuses (throws) an incomplete packet (missing/unknown outcome or gate)
-      // rather than recording a false green. Catch it so the writer lock releases cleanly and mark
-      // the completion refused; below we then do NOT advance the pipeline. The assembler only
-      // checks a packet EXISTS, not that it is valid, so without this guard an invalid completion
-      // would auto-assemble and open the next step's handoff. The packet stays for the human.
+      // A completion packet only advances the pipeline on a GREEN gate. updateProgress refuses
+      // (throws) a packet with no outcome/gate, and reports the gate state otherwise; a failed or
+      // unverified gate must not auto-assemble/open the next step's handoff (the assembler only
+      // checks a packet EXISTS, not that it is valid). The packet stays for the human either way.
+      blockAdvance = true;
       try {
-        await updateProgress(root);
+        const res = await updateProgress(root);
         logNotes.push('progress-updated');
+        if (res.gate === 'passed') blockAdvance = false;
+        else logNotes.push(`gate-${res.gate}`);
       } catch (err) {
         disciplineWarn(`  Refused progress.md update: ${err instanceof Error ? err.message : err}`);
         logNotes.push('progress-refused');
-        completionRefused = true;
       }
     }
   });
 
-  if (completionRefused) {
-    disciplineWarn('  Completion packet is incomplete; not assembling or opening the next handoff. Fix the packet and re-drop it.');
+  if (blockAdvance) {
+    disciplineWarn('  Gate is not green (or the packet was refused); not assembling or opening the next handoff. Fix it and re-drop the packet.');
   } else {
     const next = detectNext(root);
     if (next) {
