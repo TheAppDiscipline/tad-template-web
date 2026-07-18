@@ -1981,3 +1981,120 @@ test('discipline CLI: cross-validate --with-llm runs the advisory flow only', ()
   assert.ok(!packets.some((f) => f.startsWith('CHECKPOINT_')), 'no builder/checkpoint in advisory-only flow')
   fs.rmSync(repo, { recursive: true, force: true })
 })
+
+// --- discipline:progress (update-progress.ts) regression suite ---------------------------------
+// A SLICE_COMPLETION_PACKET written exactly as the discipline-step5-slice skill teaches: heading
+// sections ("### Outcome"), not inline "OUTCOME:" fields. The engine must read the real values.
+const CANONICAL_COMPLETION_PACKET = [
+  '## SLICE_COMPLETION_PACKET',
+  '',
+  '### Slice',
+  '- Slice 3 - item list with pull-to-refresh',
+  '',
+  '### Outcome',
+  '- blocked',
+  '',
+  '### Scope delivered',
+  '- Implemented the item list with pull-to-refresh and an',
+  '  empty state that renders when the query returns zero rows',
+  '- Added optimistic delete',
+  '',
+  '### Gates passed',
+  '- npm run gate: FAILED (2 typecheck errors remain)',
+  '',
+  '### Open issues',
+  '- Pull-to-refresh fires twice on slow networks; suspect a',
+  '  duplicated listener in the effect cleanup',
+  '',
+  '### Next recommendation',
+  '- Fix the double-fire before starting Slice 4; do not ship this slice',
+  '',
+  '### Deploy signal',
+  '- not_ready',
+  '',
+].join('\n')
+
+function runProgress(projectRoot) {
+  return runTsx('tools/discipline/update-progress.ts', ['--project-dir', projectRoot])
+}
+
+test('discipline:progress records the real outcome and gate result (no false green)', () => {
+  const projectRoot = createDisciplineProject({ 'SLICE_COMPLETION_PACKET.md': CANONICAL_COMPLETION_PACKET })
+  const result = runProgress(projectRoot)
+  assert.equal(result.status, 0, getOutput(result))
+  const progress = fs.readFileSync(path.join(projectRoot, 'progress.md'), 'utf8')
+
+  // The packet says blocked / gate FAILED. The old engine defaulted to shipped / yes.
+  assert.match(progress, /- \*\*Status:\*\* blocked/)
+  assert.doesNotMatch(progress, /Status:\*\* shipped/)
+  assert.match(progress, /- \*\*Gates:\*\* no \(/)
+  assert.match(progress, /FAILED \(2 typecheck/)
+  assert.doesNotMatch(progress, /Gates:\*\* yes/)
+})
+
+test('discipline:progress keeps the descriptive slice name and the full scope', () => {
+  const projectRoot = createDisciplineProject({ 'SLICE_COMPLETION_PACKET.md': CANONICAL_COMPLETION_PACKET })
+  assert.equal(runProgress(projectRoot).status, 0)
+  const progress = fs.readFileSync(path.join(projectRoot, 'progress.md'), 'utf8')
+
+  assert.match(progress, /Slice 3 - item list with pull-to-refresh/) // not collapsed to "Slice 3"
+  assert.match(progress, /Implemented the item list with pull-to-refresh and an empty state/) // wrap rejoined
+  assert.match(progress, /Added optimistic delete/) // second scope item not dropped
+})
+
+test('discipline:progress surfaces open issues under Open Errors and points Blockers there', () => {
+  const projectRoot = createDisciplineProject({ 'SLICE_COMPLETION_PACKET.md': CANONICAL_COMPLETION_PACKET })
+  assert.equal(runProgress(projectRoot).status, 0)
+  const progress = fs.readFileSync(path.join(projectRoot, 'progress.md'), 'utf8')
+
+  assert.match(progress, /- Blockers: see Open Errors/)
+  assert.match(progress, /## Open Errors\r?\n- Pull-to-refresh fires twice on slow networks/)
+  assert.doesNotMatch(progress, /## Open Errors\r?\n- \(none\)/) // placeholder replaced
+})
+
+test('discipline:progress preserves the blank line before the next heading', () => {
+  const projectRoot = createDisciplineProject({ 'SLICE_COMPLETION_PACKET.md': CANONICAL_COMPLETION_PACKET })
+  assert.equal(runProgress(projectRoot).status, 0)
+  const progress = fs.readFileSync(path.join(projectRoot, 'progress.md'), 'utf8')
+
+  // The last empty slot must not be welded to the following heading.
+  assert.match(progress, /3\) \(empty\)\r?\n\r?\n## Open Errors/)
+  assert.doesNotMatch(progress, /\(empty\)\r?\n## Open Errors/)
+})
+
+test('discipline:progress detects the next ready slice from task_plan.md', () => {
+  const projectRoot = createDisciplineProject({ 'SLICE_COMPLETION_PACKET.md': CANONICAL_COMPLETION_PACKET })
+  fs.writeFileSync(
+    path.join(projectRoot, 'task_plan.md'),
+    '# task_plan.md\n\n## Slice 3 - item list\n- status: in-progress\n\n## Slice 4 - offline cache\n- status: ready\n',
+    'utf8',
+  )
+  assert.equal(runProgress(projectRoot).status, 0)
+  const progress = fs.readFileSync(path.join(projectRoot, 'progress.md'), 'utf8')
+  assert.match(progress, /- Working on: Slice 4 - offline cache/)
+})
+
+test('discipline:progress is idempotent across repeated runs of the same packet', () => {
+  const projectRoot = createDisciplineProject({ 'SLICE_COMPLETION_PACKET.md': CANONICAL_COMPLETION_PACKET })
+  assert.equal(runProgress(projectRoot).status, 0)
+  assert.equal(runProgress(projectRoot).status, 0)
+  assert.equal(runProgress(projectRoot).status, 0)
+  const progress = fs.readFileSync(path.join(projectRoot, 'progress.md'), 'utf8')
+
+  const logBlocks = (progress.match(/^### \d{4}-\d{2}-\d{2} /gm) || []).length
+  assert.equal(logBlocks, 1, 'no duplicate log block after repeated runs')
+  const lastCompleted = (progress.match(/^\d+\) Slice 3 - item list/gm) || []).length
+  assert.equal(lastCompleted, 1, 'no duplicate Last Completed entry after repeated runs')
+})
+
+test('discipline:progress preserves CRLF line endings without mixing in bare LF', () => {
+  const projectRoot = createDisciplineProject({ 'SLICE_COMPLETION_PACKET.md': CANONICAL_COMPLETION_PACKET.replace(/\n/g, '\r\n') })
+  const progressPath = path.join(projectRoot, 'progress.md')
+  fs.writeFileSync(progressPath, fs.readFileSync(progressPath, 'utf8').replace(/\r?\n/g, '\r\n'), 'utf8')
+
+  assert.equal(runProgress(projectRoot).status, 0)
+  const raw = fs.readFileSync(progressPath, 'utf8')
+  const lines = raw.split('\n').slice(0, -1) // drop the trailing element after the last EOL
+  const bareLf = lines.filter((l) => !l.endsWith('\r')).length
+  assert.equal(bareLf, 0, 'a CRLF file must not gain bare-LF lines from injected content')
+})
