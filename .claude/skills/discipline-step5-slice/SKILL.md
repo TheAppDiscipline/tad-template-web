@@ -171,8 +171,9 @@ Write `.discipline/packets/SLICE_COMPLETION_PACKET.md` using the canonical struc
 - <file 2>
 
 ### Gates passed
-- npm run gate: PASS
-- <other smoke/evals: PASS | FAIL, e.g. `npm run ai:eval: PASS`>
+- GATE_STATE: passed | failed | unverified
+- npm run gate: <evidence, e.g. 0 failures>
+- <other smoke/evals as evidence>
 
 ### Manual verification
 - happy path: OK
@@ -192,7 +193,7 @@ Write `.discipline/packets/SLICE_COMPLETION_PACKET.md` using the canonical struc
 - not_ready | ready_for_preview | ready_for_production_candidate
 ```
 
-`### Outcome` and `### Gates passed` are mandatory: `discipline:progress` refuses a packet that omits either (it will not invent a green), and it only logs `Gates: yes` when it sees an explicit pass (`PASS` / `yes` / `passed`). A gate that failed or did not run (`FAILED`, `NOT RUN`, `deferred ...`) is recorded honestly as `no`/`unverified`, never `yes`.
+`### Outcome` and `### Gates passed` are mandatory: `discipline:progress` refuses a packet that omits either. The gate result is taken from the explicit `GATE_STATE:` declaration (`passed | failed | unverified`) -- the rest of the section is evidence only and is never parsed as a green, so a sentence like "the gate cannot pass yet" is recorded as `failed`/`unverified`, never `yes`. The watcher auto-advances to the next step's handoff ONLY when `GATE_STATE: passed`; a `failed` or `unverified` gate is recorded but the pipeline waits for you.
 
 ### Phase 6: Deploy signal and possible outputs
 

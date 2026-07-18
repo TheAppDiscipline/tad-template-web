@@ -9,7 +9,7 @@ import { resolveProjectRoot } from './lib/discipline-config.js';
 import { copyToClipboard as writeTextToClipboard } from './lib/clipboard.js';
 import { extractEmbeddedPatches } from './lib/parse-patch.js';
 import { applyPatches } from './apply-patch.js';
-import { updateProgress } from './update-progress.js';
+import { updateProgress, completionGateState } from './update-progress.js';
 import { assemblePasteReady } from './assemble-paste-ready.js';
 import { logRun } from './log-run.js';
 import { STEP_ASSEMBLY_MAP } from './lib/artifact-flow.js';
@@ -90,7 +90,6 @@ export async function handlePacket(root: string, filePath: string) {
   const logNotes: string[] = [];
   let assembledStep: StepId | null = null;
   let assembledOK = false;
-  let blockAdvance = false;
 
   // Hold the writer lock around both mutations (patch application and progress
   // update) so a single packet's state changes are atomic against any other
@@ -117,16 +116,11 @@ export async function handlePacket(root: string, filePath: string) {
 
     if (fileName.includes('SLICE_COMPLETION_PACKET')) {
       disciplineInfo('  Updating progress...');
-      // A completion packet only advances the pipeline on a GREEN gate. updateProgress refuses
-      // (throws) a packet with no outcome/gate, and reports the gate state otherwise; a failed or
-      // unverified gate must not auto-assemble/open the next step's handoff (the assembler only
-      // checks a packet EXISTS, not that it is valid). The packet stays for the human either way.
-      blockAdvance = true;
+      // Record progress honestly (updateProgress refuses only a packet with no outcome/gate). The
+      // decision to advance is taken below from the packet's PERSISTED gate state, not from here.
       try {
         const res = await updateProgress(root);
-        logNotes.push('progress-updated');
-        if (res.gate === 'passed') blockAdvance = false;
-        else logNotes.push(`gate-${res.gate}`);
+        logNotes.push(res.gate === 'passed' ? 'progress-updated' : `progress-updated,gate-${res.gate}`);
       } catch (err) {
         disciplineWarn(`  Refused progress.md update: ${err instanceof Error ? err.message : err}`);
         logNotes.push('progress-refused');
@@ -134,11 +128,16 @@ export async function handlePacket(root: string, filePath: string) {
     }
   });
 
-  if (blockAdvance) {
-    disciplineWarn('  Gate is not green (or the packet was refused); not assembling or opening the next handoff. Fix it and re-drop the packet.');
-  } else {
-    const next = detectNext(root);
-    if (next) {
+  const next = detectNext(root);
+  if (next) {
+    // Durable guard, re-derived from disk on EVERY event (not a per-event flag): never auto-advance
+    // PAST a completion whose gate is not green. detectNext returns '4-reentry' whenever a
+    // SLICE_COMPLETION_PACKET merely exists, so a stale non-green completion left in packets/ could
+    // otherwise be advanced by a later, unrelated packet event.
+    if (next === '4-reentry' && completionGateState(root) !== 'passed') {
+      disciplineWarn('  Completion gate is not green; not assembling or opening the next handoff. Declare "GATE_STATE: passed" and re-drop the packet.');
+      logNotes.push('advance-blocked');
+    } else {
       try {
         const assembled = await assemblePasteReady(root, next);
         const outputFile = STEP_ASSEMBLY_MAP[next].outputFile;

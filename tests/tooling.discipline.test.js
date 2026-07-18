@@ -2160,6 +2160,12 @@ test('discipline:progress logs a green only for an explicit gate pass (allowlist
   assert.match(gatesOf('- npm run gate: NOT PASSED'), /^no /)
   assert.match(gatesOf("- build isn't green yet"), /^no /)
   assert.match(gatesOf('- gate did not pass'), /^no /)
+  // Prose that merely contains a success word is never green: a green needs an explicit token.
+  assert.match(gatesOf('- The release gate cannot pass due to unavailable credentials'), /^no /)
+  assert.match(gatesOf('- the suite passes locally but is flaky on CI'), /^unverified /)
+  // The explicit machine-readable GATE_STATE is the source of truth; evidence prose is ignored.
+  assert.equal(gatesOf('- GATE_STATE: passed'), 'yes')
+  assert.match(gatesOf('- GATE_STATE: failed'), /^no /)
 })
 
 test('discipline:progress picks up an open issue added to an already-logged packet', () => {
@@ -2202,8 +2208,8 @@ test('discipline:watch does not assemble the next handoff when the completion pa
   assert.equal(files.length, 0, `no handoff may be assembled on refusal, found: ${files.join(', ')}`)
 })
 
-function runHandlePacket(projectRoot) {
-  const packetPath = path.join(projectRoot, '.discipline', 'packets', 'SLICE_COMPLETION_PACKET.md')
+function runHandlePacket(projectRoot, packetFile = 'SLICE_COMPLETION_PACKET.md') {
+  const packetPath = path.join(projectRoot, '.discipline', 'packets', packetFile)
   const tester = path.join(projectRoot, 'handle-tester.mjs')
   const watchUrl = pathToImport(path.join(repoRoot, 'tools', 'discipline', 'watch.ts'))
   fs.writeFileSync(tester, [
@@ -2225,7 +2231,7 @@ test('discipline:watch does not advance the pipeline when the gate is not green 
   // Progress is still recorded honestly (gate: unverified) ...
   assert.match(fs.readFileSync(path.join(projectRoot, 'progress.md'), 'utf8'), /- \*\*Gates:\*\* unverified/)
   // ... but the watcher must NOT assemble/open the next handoff.
-  assert.match(getOutput(result), /Gate is not green/)
+  assert.match(getOutput(result), /not green/)
   const pasteReadyDir = path.join(projectRoot, '.discipline', 'paste-ready')
   const files = fs.existsSync(pasteReadyDir) ? fs.readdirSync(pasteReadyDir) : []
   assert.equal(files.length, 0, `an unverified gate must not auto-advance, found: ${files.join(', ')}`)
@@ -2239,5 +2245,23 @@ test('discipline:watch advances the pipeline only on a green gate', () => {
   const result = runHandlePacket(projectRoot)
   assert.equal(result.status, 0, getOutput(result))
   assert.match(fs.readFileSync(path.join(projectRoot, 'progress.md'), 'utf8'), /- \*\*Gates:\*\* yes/)
-  assert.doesNotMatch(getOutput(result), /Gate is not green/) // a green gate is allowed to advance
+  assert.doesNotMatch(getOutput(result), /not green/) // a green gate is allowed to advance
+})
+
+test('discipline:watch keeps blocking across events while a non-green completion lingers', () => {
+  const projectRoot = createDisciplineProject({
+    'SLICE_COMPLETION_PACKET.md': ['## SLICE_COMPLETION_PACKET', '', '### Slice', '- Slice 1', '',
+      '### Outcome', '- done', '', '### Gates passed', '- npm run gate', '', '### Deploy signal', '- ready_for_preview', ''].join('\n'),
+  })
+  // Event 1: the non-green completion itself is blocked.
+  runHandlePacket(projectRoot, 'SLICE_COMPLETION_PACKET.md')
+  // Event 2: a DIFFERENT packet arrives while the non-green completion still lingers in packets/.
+  // The advance guard must re-derive the completion's gate from disk, not rely on a per-event flag.
+  fs.writeFileSync(path.join(projectRoot, '.discipline', 'packets', 'STEP_4_EXECUTION_PACKET.md'), '## STEP_4_EXECUTION_PACKET\n\nbody\n', 'utf8')
+  const result = runHandlePacket(projectRoot, 'STEP_4_EXECUTION_PACKET.md')
+  assert.equal(result.status, 0, getOutput(result))
+  assert.match(getOutput(result), /not green/)
+  const pasteReadyDir = path.join(projectRoot, '.discipline', 'paste-ready')
+  const files = fs.existsSync(pasteReadyDir) ? fs.readdirSync(pasteReadyDir) : []
+  assert.equal(files.length, 0, `a lingering non-green completion must keep blocking, found: ${files.join(', ')}`)
 })

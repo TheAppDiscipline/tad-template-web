@@ -154,18 +154,32 @@ function extractOutcome(body: string): string | null {
   return hit || raw.split(/[.;,]/)[0].trim().slice(0, 40) || null;
 }
 
-// Success words, used both to detect a pass and (when negated) a non-pass.
-const GATE_SUCCESS = String.raw`pass(?:ed|es|ing)?|green|ok(?:ay)?|success(?:ful)?|succeed(?:ed|s)?|verified|clean`;
+function normalizeGateToken(tok: string): GateState {
+  const t = tok.trim().toLowerCase();
+  if (/^(passed|pass|yes|green|ok|okay|true|success|successful)$/.test(t)) return 'passed';
+  if (/^(failed|fail|no|red|false|broken)$/.test(t)) return 'failed';
+  return 'unverified';
+}
 
-// Classify the gate text into an explicit state. Negations and failures are tested BEFORE any
-// success token, so a negated success ("NOT PASSED", "isn't green", "did not pass") can never be
-// read as a pass -- the flaw a bare positive allowlist had. Ambiguous prose stays 'unverified'.
-function gateStateOf(raw: string): GateState {
-  const t = raw.toLowerCase();
-  const negatedSuccess = new RegExp(String.raw`\b(?:not|no|non|never|without|un|isn'?t|aren'?t|wasn'?t|weren'?t|didn'?t|doesn'?t|don'?t|can'?t|couldn'?t|fail(?:s|ed|ing)?\s+to)\s*-?\s*(?:${GATE_SUCCESS})\b`);
-  const failure = /\b(fail|failed|failing|fails|failure|error|errors|red|broken|not\s*run|not\s*executed|notrun|un-?run|un-?executed|skip|skipped|pending|deferred|blocked|todo|later|until|unless|waiting|tbd|n\/?a)\b/;
-  if (failure.test(t) || negatedSuccess.test(t) || /[✗✘]/.test(raw)) return 'failed';
-  if (new RegExp(String.raw`\b(?:${GATE_SUCCESS}|yes|true)\b`).test(t) || /[✓✔]/.test(raw)) return 'passed';
+// A bare success token (its own bullet), or the trailing "label: TOKEN" value of one.
+const PASS_TOKEN = /^(?:pass(?:ed)?|yes|green|ok(?:ay)?|true|success(?:ful)?)$/i;
+const PASS_TRAILING = /:\s*(?:pass(?:ed)?|yes|green|ok(?:ay)?|true|success(?:ful)?)\s*$/i;
+
+// Classify the gate result into an explicit state WITHOUT inferring a green from free text: a
+// sentence that merely contains "pass" (e.g. "the gate cannot pass ...", "NOT PASSED") is never
+// 'passed'. Precedence: (1) an explicit machine-readable "GATE_STATE: <s>" declaration wins;
+// (2) any failure/negation signal -> 'failed' (a false 'failed' is the safe side); (3) 'passed'
+// ONLY from a clean, standalone success token; (4) everything else -> 'unverified'.
+function gateStateOf(items: string[]): GateState {
+  for (const it of items) {
+    const m = it.match(/^(?:gate[_\s-]?state|state)\s*[:=]\s*([A-Za-z/]+)\b/i);
+    if (m) return normalizeGateToken(m[1]);
+  }
+  const raw = items.join('; ').toLowerCase();
+  const failure = /\b(fail(?:ed|ing|s|ure)?|error|errors|red|broken|not\s*run|not\s*executed|notrun|un-?run|un-?executed|skip(?:ped)?|pending|deferred|blocked|todo|later|until|unless|waiting|tbd|n\/?a)\b/;
+  const negatedSuccess = /\b(?:not|no|non|never|without|un|cannot|can'?t|can\s?not|won'?t|will\s+not|unable(?:\s+to)?|isn'?t|aren'?t|wasn'?t|weren'?t|didn'?t|doesn'?t|don'?t|couldn'?t|shouldn'?t|fail(?:s|ed|ing)?\s+to)\s*-?\s*(?:to\s+)?(?:pass(?:ed|es|ing)?|green|ok(?:ay)?|success(?:ful)?|succeed(?:ed|s)?|verified|clean)\b/;
+  if (failure.test(raw) || negatedSuccess.test(raw) || /[✗✘]/.test(items.join(''))) return 'failed';
+  if (items.some((it) => PASS_TOKEN.test(it.trim()) || PASS_TRAILING.test(it)) || /[✓✔]/.test(items.join(''))) return 'passed';
   return 'unverified';
 }
 
@@ -174,8 +188,21 @@ function extractGates(body: string): { state: GateState; raw: string } | null {
   const inline = inlineField(body, 'GATES');
   const items = inline ? [cleanBullet(inline)] : meaningfulItems(sectionItems(body, 'Gates passed').concat(sectionItems(body, 'Gates')));
   if (!items.length) return null;
-  const raw = items.join('; ');
-  return { state: gateStateOf(raw), raw };
+  return { state: gateStateOf(items), raw: items.join('; ') };
+}
+
+// Re-derive the current SLICE_COMPLETION_PACKET's gate state from disk. The watcher calls this on
+// EVERY event (not a per-event boolean) so a stale non-green completion left in .discipline/packets/
+// cannot be advanced past by a later, unrelated packet event.
+export function completionGateState(root: string): GateState {
+  const packetPath = path.join(root, '.discipline', 'packets', 'SLICE_COMPLETION_PACKET.md');
+  if (!fs.existsSync(packetPath)) return 'unverified';
+  try {
+    const gate = extractGates(parsePacketFile(packetPath, fs.readFileSync(packetPath, 'utf-8')).body);
+    return gate ? gate.state : 'unverified';
+  } catch {
+    return 'unverified';
+  }
 }
 
 // Human-readable gate label for the progress log.
