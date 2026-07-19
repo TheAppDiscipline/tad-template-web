@@ -23,6 +23,34 @@ function getOutput(result) {
   return `${result.stdout}${result.stderr}`
 }
 
+// The canonical pristine progress.md scaffold, seeded into every fixture so the progress-engine
+// tests are hermetic (independent of the host repo's real progress.md history). See createDisciplineProject.
+const PRISTINE_PROGRESS = [
+  '# progress.md — Current Status + Logs',
+  '',
+  '## Current Status',
+  '- Working on: N/A — template initialized',
+  '- Next: Fill discipline.md with project switches (Step 1)',
+  '- Blockers: none',
+  '',
+  '## Last Completed Slices',
+  '1) (empty)',
+  '2) (empty)',
+  '3) (empty)',
+  '',
+  '## Open Errors',
+  '- (none)',
+  '',
+  '## Next Actions',
+  '- Choose BACKEND_PROVIDER, run discipline:provider:generate, then run backend:smoke when credentials exist',
+  '',
+  '## Deploy Notes',
+  '- N/A',
+  '',
+  '---',
+  '',
+].join('\n')
+
 function createDisciplineProject(packetMap = {}) {
   const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'discipline-tooling-'))
 
@@ -44,6 +72,12 @@ function createDisciplineProject(packetMap = {}) {
   // whatever PROFILE the project's discipline.md is in. A buyer on PROFILE=LAUNCH/PROD
   // would otherwise trip Gate D (scorecard required) in tests that don't set a profile.
   setProfile(projectRoot, 'LITE')
+
+  // Hermetic progress.md: the progress-engine tests assert against a pristine baseline (log-block
+  // count, no prior shipped/yes, "3) (empty)" slots). Copying the host repo's progress.md would make
+  // the bundled tooling tests depend on the buyer's real history, so a project that has closed a
+  // slice would fail these tests through no fault of its own. Seed the canonical scaffold instead.
+  fs.writeFileSync(path.join(projectRoot, 'progress.md'), PRISTINE_PROGRESS, 'utf8')
 
   return projectRoot
 }
@@ -2139,6 +2173,7 @@ const CANONICAL_COMPLETION_PACKET = [
   '- Added optimistic delete',
   '',
   '### Gates passed',
+  '- GATE_STATE: failed',
   '- npm run gate: FAILED (2 typecheck errors remain)',
   '',
   '### Open issues',
@@ -2213,6 +2248,21 @@ test('discipline:progress detects the next ready slice from task_plan.md', () =>
   assert.match(progress, /- Working on: Slice 4 - offline cache/)
 })
 
+test('discipline:progress detects the next slice across heading styles (###, em dash, status suffix)', () => {
+  const projectRoot = createDisciplineProject({ 'SLICE_COMPLETION_PACKET.md': CANONICAL_COMPLETION_PACKET })
+  fs.writeFileSync(
+    path.join(projectRoot, 'task_plan.md'),
+    '# task_plan.md\n\n### Slice 3 — item list · [done]\n### Slice 4 — offline cache · [ready]\n',
+    'utf8',
+  )
+  assert.equal(runProgress(projectRoot).status, 0)
+  const progress = fs.readFileSync(path.join(projectRoot, 'progress.md'), 'utf8')
+  // The old '## Slice N - ' matcher missed '### ... — ...' headings and mislabeled this
+  // "all slices completed"; buyers write slice headings by hand in exactly these styles.
+  assert.match(progress, /- Working on: Slice 4 — offline cache/)
+  assert.doesNotMatch(progress, /- Working on: all slices completed/)
+})
+
 test('discipline:progress is idempotent across repeated runs of the same packet', () => {
   const projectRoot = createDisciplineProject({ 'SLICE_COMPLETION_PACKET.md': CANONICAL_COMPLETION_PACKET })
   assert.equal(runProgress(projectRoot).status, 0)
@@ -2263,7 +2313,7 @@ test('discipline:progress never logs an un-run or unknown gate as passed', () =>
   assert.equal(runProgress(projectRoot).status, 0)
   const progress = fs.readFileSync(path.join(projectRoot, 'progress.md'), 'utf8')
   assert.doesNotMatch(progress, /Gates:\*\* yes/) // "NOT RUN" must not be a green
-  assert.match(progress, /- \*\*Gates:\*\* no \(/)
+  assert.match(progress, /- \*\*Gates:\*\* unverified \(/) // no GATE_STATE token -> unverified, not an inferred red
   assert.match(progress, /NOT RUN/)
 })
 
@@ -2281,7 +2331,7 @@ test('discipline:progress is idempotent across days (stable packet fingerprint, 
   assert.equal(lastCompleted, 1, 'reprocessing on a later day must not duplicate Last Completed')
 })
 
-test('discipline:progress logs a green only for an explicit gate pass (allowlist, not blocklist)', () => {
+test('discipline:progress reads the gate state only from an explicit GATE_STATE token, never from prose', () => {
   const gatesOf = (gateLines) => {
     const lines = Array.isArray(gateLines) ? gateLines : [gateLines]
     const root = createDisciplineProject({
@@ -2291,25 +2341,33 @@ test('discipline:progress logs a green only for an explicit gate pass (allowlist
     assert.equal(runProgress(root).status, 0)
     return fs.readFileSync(path.join(root, 'progress.md'), 'utf8').match(/- \*\*Gates:\*\* (.+)/)[1]
   }
-  // A deferral phrase is not in any failure blocklist, but must never read as a green.
-  assert.match(gatesOf('- deferred until CI credentials are available'), /^no /)
-  assert.match(gatesOf('- npm run gate'), /^unverified /) // bare command is not an explicit pass
-  assert.match(gatesOf('- npm run gate: PASS'), /^unverified /) // evidence alone cannot declare green
-  assert.match(gatesOf('- npm run gate: FAILED'), /^no /)
-  // A negated success word must not read as a pass (the positive allowlist alone missed this).
-  assert.match(gatesOf('- npm run gate: NOT PASSED'), /^no /)
-  assert.match(gatesOf("- build isn't green yet"), /^no /)
-  assert.match(gatesOf('- gate did not pass'), /^no /)
-  // Prose that merely contains a success word is never green: a green needs an explicit token.
-  assert.match(gatesOf('- The release gate cannot pass due to unavailable credentials'), /^no /)
+  // With no explicit GATE_STATE token the gate is UNVERIFIED regardless of prose. Evidence text can
+  // create neither a green nor a red: the engine does not guess a state from free words (which are
+  // language-dependent and collide across locales). The only paths to a recorded state are the tokens.
+  assert.match(gatesOf('- npm run gate'), /^unverified /)
+  assert.match(gatesOf('- npm run gate: PASS'), /^unverified /) // evidence alone cannot declare a green
+  assert.match(gatesOf('- npm run gate: FAILED'), /^unverified /) // ... nor can prose declare a red
+  assert.match(gatesOf('- npm run gate: NOT PASSED'), /^unverified /)
+  assert.match(gatesOf("- build isn't green yet"), /^unverified /)
+  assert.match(gatesOf('- gate did not pass'), /^unverified /)
+  assert.match(gatesOf('- deferred until CI credentials are available'), /^unverified /)
+  assert.match(gatesOf('- The release gate cannot pass due to unavailable credentials'), /^unverified /)
   assert.match(gatesOf('- the suite passes locally but is flaky on CI'), /^unverified /)
-  // The explicit machine-readable GATE_STATE is the source of truth; it must be one exact,
-  // unambiguous declaration. The literal skill placeholder and conflicting declarations are not green.
+  // Regression: an English failure-word blocklist used to read these as a FALSE RED, which silently
+  // stalled a green pipeline. "red" is Spanish for "network"; "0 errors"/"0 errores" is a pass.
+  assert.match(gatesOf('- npm run ai:eval — 7/7 (fixture, sin red)'), /^unverified /)
+  assert.match(gatesOf('- npm run gate — verde, 128/128, 0 errores'), /^unverified /)
+  assert.match(gatesOf('- npm run test: 128 passed, 0 errors'), /^unverified /)
+  // The explicit machine-readable GATE_STATE is the ONLY source of a recorded state; it must be one
+  // exact, unambiguous declaration. Placeholder, trailing prose, and conflicting declarations are not.
   assert.equal(gatesOf('- GATE_STATE: passed'), 'yes')
   assert.match(gatesOf('- GATE_STATE: failed'), /^no /)
+  assert.match(gatesOf('- GATE_STATE: unverified'), /^unverified /)
   assert.match(gatesOf('- GATE_STATE: passed | failed | unverified'), /^unverified /)
   assert.match(gatesOf('- GATE_STATE: passed but CI evidence is pending'), /^unverified /)
   assert.match(gatesOf(['- GATE_STATE: passed', '- GATE_STATE: failed']), /^unverified /)
+  // The explicit token wins over colliding evidence prose in any language.
+  assert.equal(gatesOf(['- GATE_STATE: passed', '- gate verde, sin red, 0 errores']), 'yes')
 })
 
 test('discipline:progress picks up an open issue added to an already-logged packet', () => {

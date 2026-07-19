@@ -193,7 +193,7 @@ Write `.discipline/packets/SLICE_COMPLETION_PACKET.md` using the canonical struc
 - not_ready | ready_for_preview | ready_for_production_candidate
 ```
 
-`### Outcome` and `### Gates passed` are mandatory: `discipline:progress` refuses a packet that omits either. The gate result is taken from the explicit `GATE_STATE:` declaration (`passed | failed | unverified`) -- the rest of the section is evidence only and is never parsed as a green, so a sentence like "the gate cannot pass yet" is recorded as `failed`/`unverified`, never `yes`. The watcher auto-advances to the next step's handoff ONLY when `GATE_STATE: passed`; a `failed` or `unverified` gate is recorded but the pipeline waits for you.
+`### Outcome` and `### Gates passed` are mandatory: `discipline:progress` refuses a packet that omits either. The gate result is taken ONLY from the explicit `GATE_STATE:` declaration (exactly one of `passed | failed | unverified`); the rest of the section is human-readable evidence and is never parsed into a state. Without a single, exact `GATE_STATE:` line the gate is recorded as `unverified` (fail-closed), so free text like "the gate cannot pass yet" -- or evidence in any language (e.g. "sin red", "0 errores", "0 errors") -- is never misread as a pass OR a fail. Always replace the `GATE_STATE:` placeholder with the real value. The watcher auto-advances to the next step's handoff ONLY when `GATE_STATE: passed`; a `failed` or `unverified` gate is recorded but the pipeline waits for you.
 
 ### Phase 6: Deploy signal and possible outputs
 

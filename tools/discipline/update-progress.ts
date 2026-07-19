@@ -157,25 +157,19 @@ function extractOutcome(body: string): string | null {
 const GATE_STATE_PREFIX = /^gate[_\s-]?state\s*[:=]/i;
 const GATE_STATE_EXACT = /^gate[_\s-]?state\s*[:=]\s*(passed|failed|unverified)\s*$/i;
 
-// Classify the gate result into an explicit state WITHOUT inferring a green from free text: a
-// sentence that merely contains "pass" (e.g. "the gate cannot pass ...", "NOT PASSED") is never
-// 'passed'. A GATE_STATE declaration must appear exactly once and contain exactly one allowed
-// value; a placeholder, trailing prose, or a conflict is unverified rather than green. Precedence:
-// (1) one exact machine-readable declaration; (2) any failure/negation signal -> 'failed';
-// (3) everything else -> 'unverified'. Evidence can explain a state but cannot create a green.
+// The recorded gate state comes ONLY from an explicit, machine-readable GATE_STATE declaration; it is
+// never inferred from evidence prose. Free text is language-dependent and collides across locales (an
+// English failure-word blocklist read Spanish "sin red"/"0 errores" and even English "0 errors" as a
+// failure, recording a false red that stalls a green pipeline), and any positive-word allowlist leaks
+// the mirror-image false green ("cannot pass", "NOT PASSED"). So: exactly one declaration whose value
+// is exactly one of passed|failed|unverified wins; a missing, placeholder, trailing-prose, non-exact,
+// or conflicting declaration is 'unverified' (fail-closed). Evidence bullets explain a state to a
+// human but never create one.
 function gateStateOf(items: string[]): GateState {
   const declarations = items.map((it) => it.trim()).filter((it) => GATE_STATE_PREFIX.test(it));
-  if (declarations.length > 0) {
-    if (declarations.length !== 1) return 'unverified';
-    const match = declarations[0].match(GATE_STATE_EXACT);
-    if (!match) return 'unverified';
-    return match[1].toLowerCase() as GateState;
-  }
-  const raw = items.join('; ').toLowerCase();
-  const failure = /\b(fail(?:ed|ing|s|ure)?|error|errors|red|broken|not\s*run|not\s*executed|notrun|un-?run|un-?executed|skip(?:ped)?|pending|deferred|blocked|todo|later|until|unless|waiting|tbd|n\/?a)\b/;
-  const negatedSuccess = /\b(?:not|no|non|never|without|un|cannot|can'?t|can\s?not|won'?t|will\s+not|unable(?:\s+to)?|isn'?t|aren'?t|wasn'?t|weren'?t|didn'?t|doesn'?t|don'?t|couldn'?t|shouldn'?t|fail(?:s|ed|ing)?\s+to)\s*-?\s*(?:to\s+)?(?:pass(?:ed|es|ing)?|green|ok(?:ay)?|success(?:ful)?|succeed(?:ed|s)?|verified|clean)\b/;
-  if (failure.test(raw) || negatedSuccess.test(raw) || /[✗✘]/.test(items.join(''))) return 'failed';
-  return 'unverified';
+  if (declarations.length !== 1) return 'unverified';
+  const match = declarations[0].match(GATE_STATE_EXACT);
+  return match ? (match[1].toLowerCase() as GateState) : 'unverified';
 }
 
 // Returns the gate state + its raw text, or null when no gate section exists (caller refuses).
@@ -284,10 +278,16 @@ function mergeOpenErrors(content: string, issues: string[]): string {
   return [...lines.slice(0, idx + 1), ...block, '', ...lines.slice(end)].join('\n');
 }
 
+// Slice headings are buyer-authored, so tolerate ## or ###, an ASCII hyphen / en dash / em dash /
+// colon separator, a letter-suffixed number ("Slice 3A"), and a trailing " · [status]" marker.
+// The old matcher accepted only "## Slice N - " and silently missed real next slices written in any
+// other style, mislabeling "Working on" as "all slices completed".
 function detectNextSlice(taskPlan: string, current: number): string | null {
   const slices: { name: string; num: number }[] = [];
-  let m; const p = /^## (Slice (\d+) - .+)/gm;
-  while ((m = p.exec(taskPlan)) !== null) slices.push({ name: m[1], num: parseInt(m[2], 10) });
+  let m; const p = /^#{2,3}\s+(Slice\s+(\d+)[A-Za-z]?[^\n]*)/gim;
+  while ((m = p.exec(taskPlan)) !== null) {
+    slices.push({ name: m[1].replace(/\s*·.*$/, '').trim(), num: parseInt(m[2], 10) });
+  }
   return slices.find((s) => s.num > current)?.name || null;
 }
 
