@@ -219,7 +219,7 @@ If the watcher is running, these steps are automatic. If not, run them manually.
 `discipline:assemble` requires an explicit `--step`. Pick it from the `Deploy signal` of the packet you just produced:
 
 ```bash
-npm run discipline:assemble -- --step 4   # Deploy signal: not_ready (more slices to do -> step-4-reentry)
+npm run discipline:assemble -- --step 4-reentry   # Deploy signal: not_ready (more slices to do -> step-4-reentry)
 npm run discipline:assemble -- --step 6   # ready_for_preview | ready_for_production_candidate -> step-6-input
 ```
 
