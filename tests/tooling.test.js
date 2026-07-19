@@ -540,6 +540,10 @@ test('.env.example copied as-is resolves to a working provider', () => {
     }
 })
 
+// These exercise the EXAMPLE CoreStore contract this template ships (Space / Membership /
+// Notification / ensurePersonalSpace). They are scaffolding, not a fixed part of the gate: a slice
+// that changes or removes that contract must update or delete them in the SAME slice and list them in
+// the STEP_5_SLICE_PACKET "Files to touch". Grep the repo for the symbol you change; it surfaces these.
 test('LOCAL_ONLY backend keeps a stable personal space and owner membership', async () => {
     const backend = createLocalBackend({
         storage: createMemoryStorage(),

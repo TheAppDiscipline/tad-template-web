@@ -202,6 +202,7 @@ That check is intentionally separate from `npm run gate` so the project can adop
 - Test boundaries, not internals
 - No mocking your own code unless justified
 - Tooling tests under `tests/tooling.discipline.test.js` protect pipeline handoffs and semantic validation
+- `tests/tooling.test.js` includes EXAMPLE backend-contract tests (the CoreStore: personal space, notifications). They are scaffolding: a slice that changes or removes that contract updates or deletes them in the same slice. Grep the repo for any contract symbol you change so the slice's "Files to touch" includes them (they live at the repo root, not under `src/lib/backend/`).
 
 ## Security
 

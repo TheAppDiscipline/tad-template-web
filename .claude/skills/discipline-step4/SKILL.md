@@ -144,6 +144,22 @@ files in `Files to touch` and make the result verifiable. If the difference chan
 architecture decision that is not already resolved, stop and return it to Step 2; do not promote
 the slice to `ready` by asking Step 5 to guess.
 
+When a slice REMOVES or RENAMES any contract symbol (a `CoreStore`/`AuthStore` method, an exported
+shared type, a table or column), do not assume its uses live only under the backend adapter directory.
+Search the WHOLE repo for the identifier and list every hit in `Files to touch` / Scope IN, including
+the root-level example tests and fixtures this template ships (they exercise the starter contract), not
+just files under `src/lib/backend/`:
+
+```bash
+grep -rn "<symbol-you-remove-or-rename>" --include="*.ts" --include="*.tsx" --include="*.js" .
+# or, if ripgrep is available: rg "<symbol-you-remove-or-rename>"
+```
+
+A template example test that still calls a method you deleted is a LEGITIMATE gate failure, not a false
+one: you cannot make a contract test independent of the contract it tests. Surfacing the full blast
+radius in the packet turns it into planned work in this slice instead of a surprise when Step 5 runs the
+gate.
+
 ### Phase 1: Expand slices
 
 **Context for the expansion:** Before expanding, Claude should keep in mind:
@@ -507,8 +523,10 @@ Next step: /discipline-step5 (Implement Slice <N>: <name>)
 - Scope OUT is as important as Scope IN. Explicitly documenting what does NOT belong in each slice prevents scope creep during implementation.
 - The contracts copied into the STEP_5_SLICE_PACKET must be exact, not summarized. Step 5 implements directly from this packet.
 - Before a data or backend slice is `ready`, reconcile its contract with the relevant starter
-  schema, shared types, adapters, and fixtures. An intentional difference is fine only when the
-  packet names the exact delta, files, tests, and verification that make every layer agree.
+  schema, shared types, adapters, and fixtures, AND grep the whole repo for any contract symbol the
+  slice removes or renames (its uses are not confined to `src/lib/backend/`; the template ships example
+  tests at the repo root). An intentional difference is fine only when the packet names the exact delta,
+  files (including those root-level example tests), tests, and verification that make every layer agree.
 - Never require the vault at execution time. Enforce `STEP4_EXPANSION_MODE` and `READY_PROMOTION` from `discipline.md` instead.
 - Do not recommend premature optimization in the slices. The bootstrap should be minimal and functional.
 - Patch blocks must be exact and pasteable, not narrative suggestions.
