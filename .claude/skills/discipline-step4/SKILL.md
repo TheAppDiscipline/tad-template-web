@@ -493,7 +493,7 @@ Patches applied: <N>
 Paste-readies ready:
 - .discipline/paste-ready/step-5-input.md
 
-Next step: /discipline-step5 (Implement Slice <N>: <name>)
+Next step: implement Slice <N> - <name> using `.discipline/paste-ready/step-5-input.md` in your coding agent. After its DoD is verified and the gate passes, run `/discipline-step5-slice` to close the slice formally.
 ```
 
 ---
