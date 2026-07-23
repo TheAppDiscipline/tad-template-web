@@ -92,14 +92,13 @@ function sectionText(body: string, name: string): string | null {
   return body.match(new RegExp(`#{2,3}\\s+${escapeRe(name)}\\s*\\n([\\s\\S]*?)(?=\\n#{2,3}\\s|$)`, 'i'))?.[1]?.trim() || null;
 }
 
-// Top-level bullets of a section, each with wrapped continuation lines rejoined. This is the
-// canonical SLICE_COMPLETION_PACKET shape the discipline-step5-slice skill teaches:
-// "### Scope delivered\n- item one\n  wrapped\n- item two".
-function sectionItems(body: string, name: string): string[] {
-  const text = sectionText(body, name);
-  if (!text) return [];
+// THE bullet parser of this file: top-level bullets with their wrapped continuation lines rejoined.
+// Every caller goes through here so a "bullet" means the same thing on both sides of a merge. The
+// destructive Open Errors truncation came from a second, line-at-a-time parser that disagreed with
+// this one; do not reintroduce one.
+function collectBullets(rawLines: string[]): string[] {
   const items: string[] = [];
-  for (const rawLine of text.split('\n')) {
+  for (const rawLine of rawLines) {
     const line = rawLine.replace(/\s+$/, '');
     if (/^\s*[-*]\s+/.test(line)) {
       items.push(cleanBullet(line));
@@ -110,6 +109,13 @@ function sectionItems(body: string, name: string): string[] {
     }
   }
   return items.map((s) => s.trim()).filter(Boolean);
+}
+
+// Top-level bullets of a section. This is the canonical SLICE_COMPLETION_PACKET shape the
+// discipline-step5-slice skill teaches: "### Scope delivered\n- item one\n  wrapped\n- item two".
+function sectionItems(body: string, name: string): string[] {
+  const text = sectionText(body, name);
+  return text ? collectBullets(text.split('\n')) : [];
 }
 
 // Legacy inline "KEY: value" field (pre-skill packet shape); still honored for back-compat.
@@ -222,9 +228,39 @@ function insertLog(progress: string, logEntry: string): string {
   return progress.slice(0, insertAt) + block + progress.slice(insertAt);
 }
 
+// A Current Status field is single-line state OWNED by the engine: every close overwrites the value.
+// So the whole value is replaced, wrapped continuation lines included. Replacing only the first line
+// (the old `\s*.+`) welded the tail of the old value under the new one and produced text that reads
+// as a statement but is nobody's: "- Blockers: see Open Errors" followed by an orphaned "are both
+// pending as of 2026-07-22". Anchored to the start of a line, so "- **Next:** ..." inside a log
+// block is never mistaken for the header field, and `[^\n]*` cannot run past the end of the line
+// into the next one when the field is empty. A continuation is a non-empty, non-heading, non-bullet
+// line; an indented sub-bullet is left in place rather than silently deleted, since deleting it
+// here would repeat the Open Errors mistake.
+//
+// A blank line does NOT end the value on its own: markdown lets a list item hold several
+// paragraphs, so "- Blockers: x\n\n  second paragraph" is all one value and stopping at the blank
+// left that paragraph orphaned (the very defect this function exists to fix). But a blank line DOES
+// end it when what follows is unindented, because that is free prose the human wrote under the
+// section, not part of any field. Consuming "to the next bullet or ## heading" without that
+// distinction would delete it, which is the Open Errors mistake in a new place. Indentation is the
+// signal, and only after a blank: a line pressed directly against the field is a lazy continuation
+// whether or not it is indented.
 function updateField(content: string, field: string, value: string): string {
-  const p = new RegExp(`(${escapeRe(field)})\\s*.+`, 'i');
-  return p.test(content) ? content.replace(p, `$1 ${value}`) : content;
+  const lines = content.split('\n');
+  const head = new RegExp(`^(\\s*[-*]?\\s*${escapeRe(field)})[^\\n]*$`, 'i');
+  const idx = lines.findIndex((l) => head.test(l));
+  if (idx === -1) return content;
+  let end = idx + 1;
+  let blankSeen = false;
+  for (let i = idx + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.trim() === '') { blankSeen = true; continue; } // kept only if a continuation follows
+    if (/^\s*[-*]\s/.test(line) || /^\s*#{1,6}\s/.test(line)) break; // next bullet or heading
+    if (blankSeen && !/^\s/.test(line)) break; // unindented prose after a blank belongs to nobody
+    end = i + 1;
+  }
+  return [...lines.slice(0, idx), lines[idx].replace(head, `$1 ${value}`), ...lines.slice(end)].join('\n');
 }
 
 // Push newEntry to the top of the 3-slot "## Last Completed Slices" list. Preserves the blank
@@ -264,18 +300,38 @@ function shiftHistory(content: string, sliceName: string, outcome: string, newEn
 
 // Surface real open issues under "## Open Errors" so "Blockers: see Open Errors" points at
 // something. Replaces the "(none)" placeholder; otherwise appends issues not already listed.
+//
+// Unlike a Current Status field, this section is HUMAN-OWNED and accumulative, so the existing block
+// is copied VERBATIM and never re-emitted from parsed text. Parsing is used only to compare against
+// the incoming issues for duplicates. The old version kept just the lines starting with a bullet
+// marker and rebuilt the section from them, which lost two different ways at once: every wrapped
+// continuation line was dropped (evidence, hypothesis and next probe of an entry, ~130 lines in the
+// 2026-07-22 incident), and indented sub-bullets, which do pass the marker test, came back at top
+// level, turning two open errors into four with two of them subjectless. Re-emitting through
+// cleanBullet would also flatten a multi-line entry into one long line even with a correct parser,
+// so preserving the lines is the fix, not a better rewrite.
 function mergeOpenErrors(content: string, issues: string[]): string {
   const lines = content.split('\n');
   const idx = lines.findIndex((l) => l.trim().toLowerCase().startsWith('## open errors'));
   if (idx === -1) return content;
   let end = idx + 1;
   while (end < lines.length && !/^##\s/.test(lines[end])) end++;
-  const existing = lines.slice(idx + 1, end).filter((l) => /^\s*[-*]\s+/.test(l)).map(cleanBullet);
+  const existingBlock = lines.slice(idx + 1, end);
+  const existing = collectBullets(existingBlock);
   const placeholderOnly = existing.length === 0 || existing.every((b) => isNone(b));
-  const merged = placeholderOnly ? [] : [...existing];
-  for (const iss of issues) if (!merged.some((m) => m.toLowerCase() === iss.toLowerCase())) merged.push(iss);
-  const block = merged.map((m) => `- ${m}`);
-  return [...lines.slice(0, idx + 1), ...block, '', ...lines.slice(end)].join('\n');
+
+  const seen = placeholderOnly ? [] : existing.map((e) => e.toLowerCase());
+  const additions: string[] = [];
+  for (const iss of issues) {
+    if (seen.includes(iss.toLowerCase())) continue;
+    seen.push(iss.toLowerCase());
+    additions.push(`- ${iss}`);
+  }
+  if (!additions.length) return content; // nothing new: leave the file byte-identical
+
+  const kept = placeholderOnly ? [] : [...existingBlock];
+  while (kept.length && kept[kept.length - 1].trim() === '') kept.pop(); // append inside the section
+  return [...lines.slice(0, idx + 1), ...kept, ...additions, '', ...lines.slice(end)].join('\n');
 }
 
 // Slice headings are buyer-authored, so tolerate ## or ###, an ASCII hyphen / en dash / em dash /
