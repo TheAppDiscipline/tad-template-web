@@ -147,15 +147,22 @@ export async function handlePacket(root: string, filePath: string) {
           identityBlocked = true;
         } else {
           disciplineInfo('  Updating progress...');
-          // Record progress honestly (updateProgress refuses only a packet with no outcome/gate). The
-          // decision to advance is taken below from the packet's PERSISTED gate state, not from here.
+          // updateProgress refuses a packet with no outcome or no gate. That refusal is the whole
+          // signal: a completion the progress engine would not record is not a completion the
+          // consumption engine may act on either, so it blocks here instead of falling through.
+          let progressRecorded = true;
           try {
             const res = await updateProgress(root);
             logNotes.push(res.gate === 'passed' ? 'progress-updated' : `progress-updated,gate-${res.gate}`);
           } catch (err) {
             disciplineWarn(`  Refused progress.md update: ${err instanceof Error ? err.message : err}`);
+            disciplineWarn('  Nothing consumed and nothing assembled: a completion packet the progress engine refuses cannot close a slice.');
             logNotes.push('progress-refused');
+            progressRecorded = false;
+            identityBlocked = true;
           }
+
+          if (progressRecorded) {
 
           // Consumption is recorded only when THIS slice's completion packet carries a green gate,
           // and it is recorded in place: the packet keeps its name and its content, it just stops
@@ -174,6 +181,7 @@ export async function handlePacket(root: string, filePath: string) {
           } else {
             disciplineWarn(`  Slice ${closedSlice} not marked consumed: ${verdict.reason}.`);
             logNotes.push(`not-consumed=${closedSlice}`);
+          }
           }
         }
       }

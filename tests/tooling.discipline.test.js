@@ -3276,7 +3276,7 @@ test('slice identity: completion packets that disagree do not consume the slice'
   // A green packet must not answer for a red one written after it.
   assert.equal(out.disagree.consumed, false)
   assert.match(out.disagree.reason, /disagree/)
-  assert.match(out.disagree.reason, /SLICE_COMPLETION_PACKET_rerun\.md -> failed/)
+  assert.match(out.disagree.reason, /SLICE_COMPLETION_PACKET_rerun\.md -> outcome shipped, gate failed/)
   assert.equal(out.agree.consumed, true)
 })
 
@@ -3651,6 +3651,82 @@ test('discipline:watch blocks a completion packet that names no slice at all', (
   assert.doesNotMatch(output, /Updating progress/)
 
   assert.deepEqual(fs.readFileSync(path.join(projectRoot, 'progress.md')), progressBefore, 'progress.md must be byte-identical')
+  assert.doesNotMatch(fs.readFileSync(path.join(projectRoot, '.discipline', 'packets', 'STEP_5_SLICE_PACKET_13.md'), 'utf8'), /status: consumed/)
+  const pasteReady = path.join(projectRoot, '.discipline', 'paste-ready')
+  assert.deepEqual(fs.existsSync(pasteReady) ? fs.readdirSync(pasteReady).filter((f) => f.endsWith('.md')) : [], [])
+})
+
+// A green gate is not a closure. Step 5 tells the operator to write `Outcome: partial` or
+// `blocked` and leave the slice open, so consuming one of those would close work the operator
+// said is unfinished. The whole transition has to hold: ready packet, exact identity, terminal
+// outcome, progress recorded, green gate.
+test('slice identity: only a terminal outcome with a green gate consumes a slice', () => {
+  const completion = (outcome, gate) => ['## SLICE_COMPLETION_PACKET', '', 'SLICE: S13', '',
+    '### Outcome', `- ${outcome}`, '', '### Gates passed', `- GATE_STATE: ${gate}`, '',
+    '### Deploy signal', '- ready_for_preview', ''].join('\n')
+  const noOutcome = ['## SLICE_COMPLETION_PACKET', '', 'SLICE: S13', '', '### Gates passed', '- GATE_STATE: passed', ''].join('\n')
+  const project = (packet) => createDisciplineProject({ 'SLICE_COMPLETION_PACKET.md': packet })
+
+  const out = sliceIdentityEval(`
+    emit({
+      done: slice.isSliceConsumed(${JSON.stringify(project(completion('done', 'passed')))}, 'S13'),
+      shipped: slice.isSliceConsumed(${JSON.stringify(project(completion('shipped', 'passed')))}, 'S13'),
+      partial: slice.isSliceConsumed(${JSON.stringify(project(completion('partial', 'passed')))}, 'S13'),
+      blocked: slice.isSliceConsumed(${JSON.stringify(project(completion('blocked', 'passed')))}, 'S13'),
+      unknown: slice.isSliceConsumed(${JSON.stringify(project(completion('mostly there', 'passed')))}, 'S13'),
+      missing: slice.isSliceConsumed(${JSON.stringify(project(noOutcome))}, 'S13'),
+      redGate: slice.isSliceConsumed(${JSON.stringify(project(completion('done', 'failed')))}, 'S13'),
+    })
+  `)
+  assert.equal(out.done.consumed, true)
+  assert.equal(out.shipped.consumed, true)
+  assert.equal(out.partial.consumed, false, 'a partial outcome leaves the slice open even with a green gate')
+  assert.match(out.partial.reason, /leaves the slice open regardless of the gate/)
+  assert.equal(out.blocked.consumed, false)
+  assert.equal(out.unknown.consumed, false, 'an outcome nobody recognizes is not a closure')
+  assert.equal(out.missing.consumed, false)
+  assert.match(out.missing.reason, /states no outcome/)
+  assert.equal(out.redGate.consumed, false)
+})
+
+test('slice identity: a packet that is not ready cannot be recorded as consumed', () => {
+  const packet = (status) => ['---', 'slice: S13', `status: ${status}`, '---', '', '# STEP_5_SLICE_PACKET', '', 'SLICE: S13', ''].join('\n')
+  const noStatus = ['---', 'slice: S13', '---', '', '# STEP_5_SLICE_PACKET', '', 'SLICE: S13', ''].join('\n')
+  const project = (body) => createDisciplineProject({ 'STEP_5_SLICE_PACKET_13.md': body })
+
+  const out = sliceIdentityEval(`
+    emit({
+      draft: slice.resolveConsumptionTarget(${JSON.stringify(project(packet('draft')))}, 'S13'),
+      planned: slice.resolveConsumptionTarget(${JSON.stringify(project(packet('planned')))}, 'S13'),
+      blocked: slice.resolveConsumptionTarget(${JSON.stringify(project(packet('blocked')))}, 'S13'),
+      none: slice.resolveConsumptionTarget(${JSON.stringify(project(noStatus))}, 'S13'),
+      ready: slice.resolveConsumptionTarget(${JSON.stringify(project(packet('ready')))}, 'S13'),
+      alreadyConsumed: slice.resolveConsumptionTarget(${JSON.stringify(project(packet('consumed')))}, 'S13'),
+    })
+  `)
+  assert.equal(out.draft.ok, false)
+  assert.match(out.draft.reason, /status draft/)
+  assert.equal(out.planned.ok, false)
+  assert.equal(out.blocked.ok, false)
+  assert.equal(out.none.ok, false, 'a packet with no status is not a ready packet')
+  assert.equal(out.ready.ok, true)
+  // Re-dropping a completion packet is normal, so an already-consumed packet is not an error.
+  assert.equal(out.alreadyConsumed.ok, true)
+})
+
+// The progress engine and the consumption engine read the same packet: if the first refuses it,
+// the second must never see it. Otherwise a semantically invalid completion could still consume.
+test('discipline:watch stops when the progress engine refuses the completion packet', () => {
+  const projectRoot = createDisciplineProject({
+    'STEP_5_SLICE_PACKET_13.md': ['---', 'slice: S13', 'status: ready', '---', '', '# STEP_5_SLICE_PACKET', '', 'SLICE: S13', '', '## Goal', '- x', ''].join('\n'),
+    // No ### Outcome: updateProgress refuses, so nothing may be consumed either.
+    'SLICE_COMPLETION_PACKET.md': ['## SLICE_COMPLETION_PACKET', '', 'SLICE: S13', '', '### Scope delivered', '- did stuff', '',
+      '### Gates passed', '- GATE_STATE: passed', ''].join('\n'),
+    'STEP_4_EXECUTION_PACKET.md': '## STEP_4_EXECUTION_PACKET\n\nSTATUS: validated\n\nbody\n',
+  })
+  const output = getOutput(runHandlePacket(projectRoot))
+  assert.match(output, /Refused progress.md update/)
+  assert.match(output, /Nothing consumed and nothing assembled/)
   assert.doesNotMatch(fs.readFileSync(path.join(projectRoot, '.discipline', 'packets', 'STEP_5_SLICE_PACKET_13.md'), 'utf8'), /status: consumed/)
   const pasteReady = path.join(projectRoot, '.discipline', 'paste-ready')
   assert.deepEqual(fs.existsSync(pasteReady) ? fs.readdirSync(pasteReady).filter((f) => f.endsWith('.md')) : [], [])

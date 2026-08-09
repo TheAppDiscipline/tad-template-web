@@ -550,6 +550,16 @@ export function resolveConsumptionTarget(root: string, sliceId: string): Consump
   if (probe[0]?.trim() === '---' && probe.findIndex((line, index) => index > 0 && line.trim() === '---') === -1) {
     return { ok: false, reason: `${target.fileName} has an unterminated frontmatter block; fix it before the slice can be recorded as consumed` };
   }
+  // Only a READY packet can become consumed. A draft or planned packet was never handed to Step 5,
+  // and a blocked one is open on purpose, so recording either as consumed would close work that
+  // nobody did. An already-consumed packet is not an error: re-dropping a completion packet is a
+  // normal thing to do, and the marker write is idempotent.
+  if (target.status !== 'ready' && target.status !== 'consumed') {
+    return {
+      ok: false,
+      reason: `${target.fileName} has status ${target.status ?? '(none)'}; only a ready packet can be recorded as consumed`,
+    };
+  }
   return { ok: true, packet: target };
 }
 
@@ -595,20 +605,45 @@ export function markSliceConsumed(root: string, sliceId: string): MarkResult {
   return { ok: true, path: target.path };
 }
 
+/** Outcomes that close a slice. Everything else leaves it open, whatever the gate says. */
+const TERMINAL_OUTCOMES = new Set(['done', 'shipped']);
+/** Outcomes that explicitly keep a slice open. Anything unrecognized is refused too. */
+const OPEN_OUTCOMES = new Set(['partial', 'blocked', 'ready', 'wip', 'in-progress']);
+
 /**
- * A slice packet is consumed only when its slice has a completion packet AND that packet records
- * a green gate. "The next packet exists" is not consumption: a slice that failed its gate is
- * still the slice being worked on, and marking it consumed would advance the pipeline over a red.
+ * The outcome a completion packet states, normalized. Same vocabulary the progress engine reads,
+ * from the same two places (`OUTCOME:` field or the `### Outcome` section), so the two can never
+ * disagree about what a packet says.
+ */
+export function completionOutcome(content: string): string | null {
+  const field = content.match(/^[ \t]*OUTCOME[ \t]*[:=][ \t]*(.+?)[ \t]*$/im);
+  const section = content.match(/^#{2,4}[ \t]+Outcome[ \t]*$\r?\n([\s\S]*?)(?=\r?\n#{1,4}[ \t]|$)/im);
+  const raw = (field?.[1] ?? section?.[1]?.split('\n').map((line) => line.trim()).find((line) => line !== '') ?? '')
+    .replace(/^[-*]\s*/, '')
+    .trim()
+    .toLowerCase();
+  if (!raw) return null;
+  const known = [...TERMINAL_OUTCOMES, ...OPEN_OUTCOMES].find((k) => raw.startsWith(k));
+  if (known) return known;
+  const firstClause = raw.split(/[.;,]/)[0].trim().slice(0, 40);
+  return firstClause || null;
+}
+
+/**
+ * A slice is consumed only when its whole closing transition holds: a completion packet that says
+ * which slice it closes, a TERMINAL outcome, and an explicit green gate. A green gate on its own
+ * is not a closure: Step 5 tells the operator to write `Outcome: partial` or `blocked` and leave
+ * the slice open, and consuming that would close work the operator said is unfinished.
+ *
+ * EVERY completion packet for the slice is read, not the first one found: a re-run leaves more
+ * than one, and they have to agree on both the outcome and the gate before anything is closed.
  */
 export function isSliceConsumed(root: string, sliceId: string): { consumed: boolean; reason: string } {
   const dir = path.join(root, '.discipline', 'packets');
   if (!fs.existsSync(dir)) return { consumed: false, reason: 'no packets directory' };
   const wanted = normalizeSliceId(sliceId);
 
-  // EVERY completion packet for the slice is read, not the first one found: a re-run leaves more
-  // than one, and answering from whichever the directory listed first would let a green packet
-  // hide a red one that was written after it.
-  const verdicts: Array<{ file: string; gate: string | null }> = [];
+  const verdicts: Array<{ file: string; gate: string | null; outcome: string | null }> = [];
   for (const file of fs.readdirSync(dir).filter((f) => /SLICE_COMPLETION_PACKET/i.test(f) && f.endsWith('.md'))) {
     const content = fs.readFileSync(path.join(dir, file), 'utf-8');
     const identity = resolvePacketIdentity(content, file);
@@ -616,26 +651,29 @@ export function isSliceConsumed(root: string, sliceId: string): { consumed: bool
     if (identity.id !== wanted) continue;
     // Same rule the progress engine uses: the gate is green only on an explicit token, never on prose.
     const gate = content.match(/^\s*[-*]?\s*GATE_STATE:\s*(\S+)\s*$/im);
-    verdicts.push({ file, gate: gate ? gate[1].toLowerCase() : null });
+    verdicts.push({ file, gate: gate ? gate[1].toLowerCase() : null, outcome: completionOutcome(content) });
   }
 
   if (verdicts.length === 0) return { consumed: false, reason: `no SLICE_COMPLETION_PACKET for slice ${sliceId}` };
 
-  const notGreen = verdicts.filter((v) => v.gate !== 'passed');
-  if (notGreen.length > 0 && notGreen.length < verdicts.length) {
+  const gates = new Set(verdicts.map((v) => v.gate));
+  const outcomes = new Set(verdicts.map((v) => v.outcome));
+  if (gates.size > 1 || outcomes.size > 1) {
     return {
       consumed: false,
-      reason: `slice ${sliceId} has completion packets that disagree: ${verdicts.map((v) => `${v.file} -> ${v.gate ?? 'no GATE_STATE'}`).join(', ')}. Resolve which one closes the slice.`,
+      reason: `slice ${sliceId} has completion packets that disagree: ${verdicts.map((v) => `${v.file} -> outcome ${v.outcome ?? 'none'}, gate ${v.gate ?? 'no GATE_STATE'}`).join(', ')}. Resolve which one closes the slice.`,
     };
   }
-  if (notGreen.length === verdicts.length) {
-    const first = notGreen[0];
-    return {
-      consumed: false,
-      reason: first.gate === null
-        ? `${first.file} has no GATE_STATE token, so the gate is unverified`
-        : `${first.file} records GATE_STATE: ${first.gate}`,
-    };
+
+  const [{ file, gate, outcome }] = verdicts;
+  if (!outcome) {
+    return { consumed: false, reason: `${file} states no outcome (done | partial | blocked), so nothing says the slice is finished` };
   }
-  return { consumed: true, reason: `${verdicts.map((v) => v.file).join(', ')} closes slice ${sliceId} with a green gate` };
+  if (!TERMINAL_OUTCOMES.has(outcome)) {
+    return { consumed: false, reason: `${file} records outcome "${outcome}", which leaves the slice open regardless of the gate` };
+  }
+  if (!gate) return { consumed: false, reason: `${file} has no GATE_STATE token, so the gate is unverified` };
+  if (gate !== 'passed') return { consumed: false, reason: `${file} records GATE_STATE: ${gate}` };
+
+  return { consumed: true, reason: `${verdicts.map((v) => v.file).join(', ')} closes slice ${sliceId}: outcome ${outcome}, gate passed` };
 }

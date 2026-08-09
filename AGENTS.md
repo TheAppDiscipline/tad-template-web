@@ -173,9 +173,13 @@ command reads it from there: the runner, the assembler, the validator and the wa
   Slices table, or carrying one status in the table and another in its own section stops the command.
   Only a table with a slice column AND a status column is read as statuses; prose tables in that section
   are left alone.
-- **Consumed means closed, not superseded.** A slice packet counts as consumed only when its slice has a
-  `SLICE_COMPLETION_PACKET` with an explicit `GATE_STATE: passed`. Several completion packets for the
-  same slice are all read: if they disagree, the slice is not consumed and both are named.
+- **Consumed means closed, not superseded.** The whole closing transition has to hold: the packet is
+  `ready`, the completion packet names exactly this slice, its `Outcome` is terminal (`done` or
+  `shipped`), `progress.md` accepted the record, and `GATE_STATE: passed` is explicit. A green gate on
+  its own closes nothing: Step 5 tells you to write `Outcome: partial` or `blocked` and leave the slice
+  open, and consuming that would close work you said is unfinished. Several completion packets for the
+  same slice are all read: if they disagree on the outcome or the gate, the slice is not consumed and
+  each one is named.
 
 **Existing projects, one policy:** nothing has to be renamed to keep working, and no step renames
 anything on its own. `npm run discipline:validate` warns once per generic packet and names the
