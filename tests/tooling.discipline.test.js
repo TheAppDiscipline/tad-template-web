@@ -3361,3 +3361,38 @@ test('slice identity: a packet for a slice the plan does not state is refused, n
   assert.notEqual(validated.status, 0)
   assert.match(getOutput(validated), /STEP_5_SLICE_PACKET_99\.md is for slice "99", which task_plan\.md does not describe/)
 })
+
+// The legacy `[status]` marker in the heading is what run.ts reads to decide whether a slice can
+// run at all, so the identity regex has to keep accepting it. Restricting the heading form to stop
+// reading `### C1` as a slice had dropped it.
+test('slice identity: the legacy [status] heading marker still resolves, and C1 still does not', () => {
+  const plan = (heading) => ['# task_plan.md', '', '## 4) Ready Slices', '', heading, '', '### C1 - a criterion inside the slice', '- x', '', '### AC2 - another', '- x', '', '### R1 - a risk', '- x', ''].join('\n')
+  const out = sliceIdentityEval(`
+    emit({
+      ready: slice.resolveSlice(${JSON.stringify(plan('## Slice S13 [ready]'))}, 'S13'),
+      blocked: slice.resolveSlice(${JSON.stringify(plan('## Slice S13 [blocked]'))}, 'S13'),
+      composite: slice.resolveSlice(${JSON.stringify(plan('### Slice S13.2 [ready]'))}, 'S13.2'),
+      withTitle: slice.findSliceHeadings(${JSON.stringify(plan('## Slice S13 [ready] - Sync engine'))}),
+      headings: slice.findSliceHeadings(${JSON.stringify(plan('## Slice S13 [ready]'))}).map((h) => h.id),
+    })
+  `)
+  assert.equal(out.ready.ok, true, 'a [ready] heading must still resolve')
+  assert.equal(out.blocked.ok, true, 'a [blocked] heading resolves too; readiness is a separate question')
+  assert.equal(out.composite.ok, true)
+  assert.equal(out.withTitle[0].title, 'Sync engine', 'the [status] marker is not part of the title')
+  // The criteria headings and the section heading stay out of the slice list.
+  assert.deepEqual(out.headings, ['13'])
+
+  // And the status the marker carries still reaches the runner: ready runs, blocked refuses.
+  const statuses = sliceIdentityEval(`
+    const run = await import('${pathToImport(path.join(repoRoot, 'tools', 'discipline', 'run.ts'))}')
+    emit({
+      ready: run.parseSliceStatus(${JSON.stringify(plan('## Slice S13 [ready]'))}, 'S13'),
+      blocked: run.parseSliceStatus(${JSON.stringify(plan('## Slice S13 [blocked]'))}, 'S13'),
+    })
+  `)
+  assert.equal(statuses.ready.found, true)
+  assert.equal(statuses.ready.ready, true)
+  assert.equal(statuses.blocked.found, true)
+  assert.equal(statuses.blocked.ready, false, 'a blocked slice is found but not runnable')
+})

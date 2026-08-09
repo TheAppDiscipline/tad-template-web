@@ -17,11 +17,13 @@ import { parsePacketMeta } from './packet-meta.js';
  */
 
 /**
- * A slice heading: `## Slice <id>`, or a bare `## S13` / `## 13`. The id runs to end of line or to
- * a dash/colon separator, which is what keeps `## 4) Ready Slices` from reading as slice 4, and the
- * `s?\d` rule below is what keeps `### C1` / `### AC2` / `### R1` from reading as slices at all.
+ * A slice heading: `## Slice <id>`, a bare `## S13` / `## 13`, and either form with the legacy
+ * `[status]` marker that run.ts reads (`## Slice S13 [ready]`, `### Slice S13.2 [blocked]`).
+ * After the id only that marker, a dash/colon separator or end of line may follow, which is what
+ * keeps `## 4) Ready Slices` from reading as slice 4; the `s?\d` rule below is what keeps
+ * `### C1` / `### AC2` / `### R1` from reading as slices at all.
  */
-const SLICE_HEADING_RE = /^(#{2,4})[ 	]+(?:slice[ 	]+)?([A-Za-z][A-Za-z0-9._-]*|\d[A-Za-z0-9._-]*)[ 	]*(?:[-–—:][ 	]*.*)?$/gim;
+const SLICE_HEADING_RE = /^(#{2,4})[ \t]+(?:slice[ \t]+)?([A-Za-z][A-Za-z0-9._-]*|\d[A-Za-z0-9._-]*)[ \t]*(?:\[[^\]]*\])?[ \t]*(?:[-–—:][ \t]*.*)?$/gim;
 
 /** A `## Slice <id> - <title>` heading found in task_plan.md. */
 export interface SliceHeading {
@@ -104,7 +106,9 @@ export function findSliceHeadings(taskPlan: string): SliceHeading[] {
       raw: lines[i],
       rawId: match[2],
       id,
-      title: (lines[i].slice(match[0].indexOf(match[2]) + match[2].length) || '').trim().replace(/^[-–—:]\s*/, ''),
+      // The `[status]` marker belongs to the status reader, not to the title.
+      title: (lines[i].slice(match[0].indexOf(match[2]) + match[2].length) || '')
+        .trim().replace(/^\[[^\]]*\]\s*/, '').replace(/^[-–—:]\s*/, ''),
       line: i,
       level: match[1].length,
     });
