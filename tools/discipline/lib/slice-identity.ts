@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { parsePacketMeta } from './packet-meta.js';
-import { completionGate, completionOutcome, isTerminalOutcome } from './completion-packet.js';
+import { completionGate, isTerminalOutcome, readOutcome } from './completion-packet.js';
 
 /**
  * One shared answer to "which slice is this?", used by the runner, the watcher, the assembler
@@ -630,7 +630,9 @@ export function isSliceConsumed(root: string, sliceId: string): { consumed: bool
     // declarations are 'unverified' there, and taking the first match here made the same packet
     // green for consumption and unverified for the log.
     const gate = completionGate(content);
-    verdicts.push({ file, gate: gate ? gate.state : null, outcome: completionOutcome(content) });
+    const outcomeReading = readOutcome(content);
+    if (!outcomeReading.ok) return { consumed: false, reason: `${file} states ${outcomeReading.reason}` };
+    verdicts.push({ file, gate: gate ? gate.state : null, outcome: outcomeReading.outcome });
   }
 
   if (verdicts.length === 0) return { consumed: false, reason: `no SLICE_COMPLETION_PACKET for slice ${sliceId}` };

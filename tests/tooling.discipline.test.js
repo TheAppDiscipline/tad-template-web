@@ -3783,3 +3783,72 @@ test('slice identity: the legacy inline OUTCOME field is read, like the progress
   assert.equal(out.done.consumed, true, 'a pre-skill packet still closes its slice')
   assert.equal(out.partial.consumed, false)
 })
+
+// No location outranks another and none is skipped because another exists. An inline GATES field
+// used to make the sections invisible, and only the FIRST section with a given name was read, so a
+// packet could carry a green field next to a failed section and still consume.
+test('slice identity: every gate and outcome location is read, and none outranks another', () => {
+  const project = (body) => createDisciplineProject({ 'SLICE_COMPLETION_PACKET.md': body })
+  const inlineVsSection = ['## SLICE_COMPLETION_PACKET', '', 'SLICE: S13', 'GATES: GATE_STATE: passed', 'OUTCOME: done', '',
+    '### Outcome', '- partial', '', '### Gates passed', '- GATE_STATE: failed', ''].join('\n')
+  const twoGateSections = ['## SLICE_COMPLETION_PACKET', '', 'SLICE: S13', '', '### Outcome', '- done', '',
+    '### Gates passed', '- GATE_STATE: passed', '', '### Gates passed', '- GATE_STATE: failed', ''].join('\n')
+  const twoOutcomeSections = ['## SLICE_COMPLETION_PACKET', '', 'SLICE: S13', '', '### Outcome', '- done', '',
+    '### Gates passed', '- GATE_STATE: passed', '', '### Outcome', '- partial', ''].join('\n')
+
+  const out = sliceIdentityEval(`
+    const progress = await import('${pathToImport(path.join(repoRoot, 'tools', 'discipline', 'update-progress.ts'))}')
+    const packet = await import('${pathToImport(path.join(repoRoot, 'tools', 'discipline', 'lib', 'completion-packet.ts'))}')
+    emit({
+      inlineGate: packet.completionGate(${JSON.stringify(inlineVsSection)}).state,
+      inlineOutcome: packet.readOutcome(${JSON.stringify(inlineVsSection)}),
+      inlineProgressGate: progress.completionGateState(${JSON.stringify(project(inlineVsSection))}),
+      inlineConsumption: slice.isSliceConsumed(${JSON.stringify(project(inlineVsSection))}, 'S13'),
+      twoGates: packet.completionGate(${JSON.stringify(twoGateSections)}).state,
+      twoGatesConsumption: slice.isSliceConsumed(${JSON.stringify(project(twoGateSections))}, 'S13'),
+      twoOutcomes: packet.readOutcome(${JSON.stringify(twoOutcomeSections)}),
+      twoOutcomesConsumption: slice.isSliceConsumed(${JSON.stringify(project(twoOutcomeSections))}, 'S13'),
+    })
+  `)
+  // An inline GATES field next to a failed section is a contradiction, not a precedence question.
+  assert.equal(out.inlineGate, 'unverified')
+  assert.equal(out.inlineProgressGate, 'unverified', 'both engines read the same declarations')
+  assert.equal(out.inlineOutcome.ok, false)
+  assert.match(out.inlineOutcome.reason, /contradictory outcomes/)
+  assert.equal(out.inlineConsumption.consumed, false)
+  // Two sections with the same name: the second one is not invisible.
+  assert.equal(out.twoGates, 'unverified')
+  assert.equal(out.twoGatesConsumption.consumed, false)
+  assert.equal(out.twoOutcomes.ok, false)
+  assert.equal(out.twoOutcomesConsumption.consumed, false)
+  assert.match(out.twoOutcomesConsumption.reason, /contradictory outcomes/)
+})
+
+// A function is only shared if its callers hand it the same document. The progress engine passed
+// the packet BODY and the consumption engine passed the whole FILE, so a declaration in
+// frontmatter was visible to one and invisible to the other. The module decides the scope now.
+test('slice identity: both engines read the same document scope', () => {
+  const frontmatterOnly = ['---', 'slice: S13', 'outcome: done', 'gates: GATE_STATE: passed', '---', '',
+    '## SLICE_COMPLETION_PACKET', '', 'SLICE: S13', '', '### Gates passed', '- GATE_STATE: passed', ''].join('\n')
+  const projectRoot = createDisciplineProject({ 'SLICE_COMPLETION_PACKET.md': frontmatterOnly })
+
+  const out = sliceIdentityEval(`
+    const progress = await import('${pathToImport(path.join(repoRoot, 'tools', 'discipline', 'update-progress.ts'))}')
+    const packet = await import('${pathToImport(path.join(repoRoot, 'tools', 'discipline', 'lib', 'completion-packet.ts'))}')
+    emit({
+      outcome: packet.readOutcome(${JSON.stringify(frontmatterOnly)}),
+      gate: packet.completionGate(${JSON.stringify(frontmatterOnly)}).state,
+      progressGate: progress.completionGateState(${JSON.stringify(projectRoot)}),
+      consumption: slice.isSliceConsumed(${JSON.stringify(projectRoot)}, 'S13'),
+    })
+  `)
+  // Frontmatter is metadata: neither engine reads an outcome or a gate from it.
+  assert.equal(out.outcome.ok, true)
+  assert.equal(out.outcome.outcome, null, 'a frontmatter outcome is invisible to BOTH engines')
+  // The body's single declaration is still the gate, and it is the same for both.
+  assert.equal(out.gate, 'passed')
+  assert.equal(out.progressGate, 'passed')
+  // No outcome in the body: nothing closes the slice, whatever the gate says.
+  assert.equal(out.consumption.consumed, false)
+  assert.match(out.consumption.reason, /states no outcome/)
+})

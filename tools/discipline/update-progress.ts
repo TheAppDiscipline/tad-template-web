@@ -6,7 +6,7 @@ import { disciplineError, disciplineInfo } from './lib/types.js';
 import { resolveProjectRoot } from './lib/discipline-config.js';
 import { parsePacketFile } from './lib/parse-packet.js';
 import {
-  cleanBullet, completionGate, completionOutcome, escapeRe, firstMeaningful, inlineField,
+  cleanBullet, completionGate, escapeRe, firstMeaningful, inlineField, readOutcome,
   collectBullets, isNone, meaningfulItems, sectionItems, type GateState,
 } from './lib/completion-packet.js';
 
@@ -23,13 +23,16 @@ export async function updateProgress(root: string): Promise<{ gate: GateState }>
   if (!fs.existsSync(progressPath)) disciplineError('progress.md not found. Run discipline:hydrate first.');
   if (!fs.existsSync(packetPath)) disciplineError('SLICE_COMPLETION_PACKET.md not found in .discipline/packets/');
 
-  const packet = parsePacketFile(packetPath, fs.readFileSync(packetPath, 'utf-8'));
+  const fileContent = fs.readFileSync(packetPath, 'utf-8');
+  const packet = parsePacketFile(packetPath, fileContent);
   const body = packet.body;
 
   const sliceNumber = packet.slice || extractSliceNumber(body);
   const sliceName = extractSliceName(body) || `Slice ${sliceNumber}`;
-  const outcome = completionOutcome(body);
-  const gate = completionGate(body);
+  const outcomeReading = readOutcome(fileContent);
+  if (!outcomeReading.ok) throw new Error(`SLICE_COMPLETION_PACKET states ${outcomeReading.reason}. Refusing to record a slice whose outcome the packet does not agree on.`);
+  const outcome = outcomeReading.outcome;
+  const gate = completionGate(fileContent);
   const scopeDelivered = joinItems(sectionItems(body, 'Scope delivered'));
   const openIssues = meaningfulItems(sectionItems(body, 'Open issues'));
   const nextRec = firstMeaningful(
@@ -119,7 +122,7 @@ export function completionGateState(root: string): GateState {
   const packetPath = path.join(root, '.discipline', 'packets', 'SLICE_COMPLETION_PACKET.md');
   if (!fs.existsSync(packetPath)) return 'unverified';
   try {
-    const gate = completionGate(parsePacketFile(packetPath, fs.readFileSync(packetPath, 'utf-8')).body);
+    const gate = completionGate(fs.readFileSync(packetPath, 'utf-8'));
     return gate ? gate.state : 'unverified';
   } catch {
     return 'unverified';
