@@ -3731,3 +3731,55 @@ test('discipline:watch stops when the progress engine refuses the completion pac
   const pasteReady = path.join(projectRoot, '.discipline', 'paste-ready')
   assert.deepEqual(fs.existsSync(pasteReady) ? fs.readdirSync(pasteReady).filter((f) => f.endsWith('.md')) : [], [])
 })
+
+// The progress engine and the consumption engine read the SAME packet, so they must read it the
+// same way. They did not: update-progress required exactly one GATE_STATE declaration (two
+// conflicting ones are unverified, fail-closed) while consumption took the first match, so a
+// packet declaring passed and then failed was unverified for the log and green for consumption.
+test('slice identity: a conflicting GATE_STATE is unverified for both engines, not green for one', () => {
+  const packet = (gates) => ['## SLICE_COMPLETION_PACKET', '', 'SLICE: S13', '', '### Outcome', '- done', '',
+    '### Gates passed', ...gates, '', '### Deploy signal', '- ready_for_preview', ''].join('\n')
+  const conflicting = createDisciplineProject({ 'SLICE_COMPLETION_PACKET.md': packet(['- GATE_STATE: passed', '- GATE_STATE: failed']) })
+  const repeatedGreen = createDisciplineProject({ 'SLICE_COMPLETION_PACKET.md': packet(['- GATE_STATE: passed', '- GATE_STATE: passed']) })
+  const single = createDisciplineProject({ 'SLICE_COMPLETION_PACKET.md': packet(['- GATE_STATE: passed']) })
+
+  const out = sliceIdentityEval(`
+    const progress = await import('${pathToImport(path.join(repoRoot, 'tools', 'discipline', 'update-progress.ts'))}')
+    emit({
+      conflictingGate: progress.completionGateState(${JSON.stringify(conflicting)}),
+      conflictingConsumption: slice.isSliceConsumed(${JSON.stringify(conflicting)}, 'S13'),
+      repeatedGate: progress.completionGateState(${JSON.stringify(repeatedGreen)}),
+      repeatedConsumption: slice.isSliceConsumed(${JSON.stringify(repeatedGreen)}, 'S13'),
+      singleGate: progress.completionGateState(${JSON.stringify(single)}),
+      singleConsumption: slice.isSliceConsumed(${JSON.stringify(single)}, 'S13'),
+    })
+  `)
+  // Two declarations that disagree: unverified on both sides.
+  assert.equal(out.conflictingGate, 'unverified')
+  assert.equal(out.conflictingConsumption.consumed, false)
+  assert.match(out.conflictingConsumption.reason, /unverified/)
+  // Even two IDENTICAL declarations are unverified: the rule is exactly one, not "no disagreement".
+  assert.equal(out.repeatedGate, 'unverified')
+  assert.equal(out.repeatedConsumption.consumed, false)
+  // One exact declaration is the only green.
+  assert.equal(out.singleGate, 'passed')
+  assert.equal(out.singleConsumption.consumed, true)
+})
+
+test('slice identity: the legacy inline OUTCOME field is read, like the progress engine reads it', () => {
+  const legacy = (outcome) => ['## SLICE_COMPLETION_PACKET', '', 'SLICE: S13', '', `- OUTCOME: ${outcome}`, '',
+    '### Gates passed', '- GATE_STATE: passed', ''].join('\n')
+  const closed = createDisciplineProject({ 'SLICE_COMPLETION_PACKET.md': legacy('done') })
+  const open = createDisciplineProject({ 'SLICE_COMPLETION_PACKET.md': legacy('partial') })
+
+  const out = sliceIdentityEval(`
+    emit({
+      done: slice.isSliceConsumed(${JSON.stringify(closed)}, 'S13'),
+      partial: slice.isSliceConsumed(${JSON.stringify(open)}, 'S13'),
+    })
+  `)
+  // The pre-skill packet shape (an inline "- OUTCOME: value" field) is what inlineField has always
+  // accepted for the progress log; consumption reads it through the same helper now.
+  assert.equal(out.done.consumed, true, 'a pre-skill packet still closes its slice')
+  assert.equal(out.partial.consumed, false)
+})

@@ -5,13 +5,17 @@ import minimist from 'minimist';
 import { disciplineError, disciplineInfo } from './lib/types.js';
 import { resolveProjectRoot } from './lib/discipline-config.js';
 import { parsePacketFile } from './lib/parse-packet.js';
+import {
+  cleanBullet, completionGate, completionOutcome, escapeRe, firstMeaningful, inlineField,
+  collectBullets, isNone, meaningfulItems, sectionItems, type GateState,
+} from './lib/completion-packet.js';
 
 const args = minimist(process.argv.slice(2));
 const projectRoot = resolveProjectRoot(args['project-dir']);
 
 // The gate result is modelled as an explicit state, not inferred from a single positive word:
 // only 'passed' is a green, and watch advances the pipeline only on 'passed'.
-export type GateState = 'passed' | 'failed' | 'unverified';
+export type { GateState };
 
 export async function updateProgress(root: string): Promise<{ gate: GateState }> {
   const progressPath = path.join(root, 'progress.md');
@@ -24,8 +28,8 @@ export async function updateProgress(root: string): Promise<{ gate: GateState }>
 
   const sliceNumber = packet.slice || extractSliceNumber(body);
   const sliceName = extractSliceName(body) || `Slice ${sliceNumber}`;
-  const outcome = extractOutcome(body);
-  const gate = extractGates(body);
+  const outcome = completionOutcome(body);
+  const gate = completionGate(body);
   const scopeDelivered = joinItems(sectionItems(body, 'Scope delivered'));
   const openIssues = meaningfulItems(sectionItems(body, 'Open issues'));
   const nextRec = firstMeaningful(
@@ -77,60 +81,14 @@ export async function updateProgress(root: string): Promise<{ gate: GateState }>
   return { gate: gate.state };
 }
 
-function escapeRe(s: string): string { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 function firstLine(s: string): string { return s.split('\n')[0].trim(); }
-function cleanBullet(s: string): string { return s.replace(/^\s*[-*]\s+/, '').replace(/\s+/g, ' ').trim(); }
 
-// A value that carries no information: empty, "none", "n/a", any punctuation/case.
-function isNone(text: string): boolean {
-  const bare = text.replace(/[^a-z0-9]/gi, '').toLowerCase();
-  return bare === '' || bare === 'none' || bare === 'na';
-}
 
-// Raw text under a "## Name" or "### Name" heading (case-insensitive), up to the next heading.
-function sectionText(body: string, name: string): string | null {
-  return body.match(new RegExp(`#{2,3}\\s+${escapeRe(name)}\\s*\\n([\\s\\S]*?)(?=\\n#{2,3}\\s|$)`, 'i'))?.[1]?.trim() || null;
-}
 
-// THE bullet parser of this file: top-level bullets with their wrapped continuation lines rejoined.
-// Every caller goes through here so a "bullet" means the same thing on both sides of a merge. The
-// destructive Open Errors truncation came from a second, line-at-a-time parser that disagreed with
-// this one; do not reintroduce one.
-function collectBullets(rawLines: string[]): string[] {
-  const items: string[] = [];
-  for (const rawLine of rawLines) {
-    const line = rawLine.replace(/\s+$/, '');
-    if (/^\s*[-*]\s+/.test(line)) {
-      items.push(cleanBullet(line));
-    } else if (line.trim() !== '' && !/^#{1,6}\s/.test(line)) {
-      // continuation of the previous bullet, or a bare (bulletless) paragraph
-      if (items.length) items[items.length - 1] = `${items[items.length - 1]} ${line.trim()}`.replace(/\s+/g, ' ').trim();
-      else items.push(line.trim());
-    }
-  }
-  return items.map((s) => s.trim()).filter(Boolean);
-}
 
-// Top-level bullets of a section. This is the canonical SLICE_COMPLETION_PACKET shape the
-// discipline-step5-slice skill teaches: "### Scope delivered\n- item one\n  wrapped\n- item two".
-function sectionItems(body: string, name: string): string[] {
-  const text = sectionText(body, name);
-  return text ? collectBullets(text.split('\n')) : [];
-}
 
-// Legacy inline "KEY: value" field (pre-skill packet shape); still honored for back-compat.
-function inlineField(body: string, name: string): string | null {
-  return body.match(new RegExp(`^[-*]?\\s*${escapeRe(name)}[:\\s]+(.+)`, 'im'))?.[1]?.trim() || null;
-}
 
-function meaningfulItems(items: string[]): string[] {
-  return items.map(cleanBullet).filter((s) => s && !isNone(s));
-}
 
-function firstMeaningful(inline: string | null, items: string[]): string | null {
-  if (inline && !isNone(inline)) return cleanBullet(inline);
-  return meaningfulItems(items)[0] || null;
-}
 
 function joinItems(items: string[]): string | null {
   const kept = meaningfulItems(items);
@@ -150,41 +108,9 @@ function extractSliceNumber(body: string): number {
   return parseInt(body.match(/slice[^\S\n]*[:#-]?[^\S\n]*(\d+)/i)?.[1] || '0', 10);
 }
 
-// Read the real outcome instead of assuming success. Returns null when no outcome is stated so
-// the caller refuses to record the slice, rather than defaulting to an optimistic "shipped".
-function extractOutcome(body: string): string | null {
-  const raw = firstMeaningful(inlineField(body, 'OUTCOME'), sectionItems(body, 'Outcome'));
-  if (!raw) return null;
-  const known = ['done', 'shipped', 'partial', 'blocked', 'ready', 'wip', 'in-progress'];
-  const hit = known.find((k) => raw.toLowerCase().startsWith(k));
-  return hit || raw.split(/[.;,]/)[0].trim().slice(0, 40) || null;
-}
 
-const GATE_STATE_PREFIX = /^gate[_\s-]?state\s*[:=]/i;
-const GATE_STATE_EXACT = /^gate[_\s-]?state\s*[:=]\s*(passed|failed|unverified)\s*$/i;
 
-// The recorded gate state comes ONLY from an explicit, machine-readable GATE_STATE declaration; it is
-// never inferred from evidence prose. Free text is language-dependent and collides across locales (an
-// English failure-word blocklist read Spanish "sin red"/"0 errores" and even English "0 errors" as a
-// failure, recording a false red that stalls a green pipeline), and any positive-word allowlist leaks
-// the mirror-image false green ("cannot pass", "NOT PASSED"). So: exactly one declaration whose value
-// is exactly one of passed|failed|unverified wins; a missing, placeholder, trailing-prose, non-exact,
-// or conflicting declaration is 'unverified' (fail-closed). Evidence bullets explain a state to a
-// human but never create one.
-function gateStateOf(items: string[]): GateState {
-  const declarations = items.map((it) => it.trim()).filter((it) => GATE_STATE_PREFIX.test(it));
-  if (declarations.length !== 1) return 'unverified';
-  const match = declarations[0].match(GATE_STATE_EXACT);
-  return match ? (match[1].toLowerCase() as GateState) : 'unverified';
-}
 
-// Returns the gate state + its raw text, or null when no gate section exists (caller refuses).
-function extractGates(body: string): { state: GateState; raw: string } | null {
-  const inline = inlineField(body, 'GATES');
-  const items = inline ? [cleanBullet(inline)] : meaningfulItems(sectionItems(body, 'Gates passed').concat(sectionItems(body, 'Gates')));
-  if (!items.length) return null;
-  return { state: gateStateOf(items), raw: items.join('; ') };
-}
 
 // Re-derive the current SLICE_COMPLETION_PACKET's gate state from disk. The watcher calls this on
 // EVERY event (not a per-event boolean) so a stale non-green completion left in .discipline/packets/
@@ -193,7 +119,7 @@ export function completionGateState(root: string): GateState {
   const packetPath = path.join(root, '.discipline', 'packets', 'SLICE_COMPLETION_PACKET.md');
   if (!fs.existsSync(packetPath)) return 'unverified';
   try {
-    const gate = extractGates(parsePacketFile(packetPath, fs.readFileSync(packetPath, 'utf-8')).body);
+    const gate = completionGate(parsePacketFile(packetPath, fs.readFileSync(packetPath, 'utf-8')).body);
     return gate ? gate.state : 'unverified';
   } catch {
     return 'unverified';

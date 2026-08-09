@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { parsePacketMeta } from './packet-meta.js';
+import { completionGate, completionOutcome, isTerminalOutcome } from './completion-packet.js';
 
 /**
  * One shared answer to "which slice is this?", used by the runner, the watcher, the assembler
@@ -605,30 +606,6 @@ export function markSliceConsumed(root: string, sliceId: string): MarkResult {
   return { ok: true, path: target.path };
 }
 
-/** Outcomes that close a slice. Everything else leaves it open, whatever the gate says. */
-const TERMINAL_OUTCOMES = new Set(['done', 'shipped']);
-/** Outcomes that explicitly keep a slice open. Anything unrecognized is refused too. */
-const OPEN_OUTCOMES = new Set(['partial', 'blocked', 'ready', 'wip', 'in-progress']);
-
-/**
- * The outcome a completion packet states, normalized. Same vocabulary the progress engine reads,
- * from the same two places (`OUTCOME:` field or the `### Outcome` section), so the two can never
- * disagree about what a packet says.
- */
-export function completionOutcome(content: string): string | null {
-  const field = content.match(/^[ \t]*OUTCOME[ \t]*[:=][ \t]*(.+?)[ \t]*$/im);
-  const section = content.match(/^#{2,4}[ \t]+Outcome[ \t]*$\r?\n([\s\S]*?)(?=\r?\n#{1,4}[ \t]|$)/im);
-  const raw = (field?.[1] ?? section?.[1]?.split('\n').map((line) => line.trim()).find((line) => line !== '') ?? '')
-    .replace(/^[-*]\s*/, '')
-    .trim()
-    .toLowerCase();
-  if (!raw) return null;
-  const known = [...TERMINAL_OUTCOMES, ...OPEN_OUTCOMES].find((k) => raw.startsWith(k));
-  if (known) return known;
-  const firstClause = raw.split(/[.;,]/)[0].trim().slice(0, 40);
-  return firstClause || null;
-}
-
 /**
  * A slice is consumed only when its whole closing transition holds: a completion packet that says
  * which slice it closes, a TERMINAL outcome, and an explicit green gate. A green gate on its own
@@ -649,9 +626,11 @@ export function isSliceConsumed(root: string, sliceId: string): { consumed: bool
     const identity = resolvePacketIdentity(content, file);
     if (!identity.ok) return { consumed: false, reason: `${file}: ${identity.message}` };
     if (identity.id !== wanted) continue;
-    // Same rule the progress engine uses: the gate is green only on an explicit token, never on prose.
-    const gate = content.match(/^\s*[-*]?\s*GATE_STATE:\s*(\S+)\s*$/im);
-    verdicts.push({ file, gate: gate ? gate[1].toLowerCase() : null, outcome: completionOutcome(content) });
+    // The SAME reader the progress engine uses, not a second regex: two conflicting GATE_STATE
+    // declarations are 'unverified' there, and taking the first match here made the same packet
+    // green for consumption and unverified for the log.
+    const gate = completionGate(content);
+    verdicts.push({ file, gate: gate ? gate.state : null, outcome: completionOutcome(content) });
   }
 
   if (verdicts.length === 0) return { consumed: false, reason: `no SLICE_COMPLETION_PACKET for slice ${sliceId}` };
@@ -669,11 +648,11 @@ export function isSliceConsumed(root: string, sliceId: string): { consumed: bool
   if (!outcome) {
     return { consumed: false, reason: `${file} states no outcome (done | partial | blocked), so nothing says the slice is finished` };
   }
-  if (!TERMINAL_OUTCOMES.has(outcome)) {
+  if (!isTerminalOutcome(outcome)) {
     return { consumed: false, reason: `${file} records outcome "${outcome}", which leaves the slice open regardless of the gate` };
   }
-  if (!gate) return { consumed: false, reason: `${file} has no GATE_STATE token, so the gate is unverified` };
-  if (gate !== 'passed') return { consumed: false, reason: `${file} records GATE_STATE: ${gate}` };
+  if (!gate) return { consumed: false, reason: `${file} has no gate section, so the gate is unverified` };
+  if (gate !== 'passed') return { consumed: false, reason: `${file} records a ${gate} gate (a conflicting or non-exact GATE_STATE reads as unverified)` };
 
   return { consumed: true, reason: `${verdicts.map((v) => v.file).join(', ')} closes slice ${sliceId}: outcome ${outcome}, gate passed` };
 }
