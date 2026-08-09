@@ -7,10 +7,12 @@ import { disciplineError, disciplineInfo, disciplineWarn } from './lib/types.js'
 import { resolveProjectRoot } from './lib/discipline-config.js';
 import { copyToClipboard } from './lib/clipboard.js';
 import { STEP_ASSEMBLY_MAP, VALID_STEPS } from './lib/artifact-flow.js';
+import { locateSlicePacket, normalizeSliceId, slicePasteReadyFileName } from './lib/slice-identity.js';
 
 const args = minimist(process.argv.slice(2));
 const projectRoot = resolveProjectRoot(args['project-dir']);
 const step = args.step?.toString();
+const slice = args.slice !== undefined ? String(args.slice) : undefined;
 const useClipboard = args.clipboard === true;
 const openUrl = args.open === true;
 
@@ -29,9 +31,12 @@ function optionalPacketsForStep5(slicePacket: string, configuredPackets: string[
   return configuredPackets.filter(packet => requested.has(packet.replace(/\.md$/, '')));
 }
 
-export async function assemblePasteReady(root: string, stepId: string): Promise<string> {
+export async function assemblePasteReady(root: string, stepId: string, sliceId?: string): Promise<string> {
   const config = STEP_ASSEMBLY_MAP[stepId];
   if (!config) disciplineError(`Step "${stepId}" is not valid. Valid steps: ${VALID_STEPS.join(', ')}`);
+  if (sliceId !== undefined && stepId !== '5') {
+    disciplineError(`--slice only applies to Step 5 (got --step ${stepId}). Every other step has one handoff, not one per slice.`);
+  }
 
   const packetsDir = path.join(root, '.discipline', 'packets');
   const pasteReadyDir = path.join(root, '.discipline', 'paste-ready');
@@ -42,7 +47,29 @@ export async function assemblePasteReady(root: string, stepId: string): Promise<
   const missing: string[] = [];
   const requiredPacketContents = new Map<string, string>();
 
+  // Step 5 with a slice: the packet is resolved by identity, not by whatever sits in the generic
+  // slot, and the handoff is written per slice so two ready slices never overwrite each other.
+  let outputFile = config.outputFile;
+  let slicePacketPath: string | null = null;
+  if (stepId === '5' && sliceId !== undefined) {
+    const taskPlanPath = path.join(root, 'task_plan.md');
+    const taskPlan = fs.existsSync(taskPlanPath) ? fs.readFileSync(taskPlanPath, 'utf-8') : undefined;
+    const located = locateSlicePacket(root, sliceId, taskPlan);
+    if (!located.ok) disciplineError(located.message);
+    for (const warning of (located as { warnings: string[] }).warnings) disciplineWarn(warning);
+    slicePacketPath = (located as { path: string }).path;
+    outputFile = slicePasteReadyFileName(sliceId);
+  }
+
   for (const p of config.requiredPackets) {
+    if (slicePacketPath && p === 'STEP_5_SLICE_PACKET.md') {
+      const content = fs.readFileSync(slicePacketPath, 'utf-8');
+      requiredPacketContents.set(p, content);
+      sections.push(`### ${path.basename(slicePacketPath, '.md')}
+
+${content}`);
+      continue;
+    }
     const pp = path.join(packetsDir, p);
     if (!fs.existsSync(pp)) missing.push(p);
     else {
@@ -72,10 +99,13 @@ export async function assemblePasteReady(root: string, stepId: string): Promise<
   const promptContent = fs.existsSync(promptPath) ? fs.readFileSync(promptPath, 'utf-8') : `<!-- PROMPT: paste the Step ${stepId} prompt from the vault/reference material -->`;
 
   const date = new Date().toISOString().slice(0, 10);
-  const assembled = `# Paste-Ready Block - Step ${stepId}\n\nSTATUS: ready\nGENERATED_BY: discipline:assemble\nDATE: ${date}\n\n---\n\n${promptContent}\n\n---\n\n## PASTED INPUTS\n\n${sections.join('\n\n---\n\n')}\n`;
+  // A per-slice handoff says which slice it is for in its own header: the reader should not have
+  // to infer it from the filename, and the next tool can check it instead of trusting the slot.
+  const sliceLine = sliceId !== undefined ? `SLICE: ${normalizeSliceId(sliceId)}\n` : '';
+  const assembled = `# Paste-Ready Block - Step ${stepId}\n\n${sliceLine}STATUS: ready\nGENERATED_BY: discipline:assemble\nDATE: ${date}\n\n---\n\n${promptContent}\n\n---\n\n## PASTED INPUTS\n\n${sections.join('\n\n---\n\n')}\n`;
 
-  fs.writeFileSync(path.join(pasteReadyDir, config.outputFile), assembled, 'utf-8');
-  disciplineInfo(`Assembled: .discipline/paste-ready/${config.outputFile}`);
+  fs.writeFileSync(path.join(pasteReadyDir, outputFile), assembled, 'utf-8');
+  disciplineInfo(`Assembled: .discipline/paste-ready/${outputFile}`);
   return assembled;
 }
 
@@ -84,7 +114,7 @@ export async function assemblePasteReady(root: string, stepId: string): Promise<
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
   if (!step) disciplineError(`Missing --step. Usage: discipline:assemble --step <${VALID_STEPS.join('|')}>`);
-  assemblePasteReady(projectRoot, step!).then(assembled => {
+  assemblePasteReady(projectRoot, step!, slice).then(assembled => {
     if (useClipboard) {
       try {
         copyToClipboard(assembled);

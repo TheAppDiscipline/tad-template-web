@@ -2381,7 +2381,9 @@ test('run: level 1 assembles the paste-ready and exits 0 (plumbing only)', () =>
   const res = runTsx('tools/discipline/run.ts', ['--slice', '1', '--project-dir', repo])
   assert.equal(res.status, 0, getOutput(res))
   assert.match(getOutput(res), /level 1|semi-automatic/i)
-  assert.ok(fs.existsSync(path.join(repo, '.discipline', 'paste-ready', 'step-5-input.md')))
+  // L1 assembles the handoff for THIS slice, so its name carries the slice id.
+  assert.ok(fs.existsSync(path.join(repo, '.discipline', 'paste-ready', 'step-5-1-input.md')))
+  assert.match(getOutput(res), /legacy generic STEP_5_SLICE_PACKET\.md/)
   fs.rmSync(repo, { recursive: true, force: true })
 })
 
@@ -2995,4 +2997,150 @@ test('discipline:watch blocks a higher-priority handoff while a non-green comple
   const pasteReadyDir = path.join(projectRoot, '.discipline', 'paste-ready')
   const files = fs.existsSync(pasteReadyDir) ? fs.readdirSync(pasteReadyDir) : []
   assert.equal(files.length, 0, `a high-priority packet must not bypass a non-green completion, found: ${files.join(', ')}`)
+})
+
+// --- 7.8 Slice identity: one answer to "which slice is this?" ----------------
+// Before lib/slice-identity each tool had its own regex, so `## Slice S13`, `## S13` and `13`
+// meant the same slice in one place and different slices in another, and the generic
+// STEP_5_SLICE_PACKET.md was matched by filename alone: whatever sat in that slot got
+// implemented, even when it described another slice.
+
+const IDENTITY_PLAN = [
+  '# task_plan.md',
+  '',
+  '## 4) Ready Slices',
+  '',
+  '| # | Slice | Status |',
+  '|---|---|---|',
+  '| 1 | S13 - Sync engine | ready |',
+  '',
+  '## Slice S13 - Sync engine',
+  '- Status: ready',
+  '',
+  '## Slice S13.2 - Sync retries',
+  '- Status: ready',
+  '',
+  '## Slice bootstrap - Scaffolding',
+  '- Status: done',
+  '',
+].join('\n')
+
+function sliceIdentityEval(body) {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'slice-identity-'))
+  const script = path.join(projectRoot, 'probe.mjs')
+  fs.writeFileSync(
+    script,
+    `import * as slice from '${pathToImport(path.join(repoRoot, 'tools', 'discipline', 'lib', 'slice-identity.ts'))}'
+const emit = (value) => console.log('__JSON__' + JSON.stringify(value))
+${body}
+`,
+    'utf8',
+  )
+  const result = runTsx(script)
+  const line = getOutput(result).split('\n').find((l) => l.startsWith('__JSON__'))
+  assert.ok(line, getOutput(result))
+  return JSON.parse(line.slice('__JSON__'.length))
+}
+
+test('slice identity: S13, Slice S13 and 13 are one slice; S13.2 is another', () => {
+  const out = sliceIdentityEval(`
+    const plan = ${JSON.stringify(IDENTITY_PLAN)}
+    emit({
+      norm: ['S13', 'Slice S13', '13', 'slice 13'].map(slice.normalizeSliceId),
+      composite: [slice.normalizeSliceId('S13.2'), slice.normalizeSliceId('S13-a')],
+      word: slice.normalizeSliceId('sync'),
+      headings: slice.findSliceHeadings(plan).map((h) => h.id),
+      resolvedById: ['S13', '13', 'slice 13'].map((id) => slice.resolveSlice(plan, id).ok),
+      partial: slice.resolveSlice(plan, '1'),
+      packetName: slice.slicePacketFileName('Slice S13'),
+      handoffName: slice.slicePasteReadyFileName('S13'),
+    })
+  `)
+  assert.deepEqual(out.norm, ['13', '13', '13', '13'], 'the four spellings are one id')
+  assert.deepEqual(out.composite, ['13.2', '13-a'], 'composite ids stay distinct from 13')
+  assert.equal(out.word, 'sync', 'an alphabetic id keeps its leading s')
+  // "## 4) Ready Slices" is a section heading, not slice 4.
+  assert.deepEqual(out.headings, ['13', '13.2', 'bootstrap'])
+  assert.deepEqual(out.resolvedById, [true, true, true])
+  // A partial match is not a match: "1" must not resolve to S13.
+  assert.equal(out.partial.ok, false)
+  assert.equal(out.partial.reason, 'not-found')
+  assert.match(out.partial.message, /Nearest headings: S13/)
+  assert.equal(out.packetName, 'STEP_5_SLICE_PACKET_13.md')
+  assert.equal(out.handoffName, 'step-5-13-input.md')
+})
+
+test('slice identity: a slice written twice in the plan is refused, not resolved to the first', () => {
+  const out = sliceIdentityEval(`
+    const plan = ${JSON.stringify(IDENTITY_PLAN)} + '\\n## Slice 13 - copy pasted\\n- Status: blocked\\n'
+    emit(slice.resolveSlice(plan, 'S13'))
+  `)
+  assert.equal(out.ok, false)
+  assert.equal(out.reason, 'duplicate')
+  assert.match(out.message, /appears 2 times/)
+})
+
+test('slice identity: a packet is consumed only by a completion packet with a green gate', () => {
+  const withCompletion = (gateLine) => `## SLICE_COMPLETION_PACKET\n\n### Slice\n- Slice S13\n\n### Outcome\n- shipped\n\n### Gates passed\n${gateLine}\n`
+  const cases = {
+    green: withCompletion('- GATE_STATE: passed'),
+    red: withCompletion('- GATE_STATE: failed'),
+    prose: withCompletion('- npm run gate: everything passed beautifully'),
+    otherSlice: `## SLICE_COMPLETION_PACKET\n\n### Slice\n- Slice 14\n\n### Gates passed\n- GATE_STATE: passed\n`,
+  }
+  const verdicts = {}
+  for (const [name, packet] of Object.entries(cases)) {
+    const projectRoot = createDisciplineProject({ 'SLICE_COMPLETION_PACKET.md': packet })
+    verdicts[name] = sliceIdentityEval(`emit(slice.isSliceConsumed(${JSON.stringify(projectRoot)}, 'S13'))`)
+  }
+  assert.equal(verdicts.green.consumed, true)
+  assert.equal(verdicts.red.consumed, false, 'a red gate never consumes the packet')
+  assert.equal(verdicts.prose.consumed, false, 'prose is evidence, never state')
+  assert.equal(verdicts.otherSlice.consumed, false, "another slice's completion packet is not this slice's")
+})
+
+test('assemble --step 5 --slice: the suffixed packet is canonical and the handoff is per slice', () => {
+  const projectRoot = createDisciplineProject({
+    'STEP_5_SLICE_PACKET_13.md': '# STEP_5_SLICE_PACKET\n\nSTATUS: ready\n\n## Slice\n- Slice S13\n\n## Goal\nSync engine\n',
+    'STEP_5_SLICE_PACKET_14.md': '# STEP_5_SLICE_PACKET\n\nSTATUS: ready\n\n## Slice\n- Slice 14\n\n## Goal\nSomething else\n',
+  })
+  fs.writeFileSync(path.join(projectRoot, 'task_plan.md'), IDENTITY_PLAN + '\n## Slice 14 - Other\n- Status: ready\n', 'utf8')
+
+  for (const requested of ['S13', '13']) {
+    const result = runTsx('tools/discipline/assemble-paste-ready.ts', ['--step', '5', '--slice', requested, '--project-dir', projectRoot])
+    assert.equal(result.status, 0, getOutput(result))
+  }
+  const handoff = fs.readFileSync(path.join(projectRoot, '.discipline', 'paste-ready', 'step-5-13-input.md'), 'utf8')
+  assert.match(handoff, /SLICE: 13/)
+  assert.match(handoff, /Sync engine/)
+  assert.doesNotMatch(handoff, /Something else/, "slice 14's packet must not travel in slice 13's handoff")
+
+  // Two ready slices, two handoffs: neither overwrites the other's slot.
+  const other = runTsx('tools/discipline/assemble-paste-ready.ts', ['--step', '5', '--slice', '14', '--project-dir', projectRoot])
+  assert.equal(other.status, 0, getOutput(other))
+  const pasteReady = fs.readdirSync(path.join(projectRoot, '.discipline', 'paste-ready')).sort()
+  assert.deepEqual(pasteReady, ['step-5-13-input.md', 'step-5-14-input.md'])
+})
+
+test("assemble --step 5 --slice: another slice's packet is rejected, not assembled", () => {
+  const projectRoot = createDisciplineProject({
+    'STEP_5_SLICE_PACKET.md': '# STEP_5_SLICE_PACKET\n\nSTATUS: ready\n\n## Slice\n- Slice 14\n\n## Goal\nSomething else\n',
+  })
+  fs.writeFileSync(path.join(projectRoot, 'task_plan.md'), IDENTITY_PLAN + '\n## Slice 14 - Other\n- Status: ready\n', 'utf8')
+
+  const result = runTsx('tools/discipline/assemble-paste-ready.ts', ['--step', '5', '--slice', '13', '--project-dir', projectRoot])
+  assert.notEqual(result.status, 0)
+  assert.match(getOutput(result), /is for slice "14", not "13"/)
+  assert.equal(fs.existsSync(path.join(projectRoot, '.discipline', 'paste-ready', 'step-5-13-input.md')), false)
+
+  // A suffixed packet whose body names another slice is refused the same way: filename and
+  // frontmatter/body have to agree before anything is handed off.
+  fs.writeFileSync(
+    path.join(projectRoot, '.discipline', 'packets', 'STEP_5_SLICE_PACKET_13.md'),
+    '---\nschema: discipline.packet.step5\nslice: "14"\n---\n\n# STEP_5_SLICE_PACKET\n\nSTATUS: ready\n\n## Goal\nMismatch\n',
+    'utf8',
+  )
+  const mismatch = runTsx('tools/discipline/assemble-paste-ready.ts', ['--step', '5', '--slice', '13', '--project-dir', projectRoot])
+  assert.notEqual(mismatch.status, 0)
+  assert.match(getOutput(mismatch), /declares slice "14" but its filename says "13"/)
 })

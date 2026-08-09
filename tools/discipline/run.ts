@@ -36,6 +36,7 @@ import { appendLedger, errorSignature } from './lib/ledger.js';
 import { assemblePasteReady } from './assemble-paste-ready.js';
 import { extractEmbeddedPatches } from './lib/parse-patch.js';
 import { applyPatches } from './apply-patch.js';
+import { locateSlicePacket, resolveSlice, slicePasteReadyFileName } from './lib/slice-identity.js';
 import { updateProgress } from './update-progress.js';
 import { runGateReport, writeGateReport, type GateReport } from './gate-report.js';
 import { createCheckpoint } from './checkpoint.js';
@@ -71,20 +72,15 @@ export interface SliceStatus {
  */
 export function parseSliceStatus(taskPlan: string, sliceId: string): SliceStatus {
   const lines = taskPlan.split('\n');
-  const idNorm = String(sliceId).trim().toLowerCase().replace(/^slice\s*/, '');
-  let start = -1;
-  let level = 0;
-  for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(/^(#{2,4})\s+Slice\s+([A-Za-z0-9._-]+)\b(.*)$/i);
-    if (!m) continue;
-    const thisId = m[2].trim().toLowerCase();
-    if (thisId === idNorm || thisId === `s${idNorm}` || `s${thisId}` === idNorm) {
-      start = i;
-      level = m[1].length;
-      break;
-    }
+  // Identity comes from lib/slice-identity, the one definition of "which slice is this" shared by
+  // the runner, the watcher, the assembler and the validator. A duplicate heading is refused here
+  // instead of resolved to the first match: the two copies can carry different statuses.
+  const resolution = resolveSlice(taskPlan, sliceId);
+  if (!resolution.ok) {
+    return { found: false, status: resolution.reason === 'duplicate' ? resolution.message : null, ready: false };
   }
-  if (start === -1) return { found: false, status: null, ready: false };
+  const start = resolution.heading.line;
+  const level = resolution.heading.level;
 
   // Section end: next heading of same-or-higher level.
   let end = lines.length;
@@ -115,27 +111,6 @@ function normalizeSliceStatus(raw: string): string {
   const value = raw.trim();
   const recognized = /^(ready|in-progress(?:[a-z-]*)?|in_progress(?:_[a-z_]*)?|blocked|done|complete|cloud|hold|wip)$/i;
   return recognized.test(value) ? value : `invalid marker: ${value}`;
-}
-
-// --- STEP_5 packet location -------------------------------------------------
-
-/**
- * Locate the STEP_5_SLICE_PACKET for a slice. The canonical convention in this
- * repo is a single `.discipline/packets/STEP_5_SLICE_PACKET.md` (what watch and
- * assemble use). A per-slice suffixed variant `STEP_5_SLICE_PACKET_<slice>.md`
- * is also accepted when present. Returns the absolute path or null.
- */
-export function locateSlicePacket(root: string, sliceId: string): string | null {
-  const dir = path.join(root, '.discipline', 'packets');
-  const safe = String(sliceId).replace(/[^A-Za-z0-9._-]/g, '_');
-  const candidates = [
-    path.join(dir, `STEP_5_SLICE_PACKET_${safe}.md`),
-    path.join(dir, 'STEP_5_SLICE_PACKET.md'),
-  ];
-  for (const c of candidates) {
-    if (fs.existsSync(c) && fs.statSync(c).isFile()) return c;
-  }
-  return null;
 }
 
 // --- Repair decision (pure, extracted for tests) ----------------------------
@@ -224,10 +199,12 @@ export function buildRepairPrompt(report: GateReport): string {
 
 /** Read the slice packet body (context for cross-validation). Best-effort. */
 function readSlicePacket(root: string, sliceId: string): string {
-  const p = locateSlicePacket(root, sliceId);
-  if (!p) return '(slice packet not found)';
+  const taskPlanPath = path.join(root, 'task_plan.md');
+  const taskPlan = fs.existsSync(taskPlanPath) ? fs.readFileSync(taskPlanPath, 'utf-8') : undefined;
+  const located = locateSlicePacket(root, sliceId, taskPlan);
+  if (!located.ok) return `(slice packet not usable: ${located.message})`;
   try {
-    return fs.readFileSync(p, 'utf-8');
+    return fs.readFileSync(located.path, 'utf-8');
   } catch {
     return '(slice packet unreadable)';
   }
@@ -362,17 +339,46 @@ export async function runReconciler(root: string, opts: RunOptions): Promise<num
     return RUN_EXIT.GREEN;
   }
 
-  // (b) Level 0 and Level 1 are plumbing-only.
+  const taskPlanPath = path.join(root, 'task_plan.md');
+  if (!fs.existsSync(taskPlanPath)) {
+    disciplineWarn('task_plan.md not found. Run discipline:hydrate first.');
+    return RUN_EXIT.CONFIG;
+  }
+  const sliceStatus = parseSliceStatus(fs.readFileSync(taskPlanPath, 'utf-8'), opts.slice);
+  if (!sliceStatus.found) {
+    disciplineWarn(sliceStatus.status
+      ?? `Slice "${opts.slice}" not found in task_plan.md §Ready Slices (looked for "## Slice ${opts.slice} - ...").`);
+    return RUN_EXIT.CONFIG;
+  }
+  if (!sliceStatus.ready) {
+    disciplineWarn(`Slice "${opts.slice}" has status "${sliceStatus.status}", which is not ready to run. Refusing.`);
+    return RUN_EXIT.CONFIG;
+  }
+
+  // The packet must prove it belongs to THIS slice: a generic packet matched by filename alone
+  // is how a run ends up implementing someone else's slice against this slice's plan entry.
+  const located = locateSlicePacket(root, opts.slice, fs.readFileSync(taskPlanPath, 'utf-8'));
+  if (!located.ok) {
+    disciplineWarn(located.message);
+    return RUN_EXIT.CONFIG;
+  }
+  for (const warning of located.warnings) disciplineWarn(warning);
+  const slicePacket = located.path;
+
+  // (b) Level 0 and Level 1 are plumbing-only, but the slice identity still has to hold: an
+  // assembled handoff that silently used the generic packet is exactly the failure this phase
+  // removes, and it is worse at L0/L1 because a human pastes it without a second check.
+  const sliceHandoff = slicePasteReadyFileName(opts.slice);
   if (autonomy.level === 0) {
     disciplineInfo('Autonomy level 0 (manual): no headless execution is configured.');
-    disciplineInfo(`Paste-ready for the slice lives at .discipline/paste-ready/step-5-input.md (run \`discipline assemble --step 5\` to (re)build it).`);
+    disciplineInfo(`Paste-ready for the slice lives at .discipline/paste-ready/${sliceHandoff} (run \`discipline assemble --step 5 --slice ${opts.slice}\` to (re)build it).`);
     return RUN_EXIT.GREEN;
   }
   if (autonomy.level === 1) {
     try {
-      await assemblePasteReady(root, '5');
+      await assemblePasteReady(root, '5', opts.slice);
       disciplineInfo('Autonomy level 1 (semi-automatic): assembled the slice paste-ready. Paste it into your agent.');
-      disciplineInfo('Path: .discipline/paste-ready/step-5-input.md');
+      disciplineInfo(`Path: .discipline/paste-ready/${sliceHandoff}`);
     } catch (err) {
       disciplineWarn(`Could not assemble the paste-ready: ${err instanceof Error ? err.message : err}`);
       return RUN_EXIT.CONFIG;
@@ -401,28 +407,6 @@ export async function runReconciler(root: string, opts: RunOptions): Promise<num
   }
   if (!tree.clean && opts.allowDirty) {
     disciplineWarn('--allow-dirty: proceeding with a DIRTY working tree. The review diff will include pre-existing changes.');
-  }
-
-  const taskPlanPath = path.join(root, 'task_plan.md');
-  if (!fs.existsSync(taskPlanPath)) {
-    disciplineWarn('task_plan.md not found. Run discipline:hydrate first.');
-    return RUN_EXIT.CONFIG;
-  }
-  const sliceStatus = parseSliceStatus(fs.readFileSync(taskPlanPath, 'utf-8'), opts.slice);
-  if (!sliceStatus.found) {
-    disciplineWarn(`Slice "${opts.slice}" not found in task_plan.md §Ready Slices (looked for "## Slice ${opts.slice} - ...").`);
-    return RUN_EXIT.CONFIG;
-  }
-  if (!sliceStatus.ready) {
-    disciplineWarn(`Slice "${opts.slice}" has status "${sliceStatus.status}", which is not ready to run. Refusing.`);
-    return RUN_EXIT.CONFIG;
-  }
-
-  const slicePacket = locateSlicePacket(root, opts.slice);
-  if (!slicePacket) {
-    disciplineWarn(`No STEP_5_SLICE_PACKET found for slice "${opts.slice}" in .discipline/packets/.`);
-    disciplineWarn('Expected .discipline/packets/STEP_5_SLICE_PACKET.md (or STEP_5_SLICE_PACKET_<slice>.md). Run Step 4 first.');
-    return RUN_EXIT.CONFIG;
   }
 
   // Crash recovery note: a prior run_started without run_finished + a stale lease.
