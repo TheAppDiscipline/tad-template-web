@@ -512,16 +512,28 @@ export function selectStep5Packets(root: string): Step5Selection {
   return { ok: true, packets: ready.map((packet) => ({ path: packet.path, sliceId: packet.sliceId! })) };
 }
 
+/** Outcome of recording consumption. `path: null` means there was no packet to mark. */
+export type MarkResult = { ok: true; path: string | null } | { ok: false; reason: string };
+
 /**
  * Record that a slice's packet was consumed, IN PLACE. The packet keeps its filename and its
  * content: the old ritual of renaming it to `.consumed.md` (or moving it out of a shared slot) is
  * what made two slices fight over one file and what lost the packet that was there before.
  * Returns the packet path when it wrote something, null when there was nothing to mark.
  */
-export function markSliceConsumed(root: string, sliceId: string): string | null {
+export function markSliceConsumed(root: string, sliceId: string): MarkResult {
   const wanted = normalizeSliceId(sliceId);
-  const target = activeSlicePackets(root).find((packet) => packet.sliceId === wanted);
-  if (!target) return null;
+  const targets = activeSlicePackets(root).filter((packet) => packet.sliceId === wanted);
+  // Exactly one target, or nothing is written. Picking the first of several would edit an
+  // arbitrary file moments before the selector refuses the same duplication.
+  if (targets.length > 1) {
+    return {
+      ok: false,
+      reason: `slice ${sliceId} has ${targets.length} active packets (${targets.map((t) => t.fileName).join(', ')}); consumption is not recorded until one remains`,
+    };
+  }
+  if (targets.length === 0) return { ok: true, path: null };
+  const target = targets[0];
 
   const content = fs.readFileSync(target.path, 'utf-8');
   const eol = content.includes('\r\n') ? '\r\n' : '\n';
@@ -535,21 +547,25 @@ export function markSliceConsumed(root: string, sliceId: string): string | null 
   if (lines[0]?.trim() !== '---') {
     const front = ['---', 'status: consumed', `slice: ${wanted}`, '---', ''].join(eol);
     fs.writeFileSync(target.path, `${bom}${front}${eol}${withoutBom}`, 'utf-8');
-    return target.path;
+    return { ok: true, path: target.path };
   }
 
   const closing = lines.findIndex((line, index) => index > 0 && line.trim() === '---');
-  if (closing === -1) return null; // unterminated frontmatter: leave it alone, validate reports it
+  if (closing === -1) {
+    // Unterminated frontmatter: the file is not safe to edit, and staying quiet about it would
+    // let the tick advance as if the slice had been recorded as consumed.
+    return { ok: false, reason: `${target.fileName} has an unterminated frontmatter block; fix it before the slice can be recorded as consumed` };
+  }
 
   const front = lines.slice(1, closing);
   const statusAt = front.findIndex((line) => /^status:/i.test(line));
-  if (statusAt !== -1 && /^status:[ \t]*consumed[ \t]*$/i.test(front[statusAt])) return target.path; // idempotent
+  if (statusAt !== -1 && /^status:[ \t]*consumed[ \t]*$/i.test(front[statusAt])) return { ok: true, path: target.path }; // idempotent
   if (statusAt !== -1) front[statusAt] = 'status: consumed';
   else front.unshift('status: consumed');
 
   const next = [lines[0], ...front, ...lines.slice(closing)].join(eol);
   fs.writeFileSync(target.path, bom + next, 'utf-8');
-  return target.path;
+  return { ok: true, path: target.path };
 }
 
 /**

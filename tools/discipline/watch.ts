@@ -122,39 +122,48 @@ export async function handlePacket(root: string, filePath: string) {
     }
 
     if (fileName.includes('SLICE_COMPLETION_PACKET')) {
-      disciplineInfo('  Updating progress...');
-      // Record progress honestly (updateProgress refuses only a packet with no outcome/gate). The
-      // decision to advance is taken below from the packet's PERSISTED gate state, not from here.
-      try {
-        const res = await updateProgress(root);
-        logNotes.push(res.gate === 'passed' ? 'progress-updated' : `progress-updated,gate-${res.gate}`);
-      } catch (err) {
-        disciplineWarn(`  Refused progress.md update: ${err instanceof Error ? err.message : err}`);
-        logNotes.push('progress-refused');
-      }
-
-      // Consumption is recorded only when THIS slice's completion packet carries a green gate,
-      // and it is recorded in place: the packet keeps its name and its content, it just stops
-      // being the next thing to implement. Renaming or moving it is what used to lose it.
+      // Identity FIRST, before anything is written. A packet that names two slices describes a
+      // state nobody can act on, and progress.md is a state file: letting updateProgress run on it
+      // records a slice closing that may not be the slice that closed.
       const closedIdentity = resolvePacketIdentity(fs.readFileSync(filePath, 'utf-8'), fileName);
       if (!closedIdentity.ok) {
-        // A completion packet that names two slices closes none of them. Saying "no identity"
-        // here would hide the contradiction and let the pipeline advance past it.
         disciplineWarn(`  ${closedIdentity.message}`);
-        disciplineWarn('  Not marking anything consumed and not advancing: fix the packet and re-drop it.');
+        disciplineWarn('  Nothing written: progress.md, the packets and the handoffs are untouched. Fix the packet and re-drop it.');
         logNotes.push('completion-identity-conflict');
         identityBlocked = true;
-      } else if (closedIdentity.id) {
-        const verdict = isSliceConsumed(root, closedIdentity.id);
-        if (verdict.consumed) {
-          const marked = markSliceConsumed(root, closedIdentity.id);
-          if (marked) {
-            disciplineInfo(`  Slice ${closedIdentity.id} consumed: ${path.basename(marked)} marked status: consumed.`);
-            logNotes.push(`consumed=${closedIdentity.id}`);
+      } else {
+        disciplineInfo('  Updating progress...');
+        // Record progress honestly (updateProgress refuses only a packet with no outcome/gate). The
+        // decision to advance is taken below from the packet's PERSISTED gate state, not from here.
+        try {
+          const res = await updateProgress(root);
+          logNotes.push(res.gate === 'passed' ? 'progress-updated' : `progress-updated,gate-${res.gate}`);
+        } catch (err) {
+          disciplineWarn(`  Refused progress.md update: ${err instanceof Error ? err.message : err}`);
+          logNotes.push('progress-refused');
+        }
+
+        // Consumption is recorded only when THIS slice's completion packet carries a green gate,
+        // and it is recorded in place: the packet keeps its name and its content, it just stops
+        // being the next thing to implement. Renaming or moving it is what used to lose it.
+        if (closedIdentity.id) {
+          const verdict = isSliceConsumed(root, closedIdentity.id);
+          if (verdict.consumed) {
+            const marked = markSliceConsumed(root, closedIdentity.id);
+            if (!marked.ok) {
+              // The slice closed but the record could not be written. Advancing on top of that
+              // would hand off work whose state nothing on disk agrees about.
+              disciplineWarn(`  Could not record consumption: ${marked.reason}.`);
+              logNotes.push('consumption-failed');
+              identityBlocked = true;
+            } else if (marked.path) {
+              disciplineInfo(`  Slice ${closedIdentity.id} consumed: ${path.basename(marked.path)} marked status: consumed.`);
+              logNotes.push(`consumed=${closedIdentity.id}`);
+            }
+          } else {
+            disciplineWarn(`  Slice ${closedIdentity.id} not marked consumed: ${verdict.reason}.`);
+            logNotes.push(`not-consumed=${closedIdentity.id}`);
           }
-        } else {
-          disciplineWarn(`  Slice ${closedIdentity.id} not marked consumed: ${verdict.reason}.`);
-          logNotes.push(`not-consumed=${closedIdentity.id}`);
         }
       }
     }
@@ -188,10 +197,15 @@ export async function handlePacket(root: string, filePath: string) {
             throw new Error(selection.reason);
           }
           step5Slices = selection.packets;
-          if (step5Slices.length === 0) {
-            disciplineWarn('  No ready Step 5 packet to assemble (a packet is work only while its status is ready).');
-          }
         }
+        // An empty Step 5 selection ENDS the tick. Falling back to the slice-less assembly would
+        // reach the generic packet again through the one door that does not check its status, and
+        // hand off a draft or a packet already consumed. A legacy generic packet that is ready and
+        // identifies its slice is already in the selection, resolved per slice like any other.
+        if (next === '5' && step5Slices.length === 0) {
+          disciplineWarn('  No ready Step 5 packet: nothing assembled, nothing opened. A packet is work only while its status is ready.');
+          logNotes.push('step5-nothing-ready');
+        } else {
         const assembled = step5Slices.length > 0
           ? (await Promise.all(step5Slices.map((packet) => assemblePasteReady(root, next, packet.sliceId)))).join('\n')
           : await assemblePasteReady(root, next);
@@ -203,6 +217,7 @@ export async function handlePacket(root: string, filePath: string) {
         openTool(next);
         assembledOK = true;
         logNotes.push(`next=${next}`);
+        }
       } catch {
         disciplineWarn(`  Could not assemble Step ${next} (required packets may be missing).`);
         logNotes.push(`assemble-failed=${next}`);

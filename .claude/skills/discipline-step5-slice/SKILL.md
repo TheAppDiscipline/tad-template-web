@@ -21,7 +21,7 @@ NOTE: Step 5 (implementation) is still iterative and manual in the daily driver.
 
 ## Prerequisites
 
-- `STEP_5_SLICE_PACKET.md` exists in `.discipline/packets/` with a clear DoR.
+- The slice's own packet exists in `.discipline/packets/` with a clear DoR: `STEP_5_SLICE_PACKET_<slice>.md`, or a legacy `STEP_5_SLICE_PACKET.md` that identifies THIS slice and no other.
 - The slice code is already implemented (not this skill's job).
 - `discipline.md`, `task_plan.md`, `findings.md`, `progress.md` are up to date.
 - Repo with `.discipline/` and `discipline:*` scripts available.

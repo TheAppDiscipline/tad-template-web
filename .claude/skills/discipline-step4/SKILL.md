@@ -505,9 +505,9 @@ and writes `.discipline/paste-ready/step-5-<slice>-input.md`. Without `--slice` 
 for the generic `STEP_5_SLICE_PACKET.md`, which this step no longer writes, so it would fail on a
 packet that does not exist while the real one sits next to it.
 
-This generates `.discipline/paste-ready/step-5-input.md` with the STEP_5_SLICE_PACKET and all the context Step 5 needs to implement the slice.
+Each run generates `.discipline/paste-ready/step-5-<slice>-input.md` with that slice's STEP_5_SLICE_PACKET and all the context Step 5 needs to implement it. One file per slice: expanding a second slice adds a file, it never overwrites the first.
 
-**If the assemble exits non-zero, this step also stops here.** The patches are applied but the handoff is not: report the error verbatim, do not log the run, and do not present Step 5 as ready. A `step-5-input.md` left over from the previous slice is indistinguishable from a fresh one for whoever pastes it, and it points at the wrong slice.
+**If any assemble exits non-zero, this step also stops here.** The patches are applied but that slice's handoff is not: report the error verbatim, name the slice, do not log the run, and do not present Step 5 as ready. A `step-5-<slice>-input.md` left over from an earlier expansion of the same slice is indistinguishable from a fresh one for whoever pastes it.
 
 Record in the run-log:
 ```bash
@@ -543,9 +543,9 @@ Patches applied: <N>
 - findings.md: Decisions and deferred items
 
 Paste-readies ready:
-- .discipline/paste-ready/step-5-input.md
+- .discipline/paste-ready/step-5-<slice>-input.md (one per expanded slice)
 
-Next step: implement Slice <N> - <name> using `.discipline/paste-ready/step-5-input.md` in your coding agent. After its DoD is verified and the gate passes, run `/discipline-step5-slice` to close the slice formally.
+Next step: implement Slice <N> - <name> using `.discipline/paste-ready/step-5-<slice>-input.md` in your coding agent, one slice at a time. After its DoD is verified and the gate passes, run `/discipline-step5-slice` to close the slice formally.
 ```
 
 ---

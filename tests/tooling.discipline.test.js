@@ -3525,11 +3525,101 @@ test('discipline:watch blocks consumption and advance on a self-contradictory co
   const output = getOutput(result)
 
   assert.match(output, /Contradictory slice declarations/)
-  assert.match(output, /Not marking anything consumed and not advancing/)
+  assert.match(output, /Nothing written/)
   const packet = fs.readFileSync(path.join(projectRoot, '.discipline', 'packets', 'STEP_5_SLICE_PACKET_13.md'), 'utf8')
   assert.doesNotMatch(packet, /status: consumed/)
   // Nothing was assembled on top of a packet nobody could identify.
   const pasteReady = path.join(projectRoot, '.discipline', 'paste-ready')
   assert.deepEqual(fs.existsSync(pasteReady) ? fs.readdirSync(pasteReady).filter((f) => f.endsWith('.md')) : [], [])
   assert.match(fs.readFileSync(path.join(projectRoot, '.discipline', 'run-log.md'), 'utf8'), /completion-identity-conflict/)
+})
+
+// Identity is validated before anything is written. progress.md is a state file, so letting the
+// progress engine run on a packet that names two slices records a slice closing that may not be
+// the slice that closed, and the block afterwards no longer undoes it.
+test('discipline:watch leaves progress.md byte-identical when the completion packet contradicts itself', () => {
+  const projectRoot = createDisciplineProject({
+    'STEP_5_SLICE_PACKET_13.md': ['---', 'slice: S13', 'status: ready', '---', '', '# STEP_5_SLICE_PACKET', '', 'SLICE: S13', '', '## Goal', '- x', ''].join('\n'),
+    'SLICE_COMPLETION_PACKET.md': ['## SLICE_COMPLETION_PACKET', '', '## Slice', '- Slice S13', '',
+      '## S14 - the heading says another slice', '', '### Outcome', '- done', '',
+      '### Gates passed', '- GATE_STATE: passed', '', '### Deploy signal', '- ready_for_preview', ''].join('\n'),
+    'STEP_4_EXECUTION_PACKET.md': '## STEP_4_EXECUTION_PACKET\n\nSTATUS: validated\n\nbody\n',
+  })
+  const progressPath = path.join(projectRoot, 'progress.md')
+  const before = fs.readFileSync(progressPath)
+
+  const output = getOutput(runHandlePacket(projectRoot))
+  assert.match(output, /Contradictory slice declarations/)
+  assert.match(output, /Nothing written/)
+  assert.doesNotMatch(output, /Updating progress/, 'the progress engine must not even be reached')
+  assert.deepEqual(fs.readFileSync(progressPath), before, 'progress.md must be byte-identical')
+})
+
+// An empty ready selection ends the tick. Falling through to the slice-less assembly reached the
+// generic packet again through the one door that does not check its status.
+test('discipline:watch assembles nothing for Step 5 when no packet is ready', () => {
+  const genericDraft = ['---', 'slice: S13', 'status: draft', '---', '', '# STEP_5_SLICE_PACKET', '',
+    'SLICE: S13', '', '## Goal', '- x', '## Scope', '- x', '## Contracts', '- x', '## Acceptance criteria', '- x', ''].join('\n')
+  const projectRoot = createDisciplineProject({
+    'STEP_5_SLICE_PACKET.md': genericDraft,
+    'STEP_4_EXECUTION_PACKET.md': '## STEP_4_EXECUTION_PACKET\n\nSTATUS: validated\n\n### Slices\n- Slice S13\n',
+  })
+  const result = runHandlePacket(projectRoot, 'STEP_4_EXECUTION_PACKET.md')
+  assert.equal(result.status, 0, getOutput(result))
+  assert.match(getOutput(result), /No ready Step 5 packet/)
+
+  const pasteReady = path.join(projectRoot, '.discipline', 'paste-ready')
+  const written = fs.existsSync(pasteReady) ? fs.readdirSync(pasteReady).filter((f) => f.endsWith('.md')) : []
+  assert.deepEqual(written, [], `a draft packet must not be handed off: found ${written.join(', ')}`)
+  const runLog = path.join(projectRoot, '.discipline', 'run-log.md')
+  if (fs.existsSync(runLog)) {
+    assert.doesNotMatch(fs.readFileSync(runLog, 'utf8'), /step-5-input\.md/, 'no generic handoff may be logged either')
+  }
+})
+
+// Marking consumption picks exactly one target or refuses, and any refusal blocks the advance:
+// a slice whose closure could not be recorded must not hand off the next thing.
+test('slice identity: consumption refuses an ambiguous or unwritable target', () => {
+  const packet = (slice, status) => ['---', `slice: ${slice}`, `status: ${status}`, '---', '', '# STEP_5_SLICE_PACKET', '', `SLICE: ${slice}`, ''].join('\n')
+  const duplicated = createDisciplineProject({
+    'STEP_5_SLICE_PACKET_13.md': packet('S13', 'ready'),
+    'STEP_5_SLICE_PACKET.md': packet('S13', 'ready'),
+  })
+  const unterminated = createDisciplineProject({
+    'STEP_5_SLICE_PACKET_13.md': ['---', 'slice: S13', 'status: ready', '', '# STEP_5_SLICE_PACKET', '', 'SLICE: S13', ''].join('\n'),
+  })
+  const missing = createDisciplineProject({})
+
+  const out = sliceIdentityEval(`
+    emit({
+      duplicated: slice.markSliceConsumed(${JSON.stringify(duplicated)}, 'S13'),
+      unterminated: slice.markSliceConsumed(${JSON.stringify(unterminated)}, 'S13'),
+      missing: slice.markSliceConsumed(${JSON.stringify(missing)}, 'S13'),
+    })
+  `)
+  assert.equal(out.duplicated.ok, false)
+  assert.match(out.duplicated.reason, /2 active packets/)
+  assert.equal(out.unterminated.ok, false)
+  assert.match(out.unterminated.reason, /unterminated frontmatter/)
+  // Nothing to mark is not a failure: a project may close a slice that never had a packet file.
+  assert.equal(out.missing.ok, true)
+  assert.equal(out.missing.path, null)
+  // Neither refusal wrote anything.
+  assert.doesNotMatch(fs.readFileSync(path.join(duplicated, '.discipline', 'packets', 'STEP_5_SLICE_PACKET_13.md'), 'utf8'), /consumed/)
+  assert.doesNotMatch(fs.readFileSync(path.join(unterminated, '.discipline', 'packets', 'STEP_5_SLICE_PACKET_13.md'), 'utf8'), /consumed/)
+})
+
+test('discipline:watch does not advance when consumption cannot be recorded', () => {
+  const packet = ['---', 'slice: S13', 'status: ready', '', '# STEP_5_SLICE_PACKET', '', 'SLICE: S13', ''].join('\n')
+  const projectRoot = createDisciplineProject({
+    'STEP_5_SLICE_PACKET_13.md': packet, // unterminated frontmatter: unwritable
+    'SLICE_COMPLETION_PACKET.md': ['## SLICE_COMPLETION_PACKET', '', 'SLICE: S13', '', '### Outcome', '- done', '',
+      '### Gates passed', '- GATE_STATE: passed', '', '### Deploy signal', '- ready_for_preview', ''].join('\n'),
+    'STEP_4_EXECUTION_PACKET.md': '## STEP_4_EXECUTION_PACKET\n\nSTATUS: validated\n\nbody\n',
+  })
+  const output = getOutput(runHandlePacket(projectRoot))
+  assert.match(output, /Could not record consumption/)
+  const pasteReady = path.join(projectRoot, '.discipline', 'paste-ready')
+  assert.deepEqual(fs.existsSync(pasteReady) ? fs.readdirSync(pasteReady).filter((f) => f.endsWith('.md')) : [], [])
+  assert.match(fs.readFileSync(path.join(projectRoot, '.discipline', 'run-log.md'), 'utf8'), /consumption-failed/)
 })
