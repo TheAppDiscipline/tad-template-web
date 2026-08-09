@@ -103,6 +103,26 @@ export function findSectionBounds(
   return { start: startIdx, end: endIdx };
 }
 
+/**
+ * `replace_section` keeps the anchor line and splices CONTENT after it, so a CONTENT block that
+ * repeats the heading writes it twice. `isDuplicateAnchor` cannot catch this: it only fires on a
+ * LATER patch that finds the duplicate already in the file, never on the patch that creates it,
+ * and by then every patch to that section fails with "Duplicate anchor. Fix manually".
+ * Only `replace_section` may strip: `replace_block` replaces the anchor line itself, so there the
+ * repeated heading is the one that survives.
+ */
+export function stripLeadingAnchorLine(
+  content: string,
+  anchor: string,
+): { content: string; stripped: boolean } {
+  const lines = content.split('\n');
+  const firstNonBlank = lines.findIndex(line => line.trim() !== '');
+  if (firstNonBlank === -1 || !anchorsEqual(lines[firstNonBlank], anchor)) {
+    return { content, stripped: false };
+  }
+  return { content: lines.slice(firstNonBlank + 1).join('\n'), stripped: true };
+}
+
 export function isDuplicateAnchor(lines: string[], anchor: string): boolean {
   let count = 0;
   for (const line of lines) {

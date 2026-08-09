@@ -552,6 +552,57 @@ should not be applied
   assert.match(getOutput(result), /TARGET_FILE not allowed/)
 })
 
+// Ported from the dogfood app (app-lista-de-compras), where writing a real patch surfaced this:
+// replace_section keeps the anchor line and splices CONTENT after it, so a CONTENT block that
+// repeats the heading writes it twice. isDuplicateAnchor cannot catch that, it only fires on a
+// LATER patch that finds the duplicate already there, and by then every patch to that section
+// fails with "Duplicate anchor. Fix manually".
+test('apply-patch replace_section drops a CONTENT block that repeats the anchor heading', () => {
+  const projectRoot = createDisciplineProject()
+  writePatch(projectRoot, 'replace-section-dup-anchor', `# Test Repeated Anchor
+TARGET_FILE: discipline.md
+PATCH_MODE: replace_section
+ANCHOR: ## 5) Sync Rules
+
+### CONTENT
+## 5) Sync Rules
+SYNC_RULE_NO_DUPLICATE_HEADING
+`)
+
+  const result = runTsx('tools/discipline/apply-patch.ts', ['--project-dir', projectRoot])
+  assert.equal(result.status, 0, getOutput(result))
+  assert.match(getOutput(result), /CONTENT repeated the anchor/)
+
+  const disciplineMd = fs.readFileSync(path.join(projectRoot, 'discipline.md'), 'utf8')
+  assert.match(disciplineMd, /SYNC_RULE_NO_DUPLICATE_HEADING/)
+  const headings = disciplineMd.split('\n').filter((line) => line.trim() === '## 5) Sync Rules')
+  assert.equal(headings.length, 1, 'the anchor heading must appear exactly once')
+})
+
+test('apply-patch replace_block keeps a CONTENT block that repeats the anchor heading', () => {
+  // replace_block replaces the anchor line too, so repeating the heading is REQUIRED there.
+  // Stripping it in this mode would delete the heading from the file.
+  const projectRoot = createDisciplineProject()
+  writePatch(projectRoot, 'replace-block-keeps-anchor', `# Test Block Keeps Anchor
+TARGET_FILE: discipline.md
+PATCH_MODE: replace_block
+ANCHOR: ## 5) Sync Rules
+
+### CONTENT
+## 5) Sync Rules
+SYNC_RULE_BLOCK_KEEPS_HEADING
+`)
+
+  const result = runTsx('tools/discipline/apply-patch.ts', ['--project-dir', projectRoot])
+  assert.equal(result.status, 0, getOutput(result))
+  assert.doesNotMatch(getOutput(result), /CONTENT repeated the anchor/)
+
+  const disciplineMd = fs.readFileSync(path.join(projectRoot, 'discipline.md'), 'utf8')
+  assert.match(disciplineMd, /SYNC_RULE_BLOCK_KEEPS_HEADING/)
+  const headings = disciplineMd.split('\n').filter((line) => line.trim() === '## 5) Sync Rules')
+  assert.equal(headings.length, 1, 'the anchor heading must survive exactly once')
+})
+
 // A failed patch must leave the repo exactly as it was found: the batch is all-or-nothing.
 // Regression: the rollback used to be unreachable. The catch block reported the failure with
 // disciplineError(), which calls process.exit(1) on the spot, so the rollback, the writer-lock
@@ -647,6 +698,71 @@ ANCHOR: ## Decisions
   assert.ok(failure, 'expected a patch_applied event with ok: false')
   assert.equal(failure.rolled_back, 1, 'the file written in the failed window must be journaled')
   assert.equal(failure.rollback_failures, 0)
+})
+
+// The rollback's own failure path. With the restore of findings.md forced to fail, the batch
+// really is half-patched, and the ledger has to say so precisely: `count` is the number of state
+// files left carrying a patch, not the number of patches that had reached applied/ (the rollback
+// undoes those too, so counting them overstates the damage).
+test('apply-patch reports an incomplete rollback and counts only the files left modified', () => {
+  const projectRoot = createDisciplineProject()
+  writePatch(projectRoot, 'a-valid-findings', `# Valid
+TARGET_FILE: findings.md
+PATCH_MODE: append
+ANCHOR: ## Decisions
+
+### CONTENT
+- ROLLBACK_FAILURE_MARKER
+`)
+  writePatch(projectRoot, 'b-broken-progress', `# Broken
+TARGET_FILE: progress.md
+PATCH_MODE: append
+ANCHOR: ## Anchor That Does Not Exist
+
+### CONTENT
+never applied
+`)
+
+  const script = path.join(projectRoot, 'failing-rollback.mjs')
+  fs.writeFileSync(
+    script,
+    `import fs from 'node:fs'
+import { applyPatches } from '${pathToImport(path.join(repoRoot, 'tools', 'discipline', 'apply-patch.ts'))}'
+// A restore is a copy whose DESTINATION is the state file; backups copy the other way, so this
+// only breaks the undo, exactly like a read-only target or a deleted backup would.
+const ops = {
+  existsSync: (p) => fs.existsSync(p),
+  copyFileSync: (src, dest) => {
+    if (dest.endsWith('findings.md')) throw new Error('EPERM: simulated read-only target')
+    fs.copyFileSync(src, dest)
+  },
+  renameSync: (src, dest) => { fs.renameSync(src, dest) },
+}
+try { await applyPatches(${JSON.stringify(projectRoot)}, false, ops) } catch (err) { console.log('FAILED:' + err.message) }
+`,
+    'utf8',
+  )
+  const out = getOutput(runTsx(script))
+  assert.match(out, /Rollback incomplete: 1 of 1 state file\(s\) could not be restored/, out)
+  assert.match(out, /Could not restore findings\.md/)
+
+  // The damage is real and reported, not silently swallowed.
+  assert.match(fs.readFileSync(path.join(projectRoot, 'findings.md'), 'utf8'), /ROLLBACK_FAILURE_MARKER/)
+  // Its patch file stays in applied/: the file still carries it, so pending/ would be a lie.
+  assert.deepEqual(fs.readdirSync(path.join(projectRoot, '.discipline', 'patches', 'pending')), ['b-broken-progress.md'])
+  assert.equal(fs.readdirSync(path.join(projectRoot, '.discipline', 'patches', 'applied')).length, 1)
+
+  const ledgerDir = path.join(projectRoot, '.discipline', 'ledger')
+  const events = fs.readdirSync(ledgerDir)
+    .flatMap((f) => fs.readFileSync(path.join(ledgerDir, f), 'utf8').trim().split('\n'))
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+  const failure = events.find((e) => e.event === 'patch_applied' && e.ok === false)
+  assert.ok(failure, 'expected a patch_applied event with ok: false')
+  assert.equal(failure.count, 1, 'count = state files left carrying a patch')
+  assert.equal(failure.rolled_back, 1)
+  assert.equal(failure.rollback_failures, 1)
+  assert.equal(failure.stranded_patches, 0)
 })
 
 // Two patches against the SAME file inside one batch, with the clock frozen so both backups
@@ -2579,6 +2695,27 @@ test('discipline:progress takes a field value spanning a blank line, and only th
   // The unindented prose is the human's, not the field's: consuming to the next bullet/## kills it.
   assert.match(progress, /Free prose the human wrote under the section, belonging to no field\./)
   assert.match(progress, /- Blockers: see Open Errors\n\nFree prose the human wrote/)
+})
+
+// Ported from the dogfood app: every log block this engine writes carries "- **Next:** ...".
+// With no Next field in Current Status, a field matcher that is not confined to that section
+// finds the log entry instead, and since a field replacement now spans the whole bullet it
+// would take the wrapped continuation line with it.
+const sectionOf = (md, heading) => md.split(new RegExp(`^## ${heading}$`, 'm'))[1].split(/^## /m)[0]
+
+test('discipline:progress never rewrites a log entry that happens to carry a field name', () => {
+  const projectRoot = createDisciplineProject({ 'SLICE_COMPLETION_PACKET.md': CANONICAL_COMPLETION_PACKET })
+  const progressPath = path.join(projectRoot, 'progress.md')
+  const withLog = WRAPPED_PROGRESS
+    .replace(/^- Next: .*\n(?: {2}.*\n)*/m, '')
+    .replace('## Deploy Notes', ['## Older Log', '', '### 2020-01-01 - Slice 2', '- **Next:** do not touch this line', '  nor this continuation of it', '', '## Deploy Notes'].join('\n'))
+  assert.ok(!sectionOf(withLog, 'Current Status').includes('- Next:'), 'fixture must have no Current Status Next field')
+  fs.writeFileSync(progressPath, withLog, 'utf8')
+  assert.equal(runProgress(projectRoot).status, 0)
+  const progress = fs.readFileSync(progressPath, 'utf8')
+
+  assert.match(progress, /- \*\*Next:\*\* do not touch this line\r?\n {2}nor this continuation of it/)
+  assert.doesNotMatch(sectionOf(progress, 'Older Log'), /Fix the double-fire/)
 })
 
 test('discipline:progress is idempotent on a file with wrapped bullets', () => {

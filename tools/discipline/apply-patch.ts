@@ -2,10 +2,10 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import minimist from 'minimist';
-import { disciplineError, disciplineErrorMessage, disciplineInfo } from './lib/types.js';
+import { disciplineError, disciplineErrorMessage, disciplineInfo, disciplineWarn } from './lib/types.js';
 import { resolveProjectRoot } from './lib/discipline-config.js';
 import { parsePatchFile } from './lib/parse-patch.js';
-import { findSectionBounds, isDuplicateAnchor, PATCH_APPLICATION_ORDER, ALLOWED_PATCH_TARGETS, normalizeLineEndings } from './lib/anchors.js';
+import { findSectionBounds, isDuplicateAnchor, stripLeadingAnchorLine, PATCH_APPLICATION_ORDER, ALLOWED_PATCH_TARGETS, normalizeLineEndings } from './lib/anchors.js';
 import { withWriterLock } from './lib/locks.js';
 import { appendLedger } from './lib/ledger.js';
 
@@ -21,15 +21,96 @@ export class PatchBatchError extends Error {
   readonly applied: number;
   readonly rolledBack: number;
   readonly rollbackFailures: number;
+  readonly unrestored: number;
+  readonly stranded: number;
   readonly targetFile: string;
-  constructor(message: string, detail: { applied: number; rolledBack: number; rollbackFailures: number; targetFile: string }) {
+  constructor(
+    message: string,
+    detail: { applied: number; rolledBack: number; unrestored: number; stranded: number; targetFile: string },
+  ) {
     super(message);
     this.name = 'PatchBatchError';
     this.applied = detail.applied;
     this.rolledBack = detail.rolledBack;
-    this.rollbackFailures = detail.rollbackFailures;
+    this.unrestored = detail.unrestored;
+    this.stranded = detail.stranded;
+    this.rollbackFailures = detail.unrestored + detail.stranded;
     this.targetFile = detail.targetFile;
   }
+}
+
+/** The three filesystem calls the rollback needs, injectable so its failure paths are testable. */
+export type RollbackOps = {
+  existsSync(p: string): boolean;
+  copyFileSync(src: string, dest: string): void;
+  renameSync(src: string, dest: string): void;
+};
+
+const realRollbackOps: RollbackOps = {
+  existsSync: (p) => fs.existsSync(p),
+  copyFileSync: (src, dest) => { fs.copyFileSync(src, dest); },
+  renameSync: (src, dest) => { fs.renameSync(src, dest); },
+};
+
+export type RollbackResult = {
+  /** Journal entries the rollback walked. */
+  attempted: number;
+  /** State files put back the way they were found. */
+  restored: string[];
+  /** State files that still carry their patch. This is what "half-patched" means, and the only
+   *  number that belongs in the ledger's `count` after a failure. */
+  unrestored: number;
+  /** Patch files left in applied/ although their target was restored: bookkeeping, not data loss. */
+  stranded: number;
+  errors: string[];
+};
+
+/**
+ * Undo every write in the journal, newest first, keeping the two failure modes apart because
+ * they mean different things to whoever reads the ledger. A journaled backup that is no longer
+ * on disk counts as unrestored: the file was written and nothing put it back.
+ */
+export function rollbackJournal(journal: RollbackEntry[], ops: RollbackOps = realRollbackOps): RollbackResult {
+  const result: RollbackResult = { attempted: journal.length, restored: [], unrestored: 0, stranded: 0, errors: [] };
+  const reason = (err: unknown) => (err instanceof Error ? err.message : String(err));
+
+  for (const entry of [...journal].reverse()) {
+    if (entry.backupPath) {
+      try {
+        if (!ops.existsSync(entry.backupPath)) throw new Error(`backup missing: ${entry.backupPath}`);
+        ops.copyFileSync(entry.backupPath, entry.targetPath);
+        result.restored.push(entry.targetPath);
+      } catch (err) {
+        result.unrestored++;
+        result.errors.push(`Could not restore ${path.basename(entry.targetPath)}: ${reason(err)}`);
+        // The file still carries this patch, so the patch file belongs in applied/, not pending/.
+        continue;
+      }
+    }
+    // Empty appliedPath = the move never happened, so the patch file is still in pending/.
+    if (entry.appliedPath && ops.existsSync(entry.appliedPath)) {
+      try {
+        ops.renameSync(entry.appliedPath, entry.patchSourcePath);
+      } catch (err) {
+        result.stranded++;
+        result.errors.push(`Could not return ${path.basename(entry.patchSourcePath)} to pending/: ${reason(err)}`);
+      }
+    }
+  }
+  return result;
+}
+
+/** The tail appended to a failed batch's message when the rollback did not fully succeed. */
+export function describeRollback(result: RollbackResult): string {
+  if (result.unrestored === 0 && result.stranded === 0) return '';
+  const parts: string[] = [];
+  if (result.unrestored > 0) {
+    parts.push(`${result.unrestored} of ${result.attempted} state file(s) could not be restored and still carry their patch`);
+  }
+  if (result.stranded > 0) {
+    parts.push(`${result.stranded} patch file(s) stayed in applied/ instead of returning to pending/`);
+  }
+  return ` | Rollback incomplete: ${parts.join('; ')}. Compare the state files against .discipline/backups/ before running anything else.`;
 }
 
 /**
@@ -71,7 +152,7 @@ function atomicWriteWithBackup(root: string, filePath: string, content: string):
   return backupPath;
 }
 
-export async function applyPatches(root: string, isDryRun = false): Promise<number> {
+export async function applyPatches(root: string, isDryRun = false, rollbackOps: RollbackOps = realRollbackOps): Promise<number> {
   const pendingDir = path.join(root, '.discipline', 'patches', 'pending');
   if (!fs.existsSync(pendingDir)) { disciplineInfo('No .discipline/patches/pending/ directory.'); return 0; }
 
@@ -118,23 +199,25 @@ export async function applyPatches(root: string, isDryRun = false): Promise<numb
   let applied: number;
   try {
     applied = await withWriterLock(root, { tool: 'discipline:patch' }, () =>
-      applyPatchesLocked(root, patches),
+      applyPatchesLocked(root, patches, rollbackOps),
     );
   } catch (err) {
     // Record the failed batch, then rethrow so the caller decides. withWriterLock releases the
     // lock in its own finally (and, when re-entered from run.ts/watch.ts, correctly leaves the
     // outer holder's lock alone), so nothing is released by hand here.
-    // count = patches still in effect after the rollback: 0 when it restored everything, and
-    // the raw applied count when it did not, because then the tree really is half-patched.
+    // count = state files still carrying a patch after the rollback: 0 when everything was
+    // restored, and only the files the rollback could not put back when it was not. Counting the
+    // patches that had reached applied/ would overstate it, since the rollback undoes those too.
     const failure = err instanceof PatchBatchError ? err : null;
     try {
       appendLedger(root, {
         event: 'patch_applied',
         targets: failure ? [failure.targetFile] : targetsTouched,
-        count: failure && failure.rollbackFailures > 0 ? failure.applied : 0,
+        count: failure?.unrestored ?? 0,
         ok: false,
         rolled_back: failure?.rolledBack ?? 0,
         rollback_failures: failure?.rollbackFailures ?? 0,
+        stranded_patches: failure?.stranded ?? 0,
       });
     } catch { /* best-effort */ }
     throw err;
@@ -152,7 +235,7 @@ export async function applyPatches(root: string, isDryRun = false): Promise<numb
 
 type PatchList = ReturnType<typeof parsePatchFile>[];
 
-function applyPatchesLocked(root: string, patches: PatchList): number {
+function applyPatchesLocked(root: string, patches: PatchList, rollbackOps: RollbackOps): number {
   const appliedDir = path.join(root, '.discipline', 'patches', 'applied');
   // Rollback journal: one entry per file this batch has written, in write order.
   const backupMap: RollbackEntry[] = [];
@@ -171,12 +254,25 @@ function applyPatchesLocked(root: string, patches: PatchList): number {
       const bounds = findSectionBounds(lines, patch.anchor);
       if (!bounds) throw new Error(`Anchor not found in ${patch.targetFile}: "${patch.anchor}"`);
 
+      // replace_section keeps the anchor line, so a CONTENT block that repeats the heading would
+      // write it twice and poison every later patch to that section. Drop it here, with a warning
+      // so the patch author fixes the source. replace_block is left alone on purpose: it replaces
+      // the anchor line itself, so there the repeated heading is the one that survives.
+      let content = patch.content;
+      if (patch.patchMode === 'replace_section') {
+        const withoutAnchor = stripLeadingAnchorLine(content, patch.anchor);
+        if (withoutAnchor.stripped) {
+          content = withoutAnchor.content;
+          disciplineWarn(`${patch.name}: CONTENT repeated the anchor "${patch.anchor}"; dropped it (replace_section keeps the heading). Remove it from the patch to silence this.`);
+        }
+      }
+
       let newLines: string[];
       switch (patch.patchMode) {
-        case 'replace_section': newLines = [...lines.slice(0, bounds.start + 1), patch.content, '', ...lines.slice(bounds.end)]; break;
-        case 'replace_block': newLines = [...lines.slice(0, bounds.start), patch.content, '', ...lines.slice(bounds.end)]; break;
-        case 'insert_after': newLines = [...lines.slice(0, bounds.end), '', patch.content, ...lines.slice(bounds.end)]; break;
-        case 'append': newLines = [...lines.slice(0, bounds.end), patch.content, '', ...lines.slice(bounds.end)]; break;
+        case 'replace_section': newLines = [...lines.slice(0, bounds.start + 1), content, '', ...lines.slice(bounds.end)]; break;
+        case 'replace_block': newLines = [...lines.slice(0, bounds.start), content, '', ...lines.slice(bounds.end)]; break;
+        case 'insert_after': newLines = [...lines.slice(0, bounds.end), '', content, ...lines.slice(bounds.end)]; break;
+        case 'append': newLines = [...lines.slice(0, bounds.end), content, '', ...lines.slice(bounds.end)]; break;
       }
 
       // Atomic write with backup. The target is modified from this line on, so the rollback
@@ -202,39 +298,24 @@ function applyPatchesLocked(root: string, patches: PatchList): number {
 
       // Undo every file this batch has written, newest first. The journal is written before
       // each post-write step, so this covers the current patch too, not only the earlier ones.
-      let rollbackFailures = 0;
-      if (backupMap.length > 0) {
-        disciplineInfo(`\nRolling back ${backupMap.length} written file(s)...`);
-        for (const entry of [...backupMap].reverse()) {
-          try {
-            if (entry.backupPath && fs.existsSync(entry.backupPath)) {
-              fs.copyFileSync(entry.backupPath, entry.targetPath);
-              disciplineInfo(`  Restored: ${path.basename(entry.targetPath)}`);
-            }
-            // Move patch back from applied to pending. Empty appliedPath = the move never
-            // happened, so the patch file is still sitting in pending/ and needs nothing.
-            if (entry.appliedPath && fs.existsSync(entry.appliedPath)) {
-              fs.renameSync(entry.appliedPath, entry.patchSourcePath);
-            }
-          } catch (rollbackErr) {
-            // Keep restoring the rest: a single failed entry must not strand the others.
-            rollbackFailures++;
-            disciplineErrorMessage(`  Rollback failed for ${path.basename(entry.targetPath)}: ${rollbackErr}`);
-          }
+      const rollback = rollbackJournal(backupMap, rollbackOps);
+      if (rollback.attempted > 0) {
+        disciplineInfo(`\nRolling back ${rollback.attempted} written file(s)...`);
+        for (const restored of rollback.restored) disciplineInfo(`  Restored: ${path.basename(restored)}`);
+        for (const error of rollback.errors) disciplineErrorMessage(`  ${error}`);
+        if (rollback.unrestored === 0 && rollback.stranded === 0) {
+          disciplineInfo('Rollback complete. All files restored to pre-patch state.');
         }
-        if (rollbackFailures === 0) disciplineInfo('Rollback complete. All files restored to pre-patch state.');
       }
 
       // Throw, never exit: this function is imported by run.ts and watch.ts, and process.exit()
       // here would skip their finally blocks (the slice lease in run.ts, the queue bookkeeping
       // in watch.ts). The CLI entrypoint at the bottom of this file owns the exit code.
-      const detail = rollbackFailures > 0
-        ? ` | Rollback incomplete: ${rollbackFailures} of ${backupMap.length} entr(ies) could not be restored. The state files may be half-patched. Compare them against .discipline/backups/ before running anything else.`
-        : '';
-      throw new PatchBatchError(`Patch failed: ${patch.name} -> ${msg}${detail}`, {
+      throw new PatchBatchError(`Patch failed: ${patch.name} -> ${msg}${describeRollback(rollback)}`, {
         applied,
-        rolledBack: backupMap.length,
-        rollbackFailures,
+        rolledBack: rollback.attempted,
+        unrestored: rollback.unrestored,
+        stranded: rollback.stranded,
         targetFile: patch.targetFile,
       });
     }
