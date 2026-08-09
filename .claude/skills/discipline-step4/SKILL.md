@@ -37,23 +37,54 @@ No external tools required. Claude generates everything directly.
 
 ## What the user sees
 
-1. The skill resolves the origin (input/reentry/feedback/hardening) and reports it, or stops if it is ambiguous or incoherent
-2. It checks that the STEP_4_EXECUTION_PACKET exists and has STATUS: validated, plus the packets that origin requires
-3. Reads all available packets and the project context
-4. Expands each slice with detailed scope, contracts, acceptance criteria, and complexity
-5. Generates the STEP_5_SLICE_PACKET for the first ready slice
-6. Emits patch blocks for task_plan.md, discipline.md, and findings.md
-7. Applies patches, assembles paste-readies, and reports a summary
+1. The skill checks that no unrelated patches are pending, and stops if there are (preflight)
+2. It resolves the origin (input/reentry/feedback/hardening) and reports it, or stops if it is ambiguous or incoherent
+3. It checks that the STEP_4_EXECUTION_PACKET exists and has STATUS: validated, plus the packets that origin requires
+4. Reads all available packets and the project context
+5. Expands each slice with detailed scope, contracts, acceptance criteria, and complexity
+6. Generates the STEP_5_SLICE_PACKET for the first ready slice
+7. Emits patch blocks for task_plan.md, discipline.md, and findings.md
+8. Applies patches, assembles paste-readies, and reports a summary
 
 ## Prerequisites
 
 - Step 2 completed (`STEP_4_EXECUTION_PACKET.md` with STATUS: validated)
 - Node.js + npm (to run the Discipline Loop scripts)
+- `.discipline/patches/pending/` empty (the skill verifies this and stops if not)
 - **Recommended role: Premium Reliable - Implementation or Premium Reliable - Mechanical Work.** Slice expansion is structured work that does not require Critical Decisions. Frontier-Budget - Implementation is also valid for simple slices as long as you keep gates and review. Current concrete model: resolve it on your provider's official models/pricing page, using the model-selection guide in The App Discipline vault (sold separately) to map the role.
 
 ---
 
 ## Internal implementation
+
+### Preflight: pending patches
+
+Before reading inputs, before reasoning, before writing anything: list `.discipline/patches/pending/*.md`.
+
+If no `.md` file is there, continue. If ANY file is there, STOP.
+
+A non-empty `pending/` on entry is an anomaly, not a handoff. This step applies its own blocks before it finishes, so whatever is still sitting there is the residue of an earlier run that was interrupted between writing its blocks and applying them. That residue deserves a review, not a bulk apply.
+
+Show what is there, with each file's routing header, so the risk is visible before the operator decides (a `replace_section` leftover overwrites a whole section of a state file; an `append` one only adds lines):
+
+```
+There are pending patches from earlier work:
+- <file>: TARGET_FILE <target> | PATCH_MODE <mode> | ANCHOR <anchor>
+- ...
+
+`npm run discipline:patch` applies EVERYTHING in pending/, so running this step now would apply that
+unrelated work together with this step's own blocks, in the same silent operation. Resolve them
+first, then re-run this step:
+
+- read them, and if they still hold, apply them consciously with `npm run discipline:patch`; or
+- move them out of pending/ (for example into `.discipline/patches/parked/`) to park them without
+  applying them. Do not delete them: they are your evidence. Note that parking also takes them out
+  of the pending count in `npm run discipline:validate`, so nothing else will remind you.
+```
+
+Do not read inputs, do not create files, do not offer to resolve it from inside the skill.
+
+**Why this stops instead of asking for confirmation.** `discipline:patch` has no per-file selection: it applies the whole directory or nothing. A confirmation prompt would not give the operator control over that, it would only move an unreviewed old patch one keystroke closer to being applied, inside a run whose summary would then present it as this step's work. Pending work is resolved deliberately, outside the skill, with the files in front of you; then the step is re-run against an empty `pending/`. That a producer step legitimately writes to `pending/` is exactly why it must not inherit anything there: from Phase 0 on, every phase assumes `pending/` holds only what this run wrote. Same contract as `/discipline-feedback-intake`.
 
 ### Phase 0a: Resolve the origin (fail-loud)
 
@@ -379,13 +410,13 @@ Report: `STEP_5_SLICE_PACKET generated for Slice <N>: <name>`
 Update the Ready Slices section of `task_plan.md` with the expanded slices. Format:
 
 ```markdown
+## TASK_PLAN_PATCH_BLOCK - Step 4 ready slices
+
 TARGET_FILE: task_plan.md
 PATCH_MODE: replace_section
 ANCHOR: ## Ready Slices
 
-CONTENT:
-## Ready Slices
-
+### CONTENT
 | # | Slice | Complexity | Dependencies | Status |
 |---|---|---|---|---|
 | 0 | <name> | S/M/L | none | ready |
@@ -396,51 +427,47 @@ CONTENT:
 
 Only the selected slice with an emitted packet and satisfied dependencies may be `ready`. Preserve slices already marked `done`; detailed expansion alone never promotes a slice.
 
-Save to: `.discipline/patches/pending/TASK_PLAN_PATCH_BLOCK.md`
+Save to: `.discipline/patches/pending/TASK_PLAN_PATCH_step4_<YYYY-MM-DD-HHMMSS>.md`, using this run's timestamp so a retry never overwrites an unapplied patch from an earlier run.
 
 **2. DISCIPLINE_MD_PATCH_BLOCK** (only if contracts need updating):
 
 If during slice expansion you identified contracts that need refinement (e.g. a missing field, an undocumented endpoint, an incomplete type), generate the patch:
 
 ```markdown
+## DISCIPLINE_MD_PATCH_BLOCK - Step 4 contract update
+
 TARGET_FILE: discipline.md
 PATCH_MODE: replace_section
-ANCHOR: <specific section to update>
+ANCHOR: <specific section to update, exactly as it reads in discipline.md>
 
-CONTENT:
-<updated content>
+### CONTENT
+<the new BODY of that section, WITHOUT repeating its heading>
 ```
+
+**`replace_section` keeps the anchor heading and replaces only what follows it.** Never repeat the heading inside `### CONTENT`: that would leave the heading twice, and a duplicate anchor makes every later patch to that section fail with "Duplicate anchor". The content you write is the section body, starting at its first line after the heading.
 
 Only generate this block if there are concrete changes. Do not generate it "just in case".
 
-Save to: `.discipline/patches/pending/DISCIPLINE_MD_PATCH_BLOCK.md`
+Save to: `.discipline/patches/pending/DISCIPLINE_MD_PATCH_step4_<YYYY-MM-DD-HHMMSS>.md`, using this run's timestamp so a retry never overwrites an unapplied patch from an earlier run.
 
 **3. FINDINGS_APPEND_BLOCK** (always generated):
 
 Document the scope decisions made during the expansion:
 
 ```markdown
+## FINDINGS_APPEND_BLOCK - Step 4 slice expansion (origin: <mode>)
+
 TARGET_FILE: findings.md
 PATCH_MODE: append
+ANCHOR: ## Decisions
 
-CONTENT:
-## Step 4 - Slice expansion (origin: <mode>, <date>)
-
-### Scope decisions
-- <decision 1: what was included/excluded and why>
-- <decision 2>
-...
-
-### Deferred items
-- <item postponed to a later slice or post-MVP>
-...
-
-### New risks identified
-- <risk discovered during the expansion, if any>
-...
+### CONTENT
+- <date> · Step 4 slice expansion (origin: <mode>): <decision 1, what was included/excluded and why>; <decision 2>
 ```
 
-Save to: `.discipline/patches/pending/FINDINGS_APPEND_BLOCK.md`
+If the expansion postponed items or uncovered new risks, emit additional blocks, one file per section, with `ANCHOR: ## Deferred` (items postponed to a later slice or post-MVP) and `ANCHOR: ## Risks` (risks discovered during the expansion). Use dated list entries only, never headings inside the content: the anchors of `findings.md` are headings, and appending a heading would corrupt the section structure.
+
+Save to: `.discipline/patches/pending/FINDINGS_APPEND_step4_<YYYY-MM-DD-HHMMSS>_<section>.md`, using this run's timestamp. The stamp is what makes the name unique: without it, a second run (or a retry after a failure) silently overwrites the pending patch of an earlier one.
 
 Report: `Patch blocks generated: <N> (TASK_PLAN, DISCIPLINE_MD?, FINDINGS)`
 
@@ -500,6 +527,7 @@ Next step: implement Slice <N> - <name> using `.discipline/paste-ready/step-5-in
 
 ## Error handling
 
+- If the preflight finds pending patches: stop before reading inputs. Never apply work this run did not produce as a side effect of running this step.
 - If `discipline:step4-origin` exits 3 (ambiguous): stop, show the candidate modes, and ask the operator to re-run with `--mode <x>`. Expected in Fase 1 (packets linger with no consumption model); `--mode` is the remedy, not deleting packets. Never pick one silently.
 - If `discipline:step4-origin` exits 2 (invalid): stop, show the reason verbatim (execution packet not validated, completion gate not green, feedback recommends Step 7, feedback branch not declared, or nothing to expand), and name the step to run instead.
 - If `STEP_4_EXECUTION_PACKET` does not exist: stop with "Run /discipline-step2 first."
@@ -514,6 +542,7 @@ Next step: implement Slice <N> - <name> using `.discipline/paste-ready/step-5-in
 
 ## Critical rules
 
+- Never run `discipline:patch` if `pending/` contained files before this run. The command applies everything in the directory with no per-file selection; the preflight is the only guard.
 - Never guess the origin. Resolve it with `discipline:step4-origin`; on ambiguous or invalid, stop and ask. `--mode` chooses the branch but never skips the resolver's validation.
 - Do not claim currency. The resolver proves structural/transitional coherence only (Phase 1 has no consumption model); a single residual packet reads as coherent. Say so if relevant.
 - Use Extended Thinking for slice expansion. The value of this step is precise scope and verifiable acceptance criteria.

@@ -11,10 +11,11 @@ No external tools required. Claude generates everything directly using Extended 
 
 ## What the user sees
 
-1. The skill verifies that the Step 1 inputs exist
-2. It runs 6 outputs sequentially with deep reasoning
-3. It applies patch blocks to the repo and assembles the paste-readies
-4. It reports progress and shows a summary with the next step
+1. The skill checks that no unrelated patches are pending, and stops if there are (preflight)
+2. It verifies that the Step 1 inputs exist
+3. It runs 6 outputs sequentially with deep reasoning
+4. It applies patch blocks to the repo and assembles the paste-readies
+5. It reports progress and shows a summary with the next step
 
 ## Prerequisites
 
@@ -22,11 +23,41 @@ No external tools required. Claude generates everything directly using Extended 
 - `STEP_2_ARCHITECTURE_PACKET.md` must exist in `.discipline/packets/`
 - `STEP_4_EXECUTION_PACKET.draft.md` must exist in `.discipline/packets/`
 - Node.js + npm (to run the Discipline Loop scripts)
+- `.discipline/patches/pending/` empty (the skill verifies this and stops if not)
 - **Required role: Premium Reliable - Critical Decisions** with the strongest reasoning available. Resolve the concrete current model on your provider's official models/pricing page; the model-selection guide in The App Discipline vault (sold separately) maps this role to what to look for. You may use Frontier-Budget only for an early draft; locking the architecture requires Premium.
 
 ---
 
 ## Internal implementation
+
+### Preflight: pending patches
+
+Before reading inputs, before reasoning, before writing anything: list `.discipline/patches/pending/*.md`.
+
+If no `.md` file is there, continue. If ANY file is there, STOP.
+
+A non-empty `pending/` on entry is an anomaly, not a handoff. This step applies its own blocks before it finishes, so whatever is still sitting there is the residue of an earlier run that was interrupted between writing its blocks and applying them. That residue deserves a review, not a bulk apply.
+
+Show what is there, with each file's routing header, so the risk is visible before the operator decides (a `replace_section` leftover overwrites a whole section of a state file; an `append` one only adds lines):
+
+```
+There are pending patches from earlier work:
+- <file>: TARGET_FILE <target> | PATCH_MODE <mode> | ANCHOR <anchor>
+- ...
+
+`npm run discipline:patch` applies EVERYTHING in pending/, so running this step now would apply that
+unrelated work together with this step's own blocks, in the same silent operation. Resolve them
+first, then re-run this step:
+
+- read them, and if they still hold, apply them consciously with `npm run discipline:patch`; or
+- move them out of pending/ (for example into `.discipline/patches/parked/`) to park them without
+  applying them. Do not delete them: they are your evidence. Note that parking also takes them out
+  of the pending count in `npm run discipline:validate`, so nothing else will remind you.
+```
+
+Do not read inputs, do not create files, do not offer to resolve it from inside the skill.
+
+**Why this stops instead of asking for confirmation.** `discipline:patch` has no per-file selection: it applies the whole directory or nothing. A confirmation prompt would not give the operator control over that, it would only move an unreviewed old patch one keystroke closer to being applied, inside a run whose summary would then present it as this step's work. Pending work is resolved deliberately, outside the skill, with the files in front of you; then the step is re-run against an empty `pending/`. That a producer step legitimately writes to `pending/` is exactly why it must not inherit anything there: from Phase 0 on, every phase assumes `pending/` holds only what this run wrote. Same contract as `/discipline-feedback-intake`.
 
 ### Phase 0: Verify inputs and model
 
@@ -179,7 +210,7 @@ Generate the blocks that apply:
 
 Each block must use TARGET_FILE, PATCH_MODE, ANCHOR, and CONTENT.
 
-Save to: `.discipline/patches/pending/` (one file per block)
+Save to: `.discipline/patches/pending/`, one file per block, named `<BLOCK_NAME>_step2_<YYYY-MM-DD-HHMMSS>.md` with this run's timestamp. The stamp is what makes the name unique: without it, a second run (or a retry after a failure) silently overwrites the pending patch of an earlier one.
 Report: `Output 6/6: Patch blocks`
 
 ### Phase 2: Post-processing
@@ -241,6 +272,7 @@ Next step: <determine per config>
 
 ## Error handling
 
+- If the preflight finds pending patches: stop before reading inputs. Never apply work this run did not produce as a side effect of running this step.
 - If `STEP_2_ARCHITECTURE_PACKET` does not exist: stop with "Run /discipline-step1 first."
 - If `npm run discipline:patch` fails: report the error and continue with the assembly. The operator can apply patches manually.
 - If `npm run discipline:assemble` fails: report which files were missing and suggest a review.
@@ -250,6 +282,7 @@ Next step: <determine per config>
 
 ## Critical rules
 
+- Never run `discipline:patch` if `pending/` contained files before this run. The command applies everything in the directory with no per-file selection; the preflight is the only guard.
 - Use Extended Thinking for outputs 1-5. The value of this step is the deep reasoning.
 - Do not invent business logic. If information is missing, document the assumption in findings.md.
 - Do not change the lane or the stack without strong justification.

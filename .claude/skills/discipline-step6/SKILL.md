@@ -1,6 +1,6 @@
 ---
 name: discipline-step6
-description: "Automate Discipline Loop Step 6: deploy the build candidate, verify it with real usage, and produce POST_DEPLOY_FEEDBACK_PACKET. Triggers on /discipline-step6 or 'run step 6', 'deploy and verify', 'post-deploy feedback'."
+description: "Automate Discipline Loop Step 6: deploy the build candidate, verify it with real usage, and produce POST_DEPLOY_FEEDBACK_PACKET. Triggers on /discipline-step6 or 'run step 6', 'deploy and verify'."
 ---
 
 # /discipline-step6 - Automate Step 6 of the Discipline Loop pipeline
@@ -11,24 +11,55 @@ This skill is more interactive than the previous ones: it runs real commands and
 
 ## What the user sees
 
-1. The skill verifies that the Step 5 inputs exist
-2. Runs gates and build
-3. Proposes the deploy command based on lane and hosting
-4. Runs post-deploy verification (Playwright if available, manual if not)
-5. Asks the operator feedback questions
-6. Generates POST_DEPLOY_FEEDBACK_PACKET and patch blocks
-7. Assembles the paste-readies and reports the next step
+1. The skill checks that no unrelated patches are pending, and stops if there are (preflight)
+2. It verifies that the Step 5 inputs exist
+3. Runs gates and build
+4. Proposes the deploy command based on lane and hosting
+5. Runs post-deploy verification (Playwright if available, manual if not)
+6. Asks the operator feedback questions
+7. Generates POST_DEPLOY_FEEDBACK_PACKET and patch blocks
+8. Assembles the paste-readies and reports the next step
 
 ## Prerequisites
 
 - Step 5 completed (`DEPLOY_READINESS_PACKET` in `.discipline/packets/`)
 - Build candidate ready (gates passing)
 - Node.js + npm
+- `.discipline/patches/pending/` empty (the skill verifies this and stops if not)
 - Deploy credentials configured for the lane (Vercel, EAS, Railway, etc.)
 
 ---
 
 ## Internal implementation
+
+### Preflight: pending patches
+
+Before reading inputs, before reasoning, before writing anything: list `.discipline/patches/pending/*.md`.
+
+If no `.md` file is there, continue. If ANY file is there, STOP.
+
+A non-empty `pending/` on entry is an anomaly, not a handoff. This step applies its own blocks before it finishes, so whatever is still sitting there is the residue of an earlier run that was interrupted between writing its blocks and applying them. That residue deserves a review, not a bulk apply.
+
+Show what is there, with each file's routing header, so the risk is visible before the operator decides (a `replace_section` leftover overwrites a whole section of a state file; an `append` one only adds lines):
+
+```
+There are pending patches from earlier work:
+- <file>: TARGET_FILE <target> | PATCH_MODE <mode> | ANCHOR <anchor>
+- ...
+
+`npm run discipline:patch` applies EVERYTHING in pending/, so running this step now would apply that
+unrelated work together with this step's own blocks, in the same silent operation. Resolve them
+first, then re-run this step:
+
+- read them, and if they still hold, apply them consciously with `npm run discipline:patch`; or
+- move them out of pending/ (for example into `.discipline/patches/parked/`) to park them without
+  applying them. Do not delete them: they are your evidence. Note that parking also takes them out
+  of the pending count in `npm run discipline:validate`, so nothing else will remind you.
+```
+
+Do not read inputs, do not create files, do not offer to resolve it from inside the skill.
+
+**Why this stops instead of asking for confirmation.** `discipline:patch` has no per-file selection: it applies the whole directory or nothing. A confirmation prompt would not give the operator control over that, it would only move an unreviewed old patch one keystroke closer to being applied, inside a run whose summary would then present it as this step's work. Pending work is resolved deliberately, outside the skill, with the files in front of you; then the step is re-run against an empty `pending/`. That a producer step legitimately writes to `pending/` is exactly why it must not inherit anything there: from Phase 0 on, every phase assumes `pending/` holds only what this run wrote. Same contract as `/discipline-feedback-intake`.
 
 ### Phase 0: Verify inputs
 
@@ -277,7 +308,7 @@ If there are issues, new features, or new risks:
 - `TASK_PLAN_PATCH_BLOCK`: add new items to the backlog
 - `FINDINGS_APPEND_BLOCK`: document frictions, risks, decisions
 
-Save to: `.discipline/patches/pending/`
+Save to: `.discipline/patches/pending/`, one file per block, named `<BLOCK_NAME>_step6_<YYYY-MM-DD-HHMMSS>.md` with this run's timestamp. The stamp is what makes the name unique: without it, a second run (or a retry after a failure) silently overwrites the pending patch of an earlier one.
 
 ### Phase 5: Post-processing
 
@@ -335,6 +366,7 @@ Next step:
 
 ## Error handling
 
+- If the preflight finds pending patches: stop before reading inputs. Never apply work this run did not produce as a side effect of running this step.
 - If `DEPLOY_READINESS_PACKET` does not exist: stop with "Complete the slices in Step 5 first."
 - If gates fail: stop. Do not deploy with broken gates.
 - If the build fails: stop. Report the error output.
@@ -347,6 +379,7 @@ Next step:
 
 ## Critical rules
 
+- Never run `discipline:patch` if `pending/` contained files before this run. The command applies everything in the directory with no per-file selection; the preflight is the only guard.
 - Do not deploy without gates passing. Never. No exceptions.
 - Do not deploy without the operator's explicit confirmation. The skill proposes, the operator approves.
 - Do not invent feedback. The POST_DEPLOY_FEEDBACK_PACKET reflects what the operator said, not what Claude infers.

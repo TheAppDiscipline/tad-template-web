@@ -11,22 +11,53 @@ No external tools required. Claude generates everything directly using Extended 
 
 ## What the user sees
 
-1. The skill verifies that the Step 6 inputs exist
-2. It asks for confirmation of the product decision (if it is not explicit)
-3. It runs 5 outputs sequentially with deep reasoning
-4. It applies patch blocks to the repo and assembles paste-readies
-5. It reports progress and shows a summary with the next step
+1. The skill checks that no unrelated patches are pending, and stops if there are (preflight)
+2. It verifies that the Step 6 inputs exist
+3. It asks for confirmation of the product decision (if it is not explicit)
+4. It runs 5 outputs sequentially with deep reasoning
+5. It applies patch blocks to the repo and assembles paste-readies
+6. It reports progress and shows a summary with the next step
 
 ## Prerequisites
 
 - Step 6 completed (`POST_DEPLOY_FEEDBACK_PACKET` in `.discipline/packets/`)
 - An explicit decision to take the app to product (sell it or open it to the public)
 - Node.js + npm (to run the Discipline Loop scripts)
+- `.discipline/patches/pending/` empty (the skill verifies this and stops if not)
 - **Required role: Premium Reliable - Critical Decisions** with the strongest reasoning available. Hardening decisions are architectural. Do not close them out with mechanical roles, free tiers, or Frontier-Budget without a Premium review.
 
 ---
 
 ## Internal implementation
+
+### Preflight: pending patches
+
+Before reading inputs, before reasoning, before writing anything: list `.discipline/patches/pending/*.md`.
+
+If no `.md` file is there, continue. If ANY file is there, STOP.
+
+A non-empty `pending/` on entry is an anomaly, not a handoff. This step applies its own blocks before it finishes, so whatever is still sitting there is the residue of an earlier run that was interrupted between writing its blocks and applying them. That residue deserves a review, not a bulk apply.
+
+Show what is there, with each file's routing header, so the risk is visible before the operator decides (a `replace_section` leftover overwrites a whole section of a state file; an `append` one only adds lines):
+
+```
+There are pending patches from earlier work:
+- <file>: TARGET_FILE <target> | PATCH_MODE <mode> | ANCHOR <anchor>
+- ...
+
+`npm run discipline:patch` applies EVERYTHING in pending/, so running this step now would apply that
+unrelated work together with this step's own blocks, in the same silent operation. Resolve them
+first, then re-run this step:
+
+- read them, and if they still hold, apply them consciously with `npm run discipline:patch`; or
+- move them out of pending/ (for example into `.discipline/patches/parked/`) to park them without
+  applying them. Do not delete them: they are your evidence. Note that parking also takes them out
+  of the pending count in `npm run discipline:validate`, so nothing else will remind you.
+```
+
+Do not read inputs, do not create files, do not offer to resolve it from inside the skill.
+
+**Why this stops instead of asking for confirmation.** `discipline:patch` has no per-file selection: it applies the whole directory or nothing. A confirmation prompt would not give the operator control over that, it would only move an unreviewed old patch one keystroke closer to being applied, inside a run whose summary would then present it as this step's work. Pending work is resolved deliberately, outside the skill, with the files in front of you; then the step is re-run against an empty `pending/`. That a producer step legitimately writes to `pending/` is exactly why it must not inherit anything there: from Phase 0 on, every phase assumes `pending/` holds only what this run wrote. Same contract as `/discipline-feedback-intake`.
 
 ### Phase 0: Verify inputs and the product decision
 
@@ -219,29 +250,31 @@ Generate the 3 blocks:
 1. **DISCIPLINE_MD_PATCH_BLOCK** — change PROFILE to PROD and update the relevant sections:
 
 ```markdown
+## DISCIPLINE_MD_PATCH_BLOCK - Step 7 profile change
+
 TARGET_FILE: discipline.md
 PATCH_MODE: replace_section
 ANCHOR: ## 0) Profile
 
-CONTENT:
-## 0) Profile
-
+### CONTENT
 PROFILE: PROD
 <rest of the switches unchanged>
 ```
+
+**`replace_section` keeps the anchor heading and replaces only what follows it.** Never repeat the heading inside `### CONTENT`: that would leave the heading twice, and a duplicate anchor makes every later patch to that section fail with "Duplicate anchor". The content you write is the section body, starting at its first line after the heading, and it must carry over every switch you are not changing.
 
 If the hardening adds new gates, rate limits, or contracts, generate additional patches for the corresponding sections of discipline.md.
 
 2. **TASK_PLAN_PATCH_BLOCK** — add hardening slices to Ready Slices:
 
 ```markdown
+## TASK_PLAN_PATCH_BLOCK - Step 7 hardening slices
+
 TARGET_FILE: task_plan.md
 PATCH_MODE: replace_section
 ANCHOR: ## 4) Ready Slices
 
-CONTENT:
-## 4) Ready Slices
-
+### CONTENT
 ### Hardening - PROD-<phase>
 
 | # | Slice | Complexity | Dependencies | Status |
@@ -254,26 +287,23 @@ CONTENT:
 3. **FINDINGS_APPEND_BLOCK** — document the decisions:
 
 ```markdown
+## FINDINGS_APPEND_BLOCK - Step 7 hardening decision
+
 TARGET_FILE: findings.md
 PATCH_MODE: append
+ANCHOR: ## Decisions
 
-CONTENT:
-## Step 7 - Hardening decision (<date>)
-
-### Activated areas
-- <area>: <justification>
-
-### Deferred areas
-- <area>: <trigger to reevaluate>
-
-### Skipped areas
-- <area>: <why it does not apply>
-
-### Accepted risks
-- <risk that is consciously accepted>
+### CONTENT
+- <date> · Step 7 hardening decision:
+  - Activated: <area>, <justification>
+  - Deferred: <area>, <trigger to reevaluate>
+  - Skipped: <area>, <why it does not apply>
+  - Accepted risks: <risk that is consciously accepted>
 ```
 
-Save to: `.discipline/patches/pending/` (one file per block)
+Use dated list entries only, never headings inside the content: the anchors of `findings.md` are headings, and appending a heading would corrupt the section structure.
+
+Save to: `.discipline/patches/pending/`, one file per block, named `<BLOCK_NAME>_step7_<YYYY-MM-DD-HHMMSS>.md` with this run's timestamp. The stamp is what makes the name unique: without it, a second run (or a retry after a failure) silently overwrites the pending patch of an earlier one.
 Report: `✓ Output 5/5: Patch blocks`
 
 ### Phase 2: Post-processing
@@ -328,6 +358,7 @@ Next step: /discipline-step4 to expand the hardening slices
 
 ## Error handling
 
+- If the preflight finds pending patches: stop before reading inputs. Never apply work this run did not produce as a side effect of running this step.
 - If `POST_DEPLOY_FEEDBACK_PACKET` does not exist: stop with "Run /discipline-step6 first."
 - If the user has no product decision: stop with clear options (stay on SHARED_SYNC, gather more feedback, etc.)
 - If `npm run discipline:patch` fails: report the error and continue with the assembly. The patch blocks are in `.discipline/patches/pending/` for manual application.
@@ -339,6 +370,7 @@ Next step: /discipline-step4 to expand the hardening slices
 
 ## Critical rules
 
+- Never run `discipline:patch` if `pending/` contained files before this run. The command applies everything in the directory with no per-file selection; the preflight is the only guard.
 - Use Extended Thinking for all outputs. Hardening decisions are architectural.
 - Do not activate areas without real evidence from the feedback. "Just in case" is not a justification.
 - Do not harden everything at once. Assign PROD-1/2/3 phases and start with only the immediate phase.
