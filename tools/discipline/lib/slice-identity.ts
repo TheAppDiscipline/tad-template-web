@@ -16,6 +16,13 @@ import { parsePacketMeta } from './packet-meta.js';
  *      an error with the candidates listed, never a silent pick.
  */
 
+/**
+ * A slice heading: `## Slice <id>`, or a bare `## S13` / `## 13`. The id runs to end of line or to
+ * a dash/colon separator, which is what keeps `## 4) Ready Slices` from reading as slice 4, and the
+ * `s?\d` rule below is what keeps `### C1` / `### AC2` / `### R1` from reading as slices at all.
+ */
+const SLICE_HEADING_RE = /^(#{2,4})[ 	]+(?:slice[ 	]+)?([A-Za-z][A-Za-z0-9._-]*|\d[A-Za-z0-9._-]*)[ 	]*(?:[-–—:][ 	]*.*)?$/gim;
+
 /** A `## Slice <id> - <title>` heading found in task_plan.md. */
 export interface SliceHeading {
   /** The heading line, verbatim. */
@@ -85,22 +92,19 @@ export function findSliceHeadings(taskPlan: string): SliceHeading[] {
   const headings: SliceHeading[] = [];
   const lines = taskPlan.split('\n');
   for (let i = 0; i < lines.length; i++) {
-    const match = lines[i].match(/^(#{2,4})\s+(?:slice\s+)?([A-Za-z]?\d[A-Za-z0-9._-]*|[A-Za-z][A-Za-z0-9._-]*)\b(.*)$/i);
+    const match = new RegExp(SLICE_HEADING_RE.source, 'i').exec(lines[i]);
     if (!match) continue;
-    // "## Ready Slices" and friends are section headings, not slices: an id must either carry a
-    // digit or follow the word "slice".
-    const declaredWithKeyword = /^#{2,4}\s+slice\s/i.test(lines[i]);
-    if (!declaredWithKeyword && !/\d/.test(match[2])) continue;
-    // A numbered section heading ("## 4) Ready Slices") is not slice 4. The id has to end the
-    // line or be followed by a separator, never by the ")" of an outline number.
-    if (!/^(?:\s*$|\s*[-–—:[(]|\s+\S)/.test(match[3]) || /^\)/.test(match[3])) continue;
+    // Without the keyword the id must look like a slice id, so acceptance-criteria headings
+    // (`### C1`, `### AC2`) and section headings never become slices.
+    const withKeyword = /^#{2,4}[ 	]+slice[ 	]/i.test(lines[i]);
+    if (!withKeyword && !/^s?\d/i.test(match[2])) continue;
     const id = normalizeSliceId(match[2]);
     if (!id) continue;
     headings.push({
       raw: lines[i],
       rawId: match[2],
       id,
-      title: match[3].trim().replace(/^[-–—:]\s*/, ''),
+      title: (lines[i].slice(match[0].indexOf(match[2]) + match[2].length) || '').trim().replace(/^[-–—:]\s*/, ''),
       line: i,
       level: match[1].length,
     });
@@ -258,16 +262,30 @@ export function readSliceDeclarations(content: string, fileName?: string): Slice
   const body = content.replace(/^﻿/, '').replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '');
 
   // Root field, the form Step 4 emits and every real packet carries: `SLICE: S27E3b - Title`.
-  const field = body.match(/^\s*SLICE:\s*(.+?)\s*$/im);
-  if (field) push('SLICE field', field[1], idFromText(field[1]));
+  // Only the HEADER counts, meaning the lines before the first `##` section. Prose further down
+  // wraps, and a sentence that breaks right before "slice: contra el supermercado real..." is not
+  // a declaration; that exact line exists in the dogfood project's packets.
+  // matchAll, not match: two SLICE: lines in the header declare two slices, and reading only the
+  // first would answer with one of them as if the other were not there.
+  const bodyLines = body.split('\n');
+  const titleLine = bodyLines.findIndex((line) => /^#{1,4}[ \t]/.test(line));
+  const nextHeading = bodyLines.findIndex((line, index) => index > titleLine && /^#{1,4}[ \t]/.test(line));
+  const header = bodyLines.slice(0, nextHeading === -1 ? bodyLines.length : nextHeading).join('\n');
+  for (const field of header.matchAll(/^[ \t]*SLICE:[ \t]*(.+?)[ \t]*$/gim)) {
+    push('SLICE field', field[1], idFromText(field[1]));
+  }
 
-  // `## Slice S13 - Title` / `## S13`: the heading itself names the slice.
-  const heading = body.match(/^#{2,4}\s+(?:slice\s+)?([A-Za-z]?\d[A-Za-z0-9._-]*)\s*(?:[-–—:].*)?$/im);
-  if (heading) push('Slice heading', heading[0], normalizeSliceId(heading[1]));
+  // `## Slice S13 - Title` / `## S13`. Without the `Slice` keyword the id must look like a slice
+  // id (`S13`, `13`, `13.2`): packets are full of internal headings like `### C1`, `### AC2` or
+  // `### R1`, and reading those as identity turned every real legacy packet into a contradiction.
+  for (const heading of body.matchAll(SLICE_HEADING_RE)) {
+    const withKeyword = /^#{2,4}\s+slice\s/i.test(heading[0]);
+    if (!withKeyword && !/^s?\d/i.test(heading[2])) continue;
+    push('Slice heading', heading[0], normalizeSliceId(heading[2]));
+  }
 
   // `## Slice` section whose first entry is the id.
-  const section = body.match(/^#{2,4}\s+Slice\s*$\r?\n([\s\S]*?)(?=\r?\n#{1,4}\s|$)/im);
-  if (section) {
+  for (const section of body.matchAll(/^#{2,4}[ \t]+Slice[ \t]*$\r?\n([\s\S]*?)(?=\r?\n#{1,4}[ \t]|$)/gim)) {
     const firstEntry = section[1].split('\n').map((line) => line.trim()).find((line) => line !== '');
     if (firstEntry) push('Slice section', firstEntry, idFromText(firstEntry));
   }
@@ -334,6 +352,20 @@ export function locateSlicePacket(root: string, sliceId: string, taskPlan?: stri
   const dir = path.join(root, '.discipline', 'packets');
   const wanted = normalizeSliceId(sliceId);
   const warnings: string[] = [];
+
+  // The plan decides first. A packet whose slice is not in task_plan.md exactly once is an orphan:
+  // `STEP_5_SLICE_PACKET_99.md` plus `--slice 99` would otherwise assemble and run a slice the plan
+  // never planned, which is the same class of miss as picking up someone else's packet.
+  if (taskPlan !== undefined) {
+    const resolution = resolveSlice(taskPlan, wanted);
+    if (!resolution.ok) {
+      return {
+        ok: false,
+        reason: resolution.reason === 'not-found' ? 'missing' : 'mismatch',
+        message: `${resolution.message} A packet cannot be used for a slice the plan does not state exactly once.`,
+      };
+    }
+  }
 
   const suffixed = path.join(dir, slicePacketFileName(wanted));
   if (fs.existsSync(suffixed) && fs.statSync(suffixed).isFile()) {

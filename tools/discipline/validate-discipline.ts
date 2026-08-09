@@ -131,6 +131,24 @@ function checkSliceIdentity(root: string, issues: ValidationIssue[]) {
       issues.push({ severity: 'error', message: `${file} claims more than one slice`, detail: identity.message });
       continue;
     }
+    // An ACTIVE slice packet whose slice the plan does not state exactly once is an orphan: the
+    // next assemble or run would act on a slice nobody planned. Archived packets (anything with
+    // extra name segments, like `.S12.consumed.md`) are history and are left alone.
+    const active = /^STEP_5_SLICE_PACKET(_[A-Za-z0-9._-]+)?\.md$/i.test(file);
+    if (active && identity.id && fs.existsSync(path.join(root, 'task_plan.md'))) {
+      const plan = fs.readFileSync(path.join(root, 'task_plan.md'), 'utf-8');
+      const resolution = resolveSlice(plan, identity.id);
+      // Listed in the §4 table but not expanded yet is a plan in progress, not an orphan packet.
+      const listed = parseReadySlicesTable(plan).some((row) => row.id === identity.id);
+      if (!resolution.ok && resolution.reason === 'not-found' && !listed) {
+        issues.push({
+          severity: 'error',
+          message: `${file} is for slice "${identity.id}", which task_plan.md does not describe`,
+          detail: 'expand the slice in Step 4, or archive the packet if the slice is gone',
+        });
+      }
+    }
+
     // A generic STEP_5_SLICE_PACKET.md still works, but one packet per file is what keeps two
     // slices from sharing a slot, so say it every time rather than at some future migration.
     if (identity.id && /^STEP_5_SLICE_PACKET\.md$/i.test(file)) {

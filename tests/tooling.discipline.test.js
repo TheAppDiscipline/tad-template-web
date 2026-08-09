@@ -3304,3 +3304,60 @@ test('discipline:validate reports duplicated slices, plan contradictions and pac
   assert.match(out, /Ready Slices lists slice "13" 2 times/)
   assert.match(out, /claims more than one slice/)
 })
+
+// Real packets are full of internal headings (`### C1`, `### AC2`) and of prose that wraps onto a
+// line starting with "slice:". Reading either as identity turned every real legacy packet into a
+// contradiction, which is the opposite of the gradual transition this release promises.
+test('slice identity: internal criteria headings and wrapped prose are not declarations', () => {
+  const realShaped = [
+    '---', 'schema: discipline.packet.step5_slice.v1', 'slice: S12', '---', '',
+    '# STEP_5_SLICE_PACKET', '',
+    'SLICE: S12 - Design tokens', 'COMPLEXITY: S', 'STATUS: ready', '',
+    '## Goal', '- x', '',
+    '## Contracts', '',
+    '### C1 - discipline.md §8 Design Tokens Contract', '- x', '',
+    '### AC2 - the second criterion', '- x', '',
+    '### R1 - a risk', '- x', '',
+    '## Notes', 'Lo que este slice no prueba, y por qué, se decidió en este',
+    'slice: contra el supermercado real no se prueba, ataría la verificación a un tercero.', '',
+  ].join('\n')
+  const twoFields = ['# STEP_5_SLICE_PACKET', '', 'SLICE: S13', 'SLICE: S14', ''].join('\n')
+  const twoHeadings = ['# STEP_5_SLICE_PACKET', '', '## S13 - one', '', '## S14 - another', ''].join('\n')
+
+  const out = sliceIdentityEval(`
+    emit({
+      real: slice.resolvePacketIdentity(${JSON.stringify(realShaped)}, 'STEP_5_SLICE_PACKET.S12.consumed.md'),
+      twoFields: slice.resolvePacketIdentity(${JSON.stringify(twoFields)}, 'STEP_5_SLICE_PACKET.md'),
+      twoHeadings: slice.resolvePacketIdentity(${JSON.stringify(twoHeadings)}, 'STEP_5_SLICE_PACKET.md'),
+    })
+  `)
+  assert.equal(out.real.ok, true, `C1/AC2/R1 and wrapped prose must not declare a slice: ${out.real.message}`)
+  assert.equal(out.real.id, '12')
+  assert.deepEqual(out.real.declarations.map((d) => d.source), ['frontmatter', 'SLICE field'])
+  // Every occurrence of a form is read, not just the first.
+  assert.equal(out.twoFields.ok, false)
+  assert.match(out.twoFields.message, /SLICE field says "13".*SLICE field says "14"/s)
+  assert.equal(out.twoHeadings.ok, false)
+})
+
+test('slice identity: a packet for a slice the plan does not state is refused, not assembled', () => {
+  const projectRoot = createDisciplineProject()
+  fs.writeFileSync(path.join(projectRoot, 'task_plan.md'), [
+    '# task_plan.md', '', '## 4) Ready Slices', '', '## Slice S13 - Sync', '- Status: ready', '',
+    '## 5) Deferred / Later', '- none', '',
+  ].join('\n'), 'utf8')
+  fs.writeFileSync(
+    path.join(projectRoot, '.discipline', 'packets', 'STEP_5_SLICE_PACKET_99.md'),
+    '# STEP_5_SLICE_PACKET\n\nSLICE: 99\n\n## Goal\n- x\n## Scope\n- x\n## Contracts\n- x\n## Acceptance criteria\n- x\n',
+    'utf8',
+  )
+  // The packet and the --slice agree with each other, and the plan still says no.
+  const orphan = runTsx('tools/discipline/assemble-paste-ready.ts', ['--step', '5', '--slice', '99', '--project-dir', projectRoot])
+  assert.notEqual(orphan.status, 0, getOutput(orphan))
+  assert.match(getOutput(orphan), /not in task_plan\.md/)
+  assert.match(getOutput(orphan), /does not state exactly once/)
+
+  const validated = runTsx('tools/discipline/validate-discipline.ts', ['--project-dir', projectRoot])
+  assert.notEqual(validated.status, 0)
+  assert.match(getOutput(validated), /STEP_5_SLICE_PACKET_99\.md is for slice "99", which task_plan\.md does not describe/)
+})
