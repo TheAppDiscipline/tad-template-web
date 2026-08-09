@@ -398,8 +398,21 @@ STATUS: ready
 <- what to avoid (anti-patterns documented in guardrails)>
 ```
 
-Save to: `.discipline/packets/STEP_5_SLICE_PACKET.md`
-Report: `STEP_5_SLICE_PACKET generated for Slice <N>: <name>`
+Save to: `.discipline/packets/STEP_5_SLICE_PACKET_<slice>.md`, where `<slice>` is the slice id in
+lowercase (`S13` -> `STEP_5_SLICE_PACKET_13.md`, `S13.2` -> `STEP_5_SLICE_PACKET_13.2.md`).
+Report: `STEP_5_SLICE_PACKET_<slice>.md generated for Slice <N>: <name>`
+
+**One packet per file, and never a shared slot.** Do not write, overwrite, rename or move
+`STEP_5_SLICE_PACKET.md`: that single slot is what made two ready slices fight over one file, and
+what made "which slice is this packet for" a guess. Expanding a second slice writes a second file.
+
+**The packet must name its slice, and only its slice.** Keep the `SLICE: <id> - <name>` line in the
+header, and if you write frontmatter, its `slice:` must carry the same id. Two declarations that
+disagree stop the pipeline on purpose, so do not restate the id anywhere you are not keeping in sync.
+
+**The slice must already exist in `task_plan.md`, exactly once.** A packet for a slice the plan does
+not describe is refused by `discipline:assemble`, by `discipline run` and by `discipline:validate`.
+Emit the TASK_PLAN_PATCH_BLOCK below in the same run so the plan and the packets agree.
 
 ### Phase 3: Generate patch blocks
 

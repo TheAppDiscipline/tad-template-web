@@ -32,7 +32,9 @@ NOTE: Step 5 (implementation) is still iterative and manual in the daily driver.
 
 ### Phase 0: Verify DoR
 
-Read `.discipline/packets/STEP_5_SLICE_PACKET.md`. Confirm:
+Read the slice's own packet, `.discipline/packets/STEP_5_SLICE_PACKET_<slice>.md` (the generic
+`STEP_5_SLICE_PACKET.md` is legacy: it still works when it identifies THIS slice and no other, and
+`discipline:validate` tells you the suffixed name to move it to). Confirm:
 - Goal defined
 - Scope IN/OUT explicit
 - Contracts (data model, API/IO, interaction surface)
@@ -249,6 +251,12 @@ Next: <paste `paste-ready/step-X-input.md` into /discipline-stepX or continue th
 ## Error handling
 
 - If STEP_5_SLICE_PACKET does not exist: abort and redirect to /discipline-step4.
+- If the packet found is for another slice, or declares two different slices: abort and say which
+  ones. Never implement against a packet that does not name this slice; that is how a slice gets
+  built from someone else's spec.
+- Do not rename the packet, move it, or mark it consumed by hand when the slice closes. The
+  completion packet's `GATE_STATE: passed` is what records consumption, and `discipline:watch`
+  writes `status: consumed` into the packet in place, keeping its name and its body.
 - If patches are pending and `discipline:patch` fails: stop, report the conflict, redirect to the apply-patch-blocks guide in the vault (sold separately).
 - If the gate fails with an error outside the 20 listed in 81a: apply the Repair Budget normally.
 - If manual verification is reported as failed: update SLICE_COMPLETION_PACKET with `Outcome: partial` or `blocked` and leave the slice open for a new iteration.

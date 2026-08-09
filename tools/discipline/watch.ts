@@ -10,6 +10,7 @@ import { resolveProjectRoot } from './lib/discipline-config.js';
 import { copyToClipboard as writeTextToClipboard } from './lib/clipboard.js';
 import { extractEmbeddedPatches } from './lib/parse-patch.js';
 import { applyPatches } from './apply-patch.js';
+import { activeSlicePackets, isSliceConsumed, markSliceConsumed, packetSliceId, slicePasteReadyFileName } from './lib/slice-identity.js';
 import { updateProgress, completionGateState } from './update-progress.js';
 import { assemblePasteReady } from './assemble-paste-ready.js';
 import { logRun } from './log-run.js';
@@ -127,6 +128,24 @@ export async function handlePacket(root: string, filePath: string) {
         disciplineWarn(`  Refused progress.md update: ${err instanceof Error ? err.message : err}`);
         logNotes.push('progress-refused');
       }
+
+      // Consumption is recorded only when THIS slice's completion packet carries a green gate,
+      // and it is recorded in place: the packet keeps its name and its content, it just stops
+      // being the next thing to implement. Renaming or moving it is what used to lose it.
+      const closedSlice = packetSliceId(fs.readFileSync(filePath, 'utf-8'), fileName);
+      if (closedSlice) {
+        const verdict = isSliceConsumed(root, closedSlice);
+        if (verdict.consumed) {
+          const marked = markSliceConsumed(root, closedSlice);
+          if (marked) {
+            disciplineInfo(`  Slice ${closedSlice} consumed: ${path.basename(marked)} marked status: consumed.`);
+            logNotes.push(`consumed=${closedSlice}`);
+          }
+        } else {
+          disciplineWarn(`  Slice ${closedSlice} not marked consumed: ${verdict.reason}.`);
+          logNotes.push(`not-consumed=${closedSlice}`);
+        }
+      }
     }
   });
 
@@ -143,8 +162,18 @@ export async function handlePacket(root: string, filePath: string) {
       logNotes.push('advance-blocked');
     } else {
       try {
-        const assembled = await assemblePasteReady(root, next);
-        const outputFile = STEP_ASSEMBLY_MAP[next].outputFile;
+        // Step 5 assembles PER SLICE: one handoff per ready packet, named after its slice, so two
+        // ready slices never overwrite each other's input. A packet whose slice cannot be
+        // identified falls back to the single legacy handoff.
+        const step5Slices = next === '5'
+          ? activeSlicePackets(root).filter((packet) => packet.sliceId && !isSliceConsumed(root, packet.sliceId).consumed)
+          : [];
+        const assembled = step5Slices.length > 0
+          ? (await Promise.all(step5Slices.map((packet) => assemblePasteReady(root, next, packet.sliceId!)))).join('\n')
+          : await assemblePasteReady(root, next);
+        const outputFile = step5Slices.length > 0
+          ? step5Slices.map((packet) => slicePasteReadyFileName(packet.sliceId!)).join(', ')
+          : STEP_ASSEMBLY_MAP[next].outputFile;
         disciplineInfo(`  Paste-ready assembled for Step ${next}: .discipline/paste-ready/${outputFile}`);
         copyToClipboard(assembled);
         openTool(next);

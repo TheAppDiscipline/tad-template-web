@@ -3396,3 +3396,43 @@ test('slice identity: the legacy [status] heading marker still resolves, and C1 
   assert.equal(statuses.blocked.found, true)
   assert.equal(statuses.blocked.ready, false, 'a blocked slice is found but not runnable')
 })
+
+// Consumption is recorded in place. The old ritual renamed the packet to `.consumed.md` or moved it
+// out of a shared slot, which is what let two slices fight over one file; here the file keeps its
+// name and its body, and only a green completion for THAT slice sets the marker.
+test('discipline:watch marks a slice packet consumed in place, and only on a green gate', () => {
+  const slicePacket = ['---', 'schema: discipline.packet.step5_slice.v1', 'status: ready', 'slice: S13', '---', '',
+    '# STEP_5_SLICE_PACKET', '', 'SLICE: S13 - Sync engine', '', '## Goal', '- x', '## Scope', '- x',
+    '## Contracts', '- x', '## Acceptance criteria', '- x', ''].join('\n')
+  const completion = (gate) => ['## SLICE_COMPLETION_PACKET', '', 'SLICE: S13', '', '### Outcome', '- done', '',
+    '### Gates passed', `- GATE_STATE: ${gate}`, '', '### Deploy signal', '- ready_for_preview', ''].join('\n')
+
+  const red = createDisciplineProject({
+    'STEP_5_SLICE_PACKET_13.md': slicePacket,
+    'SLICE_COMPLETION_PACKET.md': completion('failed'),
+    'STEP_4_EXECUTION_PACKET.md': '## STEP_4_EXECUTION_PACKET\n\nSTATUS: validated\n\nbody\n',
+  })
+  const redRun = runHandlePacket(red)
+  const redPacket = fs.readFileSync(path.join(red, '.discipline', 'packets', 'STEP_5_SLICE_PACKET_13.md'), 'utf8')
+  assert.doesNotMatch(redPacket, /status: consumed/, 'a failed gate must not consume the slice')
+  assert.match(getOutput(redRun), /not marked consumed/)
+
+  const green = createDisciplineProject({
+    'STEP_5_SLICE_PACKET_13.md': slicePacket,
+    'SLICE_COMPLETION_PACKET.md': completion('passed'),
+    'STEP_4_EXECUTION_PACKET.md': '## STEP_4_EXECUTION_PACKET\n\nSTATUS: validated\n\nbody\n',
+  })
+  assert.equal(runHandlePacket(green).status, 0)
+  const packetPath = path.join(green, '.discipline', 'packets', 'STEP_5_SLICE_PACKET_13.md')
+  const greenPacket = fs.readFileSync(packetPath, 'utf8')
+  assert.match(greenPacket, /^status: consumed$/m)
+  assert.doesNotMatch(greenPacket, /^status: ready$/m)
+  // Same file, same body: nothing was renamed, moved or rewritten.
+  assert.ok(fs.existsSync(packetPath))
+  assert.match(greenPacket, /SLICE: S13 - Sync engine/)
+  assert.match(greenPacket, /## Acceptance criteria/)
+  assert.deepEqual(
+    fs.readdirSync(path.join(green, '.discipline', 'packets')).filter((f) => f.startsWith('STEP_5_SLICE_PACKET')),
+    ['STEP_5_SLICE_PACKET_13.md'],
+  )
+})

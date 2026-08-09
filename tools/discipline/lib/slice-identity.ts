@@ -417,6 +417,47 @@ export function locateSlicePacket(root: string, sliceId: string, taskPlan?: stri
   return { ok: true, path: generic, sliceId: wanted, legacy: true, warnings };
 }
 
+/** Active (not archived) Step 5 packets with the slice each one identifies. */
+export function activeSlicePackets(root: string): Array<{ path: string; sliceId: string | null; legacy: boolean }> {
+  const dir = path.join(root, '.discipline', 'packets');
+  if (!fs.existsSync(dir)) return [];
+  const found: Array<{ path: string; sliceId: string | null; legacy: boolean }> = [];
+  for (const file of fs.readdirSync(dir)) {
+    // Archived packets carry extra name segments (`.S12.consumed.md`); they are history, not work.
+    if (!/^STEP_5_SLICE_PACKET(_[A-Za-z0-9._-]+)?\.md$/i.test(file)) continue;
+    const full = path.join(dir, file);
+    const identity = resolvePacketIdentity(fs.readFileSync(full, 'utf-8'), file);
+    found.push({ path: full, sliceId: identity.ok ? identity.id : null, legacy: /^STEP_5_SLICE_PACKET\.md$/i.test(file) });
+  }
+  return found;
+}
+
+/**
+ * Record that a slice's packet was consumed, IN PLACE. The packet keeps its filename and its
+ * content: the old ritual of renaming it to `.consumed.md` (or moving it out of a shared slot) is
+ * what made two slices fight over one file and what lost the packet that was there before.
+ * Returns the packet path when it wrote something, null when there was nothing to mark.
+ */
+export function markSliceConsumed(root: string, sliceId: string): string | null {
+  const wanted = normalizeSliceId(sliceId);
+  const target = activeSlicePackets(root).find((packet) => packet.sliceId === wanted);
+  if (!target) return null;
+
+  const content = fs.readFileSync(target.path, 'utf-8');
+  const hasFrontmatter = /^﻿?---\r?\n/.test(content);
+  let next: string;
+  if (hasFrontmatter) {
+    if (/^status:[ \t]*consumed[ \t]*$/im.test(content)) return target.path; // already marked: idempotent
+    next = /^status:[ \t]*.*$/im.test(content)
+      ? content.replace(/^status:[ \t]*.*$/im, 'status: consumed')
+      : content.replace(/^(﻿?---\r?\n)/, '$1status: consumed\n');
+  } else {
+    next = `---\nstatus: consumed\nslice: ${wanted}\n---\n\n${content}`;
+  }
+  fs.writeFileSync(target.path, next, 'utf-8');
+  return target.path;
+}
+
 /**
  * A slice packet is consumed only when its slice has a completion packet AND that packet records
  * a green gate. "The next packet exists" is not consumption: a slice that failed its gate is
