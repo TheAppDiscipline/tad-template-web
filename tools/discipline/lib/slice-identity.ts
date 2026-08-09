@@ -33,8 +33,16 @@ export interface SliceHeading {
 }
 
 export type SliceResolution =
-  | { ok: true; heading: SliceHeading; id: string }
-  | { ok: false; reason: 'not-found' | 'duplicate'; message: string; candidates: string[] };
+  | { ok: true; heading: SliceHeading; id: string; tableStatus: string | null }
+  | { ok: false; reason: 'not-found' | 'duplicate' | 'contradiction'; message: string; candidates: string[] };
+
+/** A row of the §4 Ready Slices status table. */
+export interface ReadySlicesRow {
+  rawId: string;
+  id: string;
+  status: string | null;
+  line: number;
+}
 
 /**
  * The comparison form of a slice id: trimmed, lowercased, with a leading `slice` word and a
@@ -100,20 +108,95 @@ export function findSliceHeadings(taskPlan: string): SliceHeading[] {
   return headings;
 }
 
+/** Strip markdown emphasis and backticks from a table cell. */
+function cleanCell(cell: string): string {
+  return cell.trim().replace(/^[`*_]+|[`*_]+$/g, '').trim();
+}
+
 /**
- * Resolve a requested slice id against the plan's headings. Exact match on the normalized id
- * only: a request for `1` never resolves to `S13`, and two headings for the same slice are an
- * error rather than a first-one-wins pick.
+ * The status table inside `## 4) Ready Slices`, when there is one. A plan's Ready Slices section
+ * also carries prose tables (the dogfood project has a "what blocks it" table), so a table only
+ * counts as the status table when its header has both a slice column and a status column. Reading
+ * any table as statuses would invent states nobody wrote.
+ */
+export function parseReadySlicesTable(taskPlan: string): ReadySlicesRow[] {
+  const lines = taskPlan.split('\n');
+  const sectionStart = lines.findIndex((line) => /^#{2,3}\s+(?:\d+\)\s*)?Ready Slices\s*$/i.test(line));
+  if (sectionStart === -1) return [];
+  let sectionEnd = lines.length;
+  for (let i = sectionStart + 1; i < lines.length; i++) {
+    if (/^#{1,2}\s/.test(lines[i])) { sectionEnd = i; break; }
+  }
+
+  const rows: ReadySlicesRow[] = [];
+  for (let i = sectionStart + 1; i < sectionEnd - 1; i++) {
+    if (!lines[i].trim().startsWith('|') || !/^\s*\|[\s:|-]+\|\s*$/.test(lines[i + 1] ?? '')) continue;
+    const header = lines[i].split('|').slice(1, -1).map((c) => cleanCell(c).toLowerCase());
+    const sliceCol = header.findIndex((c) => /^(#\s*)?slice$/.test(c) || c === 'slice id');
+    const statusCol = header.findIndex((c) => /^(status|estado)$/.test(c));
+    if (sliceCol === -1 || statusCol === -1) continue;
+
+    for (let r = i + 2; r < sectionEnd; r++) {
+      if (!lines[r].trim().startsWith('|')) break;
+      const cells = lines[r].split('|').slice(1, -1).map(cleanCell);
+      const rawId = cells[sliceCol] ?? '';
+      const id = idFromText(rawId);
+      if (!id) continue;
+      const status = cells[statusCol] ? cleanCell(cells[statusCol]).toLowerCase() : null;
+      rows.push({ rawId, id, status: status && status !== '-' ? status : null, line: r });
+    }
+  }
+  return rows;
+}
+
+/**
+ * Resolve a requested slice id against the plan. Exact match on the normalized id only: a request
+ * for `1` never resolves to `S13`, two headings for the same slice are an error rather than a
+ * first-one-wins pick, and a table row that disagrees with the detailed section's status is a
+ * contradiction, not a tie to break. Both places are written by hand, so when they disagree the
+ * honest answer is that the plan does not say what state the slice is in.
  */
 export function resolveSlice(taskPlan: string, requested: string): SliceResolution {
   const wanted = normalizeSliceId(requested);
   const headings = findSliceHeadings(taskPlan);
   const matches = headings.filter((heading) => heading.id === wanted);
+  const tableRows = parseReadySlicesTable(taskPlan).filter((row) => row.id === wanted);
 
-  if (matches.length === 1) return { ok: true, heading: matches[0], id: wanted };
+  if (tableRows.length > 1) {
+    return {
+      ok: false,
+      reason: 'duplicate',
+      message: `Slice "${requested}" appears ${tableRows.length} times in the §4 Ready Slices table (lines ${tableRows.map((r) => r.line + 1).join(', ')}). Two rows for one slice make its status ambiguous; keep one.`,
+      candidates: headings.map((h) => h.rawId),
+    };
+  }
+
+  if (matches.length === 1) {
+    const tableStatus = tableRows[0]?.status ?? null;
+    const sectionStatus = sectionStatusOf(taskPlan, matches[0]);
+    if (tableStatus && sectionStatus && tableStatus !== sectionStatus.toLowerCase()) {
+      return {
+        ok: false,
+        reason: 'contradiction',
+        message: `Slice "${requested}" is "${tableStatus}" in the §4 Ready Slices table (line ${tableRows[0].line + 1}) and "${sectionStatus}" in its own section (line ${matches[0].line + 1}). Fix the plan; the pipeline will not pick one for you.`,
+        candidates: headings.map((h) => h.rawId),
+      };
+    }
+    return { ok: true, heading: matches[0], id: wanted, tableStatus };
+  }
+
+  // No heading, but the table knows the slice: the plan lists it without expanding it.
+  if (matches.length === 0 && tableRows.length === 1) {
+    return {
+      ok: false,
+      reason: 'not-found',
+      message: `Slice "${requested}" is in the §4 Ready Slices table (line ${tableRows[0].line + 1}) but has no expanded section in task_plan.md. Expand it in Step 4 before running it.`,
+      candidates: headings.map((h) => h.rawId),
+    };
+  }
 
   const candidates = headings.map((heading) => heading.rawId);
-  if (matches.length === 0) {
+  if (matches.length === 0 && tableRows.length === 0) {
     const near = headings.filter((heading) => heading.id.startsWith(wanted) || wanted.startsWith(heading.id));
     const hint = near.length > 0 ? ` Nearest headings: ${near.map((h) => h.rawId).join(', ')} (ids must match exactly).` : '';
     return {
@@ -131,25 +214,108 @@ export function resolveSlice(taskPlan: string, requested: string): SliceResoluti
   };
 }
 
-/**
- * The slice a packet declares. Frontmatter `slice:` wins; otherwise the first entry under a
- * `## Slice` / `### Slice` section, which is how packets have always carried it. Returns the
- * normalized id, or null when the packet says nothing about which slice it is for.
- */
-export function packetSliceId(content: string): string | null {
-  const { meta } = parsePacketMeta(content);
-  const fromMeta = meta && typeof meta.slice === 'string' ? meta.slice : null;
-  if (fromMeta && normalizeSliceId(fromMeta)) return normalizeSliceId(fromMeta);
+/** One place a packet says which slice it is for, kept with its source so errors can name it. */
+export interface SliceDeclaration {
+  source: 'filename' | 'frontmatter' | 'SLICE field' | 'Slice heading' | 'Slice section';
+  raw: string;
+  id: string;
+}
 
-  const section = content.match(/^#{2,4}\s+Slice\s*$\r?\n([\s\S]*?)(?=\r?\n#{1,4}\s|$)/im);
+/** Pull a slice id out of free text like `S27E3b - Title` or `- Slice 13`. */
+function idFromText(text: string): string | null {
+  const cleaned = text.trim().replace(/^[-*]\s*/, '').replace(/^[`*_]+|[`*_]+$/g, '');
+  const match = cleaned.match(/^(?:slice\s+)?([A-Za-z]?\d[A-Za-z0-9._-]*|[A-Za-z][A-Za-z0-9._-]*)/i);
+  if (!match) return null;
+  const id = normalizeSliceId(match[1]);
+  return id || null;
+}
+
+/**
+ * Every declaration of identity a packet carries, in no particular order of authority. There is
+ * deliberately no winner: real packets carry the id in more than one place (the app's packets
+ * have both frontmatter `slice:` and a root `SLICE:` line), and picking one silently is how a
+ * contradiction survives. The caller compares them and refuses when they disagree.
+ */
+export function readSliceDeclarations(content: string, fileName?: string): SliceDeclaration[] {
+  const declarations: SliceDeclaration[] = [];
+  const push = (source: SliceDeclaration['source'], raw: string, id: string | null) => {
+    if (id) declarations.push({ source, raw: raw.trim(), id });
+  };
+
+  if (fileName) {
+    const fromName = sliceFromPacketFileName(fileName);
+    if (fromName) push('filename', path.basename(fileName), fromName);
+  }
+
+  const { meta } = parsePacketMeta(content);
+  if (meta && (typeof meta.slice === 'string' || typeof meta.slice === 'number')) {
+    push('frontmatter', String(meta.slice), normalizeSliceId(String(meta.slice)));
+  }
+
+  // Everything below reads the BODY. Scanning the whole file would let the frontmatter's own
+  // `slice:` line answer as the root `SLICE:` field (the match is case-insensitive), which hides
+  // exactly the contradiction this function exists to surface.
+  const body = content.replace(/^﻿/, '').replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '');
+
+  // Root field, the form Step 4 emits and every real packet carries: `SLICE: S27E3b - Title`.
+  const field = body.match(/^\s*SLICE:\s*(.+?)\s*$/im);
+  if (field) push('SLICE field', field[1], idFromText(field[1]));
+
+  // `## Slice S13 - Title` / `## S13`: the heading itself names the slice.
+  const heading = body.match(/^#{2,4}\s+(?:slice\s+)?([A-Za-z]?\d[A-Za-z0-9._-]*)\s*(?:[-–—:].*)?$/im);
+  if (heading) push('Slice heading', heading[0], normalizeSliceId(heading[1]));
+
+  // `## Slice` section whose first entry is the id.
+  const section = body.match(/^#{2,4}\s+Slice\s*$\r?\n([\s\S]*?)(?=\r?\n#{1,4}\s|$)/im);
   if (section) {
     const firstEntry = section[1].split('\n').map((line) => line.trim()).find((line) => line !== '');
-    if (firstEntry) {
-      const id = firstEntry.replace(/^[-*]\s*/, '').match(/^(?:slice\s+)?([A-Za-z]?\d[A-Za-z0-9._-]*)/i);
-      if (id) return normalizeSliceId(id[1]);
-    }
+    if (firstEntry) push('Slice section', firstEntry, idFromText(firstEntry));
   }
-  return null;
+
+  return declarations;
+}
+
+export type PacketIdentity =
+  | { ok: true; id: string | null; declarations: SliceDeclaration[] }
+  | { ok: false; message: string; declarations: SliceDeclaration[] };
+
+/**
+ * The slice a packet is for, or a refusal when it claims to be for two. `id: null` means the
+ * packet says nothing at all, which only the unambiguous legacy path may accept.
+ */
+export function resolvePacketIdentity(content: string, fileName?: string): PacketIdentity {
+  const declarations = readSliceDeclarations(content, fileName);
+  const distinct = [...new Set(declarations.map((d) => d.id))];
+  if (distinct.length > 1) {
+    const detail = declarations.map((d) => `${d.source} says "${d.id}" (${d.raw})`).join('; ');
+    return {
+      ok: false,
+      message: `Contradictory slice declarations in ${fileName ? path.basename(fileName) : 'the packet'}: ${detail}. Make them agree; do not leave the pipeline to pick one.`,
+      declarations,
+    };
+  }
+  return { ok: true, id: distinct[0] ?? null, declarations };
+}
+
+/** The single slice a packet declares, or null when it declares none or contradicts itself. */
+export function packetSliceId(content: string, fileName?: string): string | null {
+  const identity = resolvePacketIdentity(content, fileName);
+  return identity.ok ? identity.id : null;
+}
+
+/** The `- Status: <value>` a slice's own section declares, or null. */
+export function sectionStatusOf(taskPlan: string, heading: SliceHeading): string | null {
+  const lines = taskPlan.split('\n');
+  let end = lines.length;
+  for (let i = heading.line + 1; i < lines.length; i++) {
+    const level = lines[i].match(/^(#{1,6})\s/);
+    if (level && level[1].length <= heading.level) { end = i; break; }
+  }
+  const section = lines.slice(heading.line, end).join('\n');
+  const statusLine = section.match(/^[-*]?\s*(?:\*\*)?status(?:\*\*)?\s*:\s*(.+)$/im);
+  if (statusLine) return cleanCell(statusLine[1]).toLowerCase();
+  const bracket = heading.raw.match(/\[([^\]]+)\]/);
+  return bracket ? cleanCell(bracket[1]).toLowerCase() : null;
 }
 
 export type PacketLocation =
@@ -171,14 +337,12 @@ export function locateSlicePacket(root: string, sliceId: string, taskPlan?: stri
 
   const suffixed = path.join(dir, slicePacketFileName(wanted));
   if (fs.existsSync(suffixed) && fs.statSync(suffixed).isFile()) {
-    const declared = packetSliceId(fs.readFileSync(suffixed, 'utf-8'));
-    if (declared && declared !== wanted) {
-      return {
-        ok: false,
-        reason: 'mismatch',
-        message: `${path.basename(suffixed)} declares slice "${declared}" but its filename says "${wanted}". Fix the packet or rename the file; do not guess which one is right.`,
-      };
-    }
+    // The filename counts as one declaration, so a body that names another slice is a
+    // contradiction rather than a filename-wins situation.
+    // The filename is itself a declaration, so a body naming another slice comes back as a
+    // contradiction here, listing every source. There is no filename-wins path on purpose.
+    const identity = resolvePacketIdentity(fs.readFileSync(suffixed, 'utf-8'), suffixed);
+    if (!identity.ok) return { ok: false, reason: 'mismatch', message: identity.message };
     return { ok: true, path: suffixed, sliceId: wanted, legacy: false, warnings };
   }
 
@@ -191,7 +355,9 @@ export function locateSlicePacket(root: string, sliceId: string, taskPlan?: stri
     };
   }
 
-  const declared = packetSliceId(fs.readFileSync(generic, 'utf-8'));
+  const identity = resolvePacketIdentity(fs.readFileSync(generic, 'utf-8'), generic);
+  if (!identity.ok) return { ok: false, reason: 'mismatch', message: identity.message };
+  const declared = identity.id;
   if (declared && declared !== wanted) {
     return {
       ok: false,
@@ -225,14 +391,37 @@ export function isSliceConsumed(root: string, sliceId: string): { consumed: bool
   if (!fs.existsSync(dir)) return { consumed: false, reason: 'no packets directory' };
   const wanted = normalizeSliceId(sliceId);
 
+  // EVERY completion packet for the slice is read, not the first one found: a re-run leaves more
+  // than one, and answering from whichever the directory listed first would let a green packet
+  // hide a red one that was written after it.
+  const verdicts: Array<{ file: string; gate: string | null }> = [];
   for (const file of fs.readdirSync(dir).filter((f) => /SLICE_COMPLETION_PACKET/i.test(f) && f.endsWith('.md'))) {
     const content = fs.readFileSync(path.join(dir, file), 'utf-8');
-    if (packetSliceId(content) !== wanted) continue;
+    const identity = resolvePacketIdentity(content, file);
+    if (!identity.ok) return { consumed: false, reason: `${file}: ${identity.message}` };
+    if (identity.id !== wanted) continue;
     // Same rule the progress engine uses: the gate is green only on an explicit token, never on prose.
     const gate = content.match(/^\s*[-*]?\s*GATE_STATE:\s*(\S+)\s*$/im);
-    if (!gate) return { consumed: false, reason: `${file} has no GATE_STATE token, so the gate is unverified` };
-    if (gate[1].toLowerCase() !== 'passed') return { consumed: false, reason: `${file} records GATE_STATE: ${gate[1]}` };
-    return { consumed: true, reason: `${file} closes slice ${sliceId} with a green gate` };
+    verdicts.push({ file, gate: gate ? gate[1].toLowerCase() : null });
   }
-  return { consumed: false, reason: `no SLICE_COMPLETION_PACKET for slice ${sliceId}` };
+
+  if (verdicts.length === 0) return { consumed: false, reason: `no SLICE_COMPLETION_PACKET for slice ${sliceId}` };
+
+  const notGreen = verdicts.filter((v) => v.gate !== 'passed');
+  if (notGreen.length > 0 && notGreen.length < verdicts.length) {
+    return {
+      consumed: false,
+      reason: `slice ${sliceId} has completion packets that disagree: ${verdicts.map((v) => `${v.file} -> ${v.gate ?? 'no GATE_STATE'}`).join(', ')}. Resolve which one closes the slice.`,
+    };
+  }
+  if (notGreen.length === verdicts.length) {
+    const first = notGreen[0];
+    return {
+      consumed: false,
+      reason: first.gate === null
+        ? `${first.file} has no GATE_STATE token, so the gate is unverified`
+        : `${first.file} records GATE_STATE: ${first.gate}`,
+    };
+  }
+  return { consumed: true, reason: `${verdicts.map((v) => v.file).join(', ')} closes slice ${sliceId} with a green gate` };
 }

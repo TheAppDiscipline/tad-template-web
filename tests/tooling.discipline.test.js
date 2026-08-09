@@ -3142,5 +3142,135 @@ test("assemble --step 5 --slice: another slice's packet is rejected, not assembl
   )
   const mismatch = runTsx('tools/discipline/assemble-paste-ready.ts', ['--step', '5', '--slice', '13', '--project-dir', projectRoot])
   assert.notEqual(mismatch.status, 0)
-  assert.match(getOutput(mismatch), /declares slice "14" but its filename says "13"/)
+  // The filename is one declaration among the others, so the refusal names every source instead
+  // of letting the filename win over the body.
+  assert.match(getOutput(mismatch), /Contradictory slice declarations/)
+  assert.match(getOutput(mismatch), /filename says "13".*frontmatter says "14"/s)
+})
+
+// The real packets carry the id in a root `SLICE:` field (that is what Step 4 emits and what the
+// dogfood project's packets look like), sometimes alongside frontmatter. Reading only frontmatter
+// or a "## Slice" section made those packets look identity-less, which refused every legacy
+// project with more than one slice in its plan.
+test('slice identity: a packet declares itself through frontmatter, a root SLICE: field, or a heading', () => {
+  const out = sliceIdentityEval(`
+    const real = ['---', 'schema: discipline.packet.step5_slice.v1', 'slice: S27E3b', '---', '', '# STEP_5_SLICE_PACKET', '', 'SLICE: S27E3b - La salida dentro del cuadro', 'STATUS: ready'].join('\\n')
+    const rootFieldOnly = ['# STEP_5_SLICE_PACKET', '', 'SLICE: 13 - Sync engine', 'STATUS: ready'].join('\\n')
+    const headingOnly = ['# STEP_5_SLICE_PACKET', '', '## S13 - Sync engine'].join('\\n')
+    const sectionOnly = ['# STEP_5_SLICE_PACKET', '', '## Slice', '- Slice S13'].join('\\n')
+    const numericMeta = ['---', 'slice: 13', '---', '', '# STEP_5_SLICE_PACKET'].join('\\n')
+    const silent = ['# STEP_5_SLICE_PACKET', '', 'STATUS: ready'].join('\\n')
+    emit({
+      real: slice.resolvePacketIdentity(real, 'STEP_5_SLICE_PACKET.md'),
+      rootFieldOnly: slice.packetSliceId(rootFieldOnly),
+      headingOnly: slice.packetSliceId(headingOnly),
+      sectionOnly: slice.packetSliceId(sectionOnly),
+      numericMeta: slice.packetSliceId(numericMeta),
+      silent: slice.packetSliceId(silent),
+      fromFileName: slice.packetSliceId(silent, 'STEP_5_SLICE_PACKET_13.md'),
+    })
+  `)
+  assert.equal(out.real.ok, true)
+  assert.equal(out.real.id, '27e3b')
+  assert.deepEqual(out.real.declarations.map((d) => d.source), ['frontmatter', 'SLICE field'])
+  assert.equal(out.rootFieldOnly, '13', 'the root SLICE: field is how real packets carry the id')
+  assert.equal(out.headingOnly, '13')
+  assert.equal(out.sectionOnly, '13')
+  assert.equal(out.numericMeta, '13', 'a numeric frontmatter slice is still a declaration')
+  assert.equal(out.silent, null)
+  assert.equal(out.fromFileName, '13', 'a suffixed filename declares the slice on its own')
+})
+
+test('slice identity: two different declarations in one packet fail closed', () => {
+  const out = sliceIdentityEval(`
+    const metaVsField = ['---', 'slice: 13', '---', '', '# P', '', 'SLICE: 14 - another slice'].join('\\n')
+    const fieldVsSection = ['# P', '', 'SLICE: 13', '', '## Slice', '- Slice 14'].join('\\n')
+    const fileVsMeta = ['---', 'slice: 14', '---', '', '# P'].join('\\n')
+    emit({
+      metaVsField: slice.resolvePacketIdentity(metaVsField, 'STEP_5_SLICE_PACKET.md'),
+      fieldVsSection: slice.resolvePacketIdentity(fieldVsSection, 'STEP_5_SLICE_PACKET.md'),
+      fileVsMeta: slice.resolvePacketIdentity(fileVsMeta, 'STEP_5_SLICE_PACKET_13.md'),
+    })
+  `)
+  // The frontmatter does not win: with two declarations there is no authority to fall back on.
+  assert.equal(out.metaVsField.ok, false)
+  assert.match(out.metaVsField.message, /frontmatter says "13".*SLICE field says "14"/s)
+  assert.equal(out.fieldVsSection.ok, false)
+  assert.equal(out.fileVsMeta.ok, false, 'a suffixed filename that disagrees with the body is a contradiction')
+  assert.match(out.fileVsMeta.message, /filename says "13".*frontmatter says "14"/s)
+})
+
+// §4 Ready Slices carries a status table in most plans. Ignoring it let the table say "done"
+// while the slice's own section said "ready" (or the other way round) with nobody noticing.
+test('slice identity: the Ready Slices table participates, and contradicts loudly', () => {
+  const table = [
+    '# task_plan.md', '', '## 4) Ready Slices', '',
+    '| # | Slice | Complexity | Status |', '|---|---|---|---|',
+    '| 1 | S13 - Sync engine | M | ready |',
+    '| 2 | 14 - Other | S | blocked |', '',
+    '## Slice S13 - Sync engine', '- Status: ready', '',
+    '## Slice 14 - Other', '- Status: ready', '',
+  ].join('\n')
+  const duplicated = table.replace('| 2 | 14 - Other | S | blocked |', '| 2 | 14 - Other | S | blocked |\n| 3 | S14 - Other again | S | ready |')
+  const proseTable = [
+    '# task_plan.md', '', '## 4) Ready Slices', '',
+    '| Slice | What it is | What blocks it |', '|---|---|---|',
+    '| **S07** | History | an open product question |', '',
+    '## Slice S07 - History', '- Status: blocked', '',
+  ].join('\n')
+  const listedOnly = [
+    '# task_plan.md', '', '## 4) Ready Slices', '',
+    '| # | Slice | Status |', '|---|---|---|', '| 1 | S20 - Not expanded yet | ready |', '',
+  ].join('\n')
+
+  const out = sliceIdentityEval(`
+    emit({
+      rows: slice.parseReadySlicesTable(${JSON.stringify(table)}).map((r) => [r.id, r.status]),
+      coherent: slice.resolveSlice(${JSON.stringify(table)}, 'S13'),
+      contradiction: slice.resolveSlice(${JSON.stringify(table)}, '14'),
+      duplicatedRow: slice.resolveSlice(${JSON.stringify(duplicated)}, '14'),
+      proseRows: slice.parseReadySlicesTable(${JSON.stringify(proseTable)}),
+      proseResolve: slice.resolveSlice(${JSON.stringify(proseTable)}, 'S07'),
+      listedOnly: slice.resolveSlice(${JSON.stringify(listedOnly)}, 'S20'),
+    })
+  `)
+  assert.deepEqual(out.rows, [['13', 'ready'], ['14', 'blocked']])
+  assert.equal(out.coherent.ok, true)
+  assert.equal(out.coherent.tableStatus, 'ready')
+  // Table says blocked, the section says ready: the plan does not state a status, so nothing runs.
+  assert.equal(out.contradiction.ok, false)
+  assert.equal(out.contradiction.reason, 'contradiction')
+  assert.match(out.contradiction.message, /"blocked" in the .4 Ready Slices table .* and "ready" in its own section/)
+  // S14 and 14 are one slice, so two rows for it are a duplicate.
+  assert.equal(out.duplicatedRow.ok, false)
+  assert.equal(out.duplicatedRow.reason, 'duplicate')
+  // A prose table inside the section (the dogfood plan has one) is not a status table.
+  assert.deepEqual(out.proseRows, [])
+  assert.equal(out.proseResolve.ok, true)
+  // Listed in the table but never expanded: that is a missing section, said plainly.
+  assert.equal(out.listedOnly.ok, false)
+  assert.match(out.listedOnly.message, /has no expanded section/)
+})
+
+test('slice identity: completion packets that disagree do not consume the slice', () => {
+  const completion = (slice, gate) => `## SLICE_COMPLETION_PACKET\n\nSLICE: ${slice}\n\n### Outcome\n- shipped\n\n### Gates passed\n- GATE_STATE: ${gate}\n`
+  const both = createDisciplineProject({
+    'SLICE_COMPLETION_PACKET.md': completion('S13', 'passed'),
+    'SLICE_COMPLETION_PACKET_rerun.md': completion('S13', 'failed'),
+  })
+  const allGreen = createDisciplineProject({
+    'SLICE_COMPLETION_PACKET.md': completion('S13', 'passed'),
+    'SLICE_COMPLETION_PACKET_rerun.md': completion('S13', 'passed'),
+  })
+  const out = sliceIdentityEval(`
+    emit({
+      disagree: slice.isSliceConsumed(${JSON.stringify(both)}, 'S13'),
+      agree: slice.isSliceConsumed(${JSON.stringify(allGreen)}, 'S13'),
+    })
+  `)
+  // A green packet must not answer for a red one written after it.
+  assert.equal(out.disagree.consumed, false)
+  assert.match(out.disagree.reason, /disagree/)
+  assert.match(out.disagree.reason, /SLICE_COMPLETION_PACKET_rerun\.md -> failed/)
+  assert.equal(out.agree.consumed, true)
 })
