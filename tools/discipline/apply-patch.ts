@@ -6,31 +6,69 @@ import { disciplineError, disciplineErrorMessage, disciplineInfo } from './lib/t
 import { resolveProjectRoot } from './lib/discipline-config.js';
 import { parsePatchFile } from './lib/parse-patch.js';
 import { findSectionBounds, isDuplicateAnchor, PATCH_APPLICATION_ORDER, ALLOWED_PATCH_TARGETS, normalizeLineEndings } from './lib/anchors.js';
-import { withWriterLock, releaseWriterLock } from './lib/locks.js';
+import { withWriterLock } from './lib/locks.js';
 import { appendLedger } from './lib/ledger.js';
 
 const args = minimist(process.argv.slice(2));
 const projectRoot = resolveProjectRoot(args['project-dir']);
 const dryRun = args['dry-run'] === true;
 
+/** One written file and how to undo it. `appliedPath` stays empty until the patch file moves. */
+type RollbackEntry = { targetPath: string; backupPath: string; patchSourcePath: string; appliedPath: string };
+
+/** A patch batch that failed and was rolled back. Carries what the ledger needs to record. */
+export class PatchBatchError extends Error {
+  readonly applied: number;
+  readonly rolledBack: number;
+  readonly rollbackFailures: number;
+  readonly targetFile: string;
+  constructor(message: string, detail: { applied: number; rolledBack: number; rollbackFailures: number; targetFile: string }) {
+    super(message);
+    this.name = 'PatchBatchError';
+    this.applied = detail.applied;
+    this.rolledBack = detail.rolledBack;
+    this.rollbackFailures = detail.rollbackFailures;
+    this.targetFile = detail.targetFile;
+  }
+}
+
+/**
+ * Copy filePath into backupDir under a name no other backup holds, and return that name.
+ * COPYFILE_EXCL makes claiming the name atomic, so two patches against the same file landing
+ * on the same millisecond take different slots instead of one overwriting the other's backup.
+ */
+function copyToUniqueBackup(backupDir: string, filePath: string): string {
+  const base = `${path.basename(filePath)}.${Date.now()}`;
+  for (let attempt = 0; attempt < 1000; attempt++) {
+    const candidate = path.join(backupDir, attempt === 0 ? base : `${base}.${attempt}`);
+    try {
+      fs.copyFileSync(filePath, candidate, fs.constants.COPYFILE_EXCL);
+      return candidate;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+    }
+  }
+  throw new Error(`Could not claim a unique backup name for ${path.basename(filePath)} in ${backupDir}`);
+}
+
 /**
  * Write file atomically: write to .tmp, then rename.
- * Creates backup in .discipline/backups/ before overwriting.
+ * Backs the original up in .discipline/backups/ first and RETURNS that exact path ('' when the
+ * target did not exist yet). The path is returned instead of being rediscovered by scanning the
+ * directory afterwards: a scan sorts by name, and same-millisecond backups of the same file
+ * would hand the rollback the wrong copy.
  */
-function atomicWriteWithBackup(root: string, filePath: string, content: string): void {
+function atomicWriteWithBackup(root: string, filePath: string, content: string): string {
   const backupDir = path.join(root, '.discipline', 'backups');
   if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
 
-  // Backup original
-  if (fs.existsSync(filePath)) {
-    const backupName = `${path.basename(filePath)}.${Date.now()}`;
-    fs.copyFileSync(filePath, path.join(backupDir, backupName));
-  }
+  const backupPath = fs.existsSync(filePath) ? copyToUniqueBackup(backupDir, filePath) : '';
 
   // Atomic write: tmp -> rename
   const tmp = filePath + '.tmp';
   fs.writeFileSync(tmp, content, 'utf-8');
   fs.renameSync(tmp, filePath);
+  return backupPath;
 }
 
 export async function applyPatches(root: string, isDryRun = false): Promise<number> {
@@ -48,7 +86,8 @@ export async function applyPatches(root: string, isDryRun = false): Promise<numb
   // Validate TARGET_FILE whitelist
   for (const patch of patches) {
     if (!ALLOWED_PATCH_TARGETS.has(patch.targetFile)) {
-      disciplineError(`TARGET_FILE not allowed: "${patch.targetFile}". Allowed: ${[...ALLOWED_PATCH_TARGETS].join(', ')}`);
+      // Throw, never exit: same reason as the batch failure below, this function is imported.
+      throw new Error(`TARGET_FILE not allowed: "${patch.targetFile}". Allowed: ${[...ALLOWED_PATCH_TARGETS].join(', ')}`);
     }
   }
 
@@ -76,9 +115,30 @@ export async function applyPatches(root: string, isDryRun = false): Promise<numb
   // flow or a future reconciler) rewrites the same Discipline files at once.
   // If a live owner holds it, withWriterLock throws a clear error naming it.
   const targetsTouched = [...new Set(patches.map(p => p.targetFile))];
-  const applied = await withWriterLock(root, { tool: 'discipline:patch' }, () =>
-    applyPatchesLocked(root, patches),
-  );
+  let applied: number;
+  try {
+    applied = await withWriterLock(root, { tool: 'discipline:patch' }, () =>
+      applyPatchesLocked(root, patches),
+    );
+  } catch (err) {
+    // Record the failed batch, then rethrow so the caller decides. withWriterLock releases the
+    // lock in its own finally (and, when re-entered from run.ts/watch.ts, correctly leaves the
+    // outer holder's lock alone), so nothing is released by hand here.
+    // count = patches still in effect after the rollback: 0 when it restored everything, and
+    // the raw applied count when it did not, because then the tree really is half-patched.
+    const failure = err instanceof PatchBatchError ? err : null;
+    try {
+      appendLedger(root, {
+        event: 'patch_applied',
+        targets: failure ? [failure.targetFile] : targetsTouched,
+        count: failure && failure.rollbackFailures > 0 ? failure.applied : 0,
+        ok: false,
+        rolled_back: failure?.rolledBack ?? 0,
+        rollback_failures: failure?.rollbackFailures ?? 0,
+      });
+    } catch { /* best-effort */ }
+    throw err;
+  }
 
   try {
     appendLedger(root, { event: 'patch_applied', targets: targetsTouched, count: applied, ok: true });
@@ -94,8 +154,8 @@ type PatchList = ReturnType<typeof parsePatchFile>[];
 
 function applyPatchesLocked(root: string, patches: PatchList): number {
   const appliedDir = path.join(root, '.discipline', 'patches', 'applied');
-  // Track backups for rollback
-  const backupMap: Array<{ targetPath: string; backupPath: string; patchSourcePath: string; appliedPath: string }> = [];
+  // Rollback journal: one entry per file this batch has written, in write order.
+  const backupMap: RollbackEntry[] = [];
 
   let applied = 0;
   for (const patch of patches) {
@@ -119,50 +179,41 @@ function applyPatchesLocked(root: string, patches: PatchList): number {
         case 'append': newLines = [...lines.slice(0, bounds.end), patch.content, '', ...lines.slice(bounds.end)]; break;
       }
 
-      // Atomic write with backup
-      atomicWriteWithBackup(root, targetPath, newLines.join('\n'));
-
-      // Find the backup that was just created
-      const backupDir = path.join(root, '.discipline', 'backups');
-      const latestBackup = fs.readdirSync(backupDir)
-        .filter(f => f.startsWith(path.basename(patch.targetFile)))
-        .sort().pop();
+      // Atomic write with backup. The target is modified from this line on, so the rollback
+      // entry is journaled BEFORE any post-write step: if creating applied/ or moving the patch
+      // file throws, the catch still knows this file has to be restored. appliedPath is filled
+      // in only once the move succeeded, so the rollback never chases a file that never moved.
+      const backupPath = atomicWriteWithBackup(root, targetPath, newLines.join('\n'));
+      const journal: RollbackEntry = { targetPath, backupPath, patchSourcePath: patch.sourcePath, appliedPath: '' };
+      backupMap.push(journal);
 
       // Move patch to applied
       const timestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 15);
       if (!fs.existsSync(appliedDir)) fs.mkdirSync(appliedDir, { recursive: true });
       const appliedPath = path.join(appliedDir, `${timestamp}_${path.basename(patch.sourcePath)}`);
       try { fs.renameSync(patch.sourcePath, appliedPath); } catch { fs.copyFileSync(patch.sourcePath, appliedPath); fs.unlinkSync(patch.sourcePath); }
-
-      backupMap.push({
-        targetPath,
-        backupPath: latestBackup ? path.join(backupDir, latestBackup) : '',
-        patchSourcePath: patch.sourcePath,
-        appliedPath,
-      });
+      journal.appliedPath = appliedPath;
 
       applied++;
       disciplineInfo(`Applied: ${patch.name} -> ${patch.targetFile} (${patch.patchMode} at "${patch.anchor}")`);
 
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      // disciplineErrorMessage, NOT disciplineError: the latter exits immediately, which
-      // would skip the rollback, the lock release and the ledger entry below. The batch is
-      // all-or-nothing, so a failure here must leave the repo exactly as it was found.
-      disciplineErrorMessage(`Patch failed: ${patch.name} -> ${msg}`);
 
-      // Rollback all previously applied patches in this batch
+      // Undo every file this batch has written, newest first. The journal is written before
+      // each post-write step, so this covers the current patch too, not only the earlier ones.
       let rollbackFailures = 0;
       if (backupMap.length > 0) {
-        disciplineInfo(`\nRolling back ${backupMap.length} previously applied patch(es)...`);
-        for (const entry of backupMap.reverse()) {
+        disciplineInfo(`\nRolling back ${backupMap.length} written file(s)...`);
+        for (const entry of [...backupMap].reverse()) {
           try {
             if (entry.backupPath && fs.existsSync(entry.backupPath)) {
               fs.copyFileSync(entry.backupPath, entry.targetPath);
               disciplineInfo(`  Restored: ${path.basename(entry.targetPath)}`);
             }
-            // Move patch back from applied to pending
-            if (fs.existsSync(entry.appliedPath)) {
+            // Move patch back from applied to pending. Empty appliedPath = the move never
+            // happened, so the patch file is still sitting in pending/ and needs nothing.
+            if (entry.appliedPath && fs.existsSync(entry.appliedPath)) {
               fs.renameSync(entry.appliedPath, entry.patchSourcePath);
             }
           } catch (rollbackErr) {
@@ -171,32 +222,21 @@ function applyPatchesLocked(root: string, patches: PatchList): number {
             disciplineErrorMessage(`  Rollback failed for ${path.basename(entry.targetPath)}: ${rollbackErr}`);
           }
         }
-        if (rollbackFailures > 0) {
-          disciplineErrorMessage(
-            `Rollback incomplete: ${rollbackFailures} of ${backupMap.length} entr(ies) could not be restored. ` +
-            'The state files may be half-patched. Compare them against .discipline/backups/ before running anything else.',
-          );
-        } else {
-          disciplineInfo('Rollback complete. All files restored to pre-patch state.');
-        }
+        if (rollbackFailures === 0) disciplineInfo('Rollback complete. All files restored to pre-patch state.');
       }
 
-      // process.exit() below skips withWriterLock's finally, so release the
-      // writer lock here to avoid leaving a stale lock behind on failure.
-      try { releaseWriterLock(root); } catch { /* best-effort cleanup */ }
-      // count = patches still in effect after the rollback: 0 when it restored everything,
-      // and the raw applied count when it did not, because then the tree really is half-patched.
-      try {
-        appendLedger(root, {
-          event: 'patch_applied',
-          targets: [patch.targetFile],
-          count: rollbackFailures > 0 ? applied : 0,
-          ok: false,
-          rolled_back: backupMap.length,
-          rollback_failures: rollbackFailures,
-        });
-      } catch { /* best-effort */ }
-      process.exit(1);
+      // Throw, never exit: this function is imported by run.ts and watch.ts, and process.exit()
+      // here would skip their finally blocks (the slice lease in run.ts, the queue bookkeeping
+      // in watch.ts). The CLI entrypoint at the bottom of this file owns the exit code.
+      const detail = rollbackFailures > 0
+        ? ` | Rollback incomplete: ${rollbackFailures} of ${backupMap.length} entr(ies) could not be restored. The state files may be half-patched. Compare them against .discipline/backups/ before running anything else.`
+        : '';
+      throw new PatchBatchError(`Patch failed: ${patch.name} -> ${msg}${detail}`, {
+        applied,
+        rolledBack: backupMap.length,
+        rollbackFailures,
+        targetFile: patch.targetFile,
+      });
     }
   }
 

@@ -609,6 +609,153 @@ never applied
   assert.equal(failure.rollback_failures, 0)
 })
 
+// The transactional window: the target is written BEFORE the patch file moves to applied/.
+// A failure inside that window (backup discovery, mkdir applied/, the move itself) used to
+// escape the rollback, because the journal entry was only pushed after the move succeeded.
+// Forcing the mkdir to fail (applied/ replaced by a regular file) exercises exactly that gap.
+test('apply-patch rolls back a failure that happens after the target was written', () => {
+  const projectRoot = createDisciplineProject()
+  const appliedDir = path.join(projectRoot, '.discipline', 'patches', 'applied')
+  fs.rmSync(appliedDir, { recursive: true, force: true })
+  fs.writeFileSync(appliedDir, 'not a directory\n', 'utf8')
+
+  writePatch(projectRoot, 'post-write-failure', `# Post Write Failure
+TARGET_FILE: findings.md
+PATCH_MODE: append
+ANCHOR: ## Decisions
+
+### CONTENT
+- POST_WRITE_MARKER_MUST_NOT_SURVIVE
+`)
+  const findingsBefore = fs.readFileSync(path.join(projectRoot, 'findings.md'), 'utf8')
+
+  const result = runTsx('tools/discipline/apply-patch.ts', ['--project-dir', projectRoot])
+  assert.notEqual(result.status, 0, getOutput(result))
+  assert.match(getOutput(result), /Rollback complete/)
+
+  // The write happened and must be undone even though the patch never reached applied/.
+  assert.equal(fs.readFileSync(path.join(projectRoot, 'findings.md'), 'utf8'), findingsBefore)
+  assert.deepEqual(fs.readdirSync(path.join(projectRoot, '.discipline', 'patches', 'pending')), ['post-write-failure.md'])
+  assert.equal(fs.existsSync(path.join(projectRoot, '.discipline', 'locks', 'writer.lock')), false)
+
+  const ledgerDir = path.join(projectRoot, '.discipline', 'ledger')
+  const events = fs.readdirSync(ledgerDir)
+    .flatMap((f) => fs.readFileSync(path.join(ledgerDir, f), 'utf8').trim().split('\n'))
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+  const failure = events.find((e) => e.event === 'patch_applied' && e.ok === false)
+  assert.ok(failure, 'expected a patch_applied event with ok: false')
+  assert.equal(failure.rolled_back, 1, 'the file written in the failed window must be journaled')
+  assert.equal(failure.rollback_failures, 0)
+})
+
+// Two patches against the SAME file inside one batch, with the clock frozen so both backups
+// resolve to the identical name. The engine must claim each name atomically and remember the
+// exact path it wrote: sharing one backup slot (or rediscovering "the latest backup" by sorting
+// the directory) makes the rollback restore an intermediate state and silently leave the first
+// patch applied.
+test('apply-patch keeps one backup per write when two patches hit the same file on the same millisecond', () => {
+  const projectRoot = createDisciplineProject()
+  writePatch(projectRoot, 'a-first-decisions', `# First
+TARGET_FILE: findings.md
+PATCH_MODE: append
+ANCHOR: ## Decisions
+
+### CONTENT
+- FIRST_MARKER_MUST_NOT_SURVIVE
+`)
+  writePatch(projectRoot, 'b-second-risks', `# Second
+TARGET_FILE: findings.md
+PATCH_MODE: append
+ANCHOR: ## Risks
+
+### CONTENT
+- SECOND_MARKER_MUST_NOT_SURVIVE
+`)
+  writePatch(projectRoot, 'c-broken-progress', `# Broken
+TARGET_FILE: progress.md
+PATCH_MODE: append
+ANCHOR: ## Anchor That Does Not Exist
+
+### CONTENT
+never applied
+`)
+  const findingsBefore = fs.readFileSync(path.join(projectRoot, 'findings.md'), 'utf8')
+
+  const script = path.join(projectRoot, 'frozen-clock-apply.mjs')
+  fs.writeFileSync(
+    script,
+    `// Freeze the clock so every backup in the batch wants the same base name.
+Date.now = () => 1780000000000
+const { applyPatches } = await import('${pathToImport(path.join(repoRoot, 'tools', 'discipline', 'apply-patch.ts'))}')
+try { await applyPatches(${JSON.stringify(projectRoot)}) } catch (err) { console.log('FAILED:' + err.message) }
+`,
+    'utf8',
+  )
+  const result = runTsx(script)
+  const out = getOutput(result)
+  assert.match(out, /FAILED:Patch failed/, out)
+
+  const findingsAfter = fs.readFileSync(path.join(projectRoot, 'findings.md'), 'utf8')
+  assert.equal(findingsAfter, findingsBefore)
+  assert.ok(!findingsAfter.includes('FIRST_MARKER_MUST_NOT_SURVIVE'), 'the first patch must be undone too')
+  assert.ok(!findingsAfter.includes('SECOND_MARKER_MUST_NOT_SURVIVE'))
+
+  // One backup slot per write, even under a name collision.
+  const backups = fs.readdirSync(path.join(projectRoot, '.discipline', 'backups'))
+    .filter((f) => f.startsWith('findings.md.'))
+  assert.equal(backups.length, 2, `expected 2 distinct backups, got ${backups.join(', ')}`)
+
+  assert.deepEqual(
+    fs.readdirSync(path.join(projectRoot, '.discipline', 'patches', 'pending')).sort(),
+    ['a-first-decisions.md', 'b-second-risks.md', 'c-broken-progress.md', 'frozen-clock-apply.mjs'].filter((f) => f.endsWith('.md')),
+  )
+  assert.deepEqual(fs.readdirSync(path.join(projectRoot, '.discipline', 'patches', 'applied')), [])
+})
+
+// applyPatches is imported by run.ts and watch.ts. If it exits the process on failure, their
+// finally blocks never run and a slice lease (run.ts) outlives the run. The core must reject;
+// only the CLI entrypoint decides an exit code.
+test('applyPatches rejects instead of killing the importing process', () => {
+  const projectRoot = createDisciplineProject()
+  writePatch(projectRoot, 'broken-for-import', `# Broken For Import
+TARGET_FILE: progress.md
+PATCH_MODE: append
+ANCHOR: ## Anchor That Does Not Exist
+
+### CONTENT
+never applied
+`)
+  const marker = path.join(projectRoot, 'finally-ran.txt')
+  const script = path.join(projectRoot, 'import-apply.mjs')
+  fs.writeFileSync(
+    script,
+    `import fs from 'node:fs'
+import { applyPatches, PatchBatchError } from '${pathToImport(path.join(repoRoot, 'tools', 'discipline', 'apply-patch.ts'))}'
+let code = 0
+try {
+  await applyPatches(${JSON.stringify(projectRoot)})
+  code = 99 // must not reach: the batch fails
+} catch (err) {
+  console.log('CAUGHT:' + (err instanceof PatchBatchError ? 'PatchBatchError' : err?.constructor?.name))
+  console.log('MESSAGE:' + err.message)
+  code = 7
+} finally {
+  fs.writeFileSync(${JSON.stringify(marker)}, 'finally ran\\n', 'utf8')
+}
+process.exit(code)
+`,
+    'utf8',
+  )
+
+  const result = runTsx(script)
+  const out = getOutput(result)
+  assert.equal(result.status, 7, out)
+  assert.ok(fs.existsSync(marker), 'the importing process must reach its own finally block')
+  assert.match(out, /CAUGHT:PatchBatchError/)
+  assert.match(out, /MESSAGE:Patch failed: Broken For Import/)
+})
+
 function pathToImport(absPath) {
   // Convert an absolute Windows path to a file:// URL that tsx can resolve.
   return 'file:///' + absPath.replace(/\\/g, '/').replace(/^\//, '')
@@ -2159,6 +2306,33 @@ test('run: end-to-end with a fake builder stops before commit with all artifacts
   assert.match(ledger, /run_started/)
   assert.match(ledger, /run_finished/)
   assert.match(ledger, /gate_result/)
+  fs.rmSync(repo, { recursive: true, force: true })
+})
+
+// A failed patch inside `discipline run` must not strand the slice lease. applyPatches is
+// imported there, so exiting the process instead of throwing would skip run.ts's finally block
+// and leave .discipline/locks/slice-<id>.lock behind, blocking every later run of that slice.
+test('run: releases the slice lease and the writer lock when the patch application fails', () => {
+  const gitProbe = spawnSync('git', ['--version'], { encoding: 'utf8' })
+  if (gitProbe.status !== 0) return
+  const repo = makeRunFixtureRepo()
+  // The fake builder emits a FINDINGS_APPEND_BLOCK anchored at "## Decisions". Dropping that
+  // heading makes the extracted patch fail while the run holds the lease.
+  fs.writeFileSync(path.join(repo, 'findings.md'), '# findings.md\n\n## Risks\n- none\n', 'utf8')
+  spawnSync('git', ['commit', '-qam', 'drop the Decisions anchor'], { cwd: repo, encoding: 'utf8' })
+
+  const env = { ...process.env, DISCIPLINE_FAKE_PROVIDER_CMD: fakeCli, FAKE_MODE: 'build', FAKE_BUILD_DIR: repo }
+  const res = spawnSync(process.execPath, [tsxCli, 'tools/discipline/run.ts', '--slice', '1', '--yes', '--no-open', '--project-dir', repo], {
+    cwd: repoRoot, env, encoding: 'utf8',
+  })
+  const out = getOutput(res)
+  assert.equal(res.status, 2, out)
+  assert.match(out, /Run failed: Patch failed/)
+
+  const locksDir = path.join(repo, '.discipline', 'locks')
+  const locks = fs.existsSync(locksDir) ? fs.readdirSync(locksDir) : []
+  assert.deepEqual(locks.filter((f) => f.startsWith('slice-')), [], 'the slice lease must be released')
+  assert.ok(!locks.includes('writer.lock'), 'the writer lock must be released')
   fs.rmSync(repo, { recursive: true, force: true })
 })
 
