@@ -8,6 +8,7 @@ import { DISCIPLINE_MD_ANCHORS, TASK_PLAN_ANCHORS, FINDINGS_ANCHORS, PROGRESS_AN
 import { ALL_PACKET_NAMES } from './lib/artifact-flow.js';
 import { parsePacketFile } from './lib/parse-packet.js';
 import { parsePacketMeta } from './lib/packet-meta.js';
+import { findSliceHeadings, parseReadySlicesTable, resolvePacketIdentity, resolveSlice, slicePacketFileName, type SliceHeading } from './lib/slice-identity.js';
 import { validateScorecard, type ScorecardMode } from './validate-scorecard.js';
 
 const args = minimist(process.argv.slice(2));
@@ -68,9 +69,78 @@ export function validateDiscipline(root: string): ValidationIssue[] {
 
   checkPacketSemantics(root, issues);
   checkPacketFrontmatter(root, issues);
+  checkSliceIdentity(root, issues);
   checkProgressLength(root, issues);
   checkProfileScorecard(root, issues);
   return issues;
+}
+
+/**
+ * Slice identity, checked before anything acts on it. Everything here is an ERROR rather than a
+ * warning: a slice the plan describes twice, a plan whose table and section disagree about a
+ * status, or a packet claiming two different slices are all states where the next command would
+ * have to guess. Guessing is what this whole module exists to prevent.
+ */
+function checkSliceIdentity(root: string, issues: ValidationIssue[]) {
+  const taskPlanPath = path.join(root, 'task_plan.md');
+  if (fs.existsSync(taskPlanPath)) {
+    const taskPlan = fs.readFileSync(taskPlanPath, 'utf-8');
+    const seen = new Map<string, SliceHeading[]>();
+    for (const heading of findSliceHeadings(taskPlan)) {
+      const list = seen.get(heading.id) ?? [];
+      list.push(heading);
+      seen.set(heading.id, list);
+    }
+    for (const [id, headings] of seen) {
+      if (headings.length > 1) {
+        issues.push({
+          severity: 'error',
+          message: `task_plan.md describes slice "${id}" ${headings.length} times`,
+          detail: `lines ${headings.map((h) => h.line + 1).join(', ')}: two sections for one slice make its status ambiguous`,
+        });
+        continue;
+      }
+      // resolveSlice compares the §4 table against the slice's own section.
+      const resolution = resolveSlice(taskPlan, id);
+      if (!resolution.ok && resolution.reason === 'contradiction') {
+        issues.push({ severity: 'error', message: `task_plan.md contradicts itself about slice "${id}"`, detail: resolution.message });
+      }
+    }
+    const rows = new Map<string, number[]>();
+    for (const row of parseReadySlicesTable(taskPlan)) {
+      rows.set(row.id, [...(rows.get(row.id) ?? []), row.line + 1]);
+    }
+    for (const [id, lines] of rows) {
+      if (lines.length > 1) {
+        issues.push({
+          severity: 'error',
+          message: `§4 Ready Slices lists slice "${id}" ${lines.length} times`,
+          detail: `lines ${lines.join(', ')}: keep one row per slice`,
+        });
+      }
+    }
+  }
+
+  const packetsDir = path.join(root, '.discipline', 'packets');
+  if (!fs.existsSync(packetsDir)) return;
+  for (const file of fs.readdirSync(packetsDir).filter((f) => f.endsWith('.md'))) {
+    if (!/(STEP_5_SLICE_PACKET|SLICE_COMPLETION_PACKET)/i.test(file)) continue;
+    const content = fs.readFileSync(path.join(packetsDir, file), 'utf-8');
+    const identity = resolvePacketIdentity(content, file);
+    if (!identity.ok) {
+      issues.push({ severity: 'error', message: `${file} claims more than one slice`, detail: identity.message });
+      continue;
+    }
+    // A generic STEP_5_SLICE_PACKET.md still works, but one packet per file is what keeps two
+    // slices from sharing a slot, so say it every time rather than at some future migration.
+    if (identity.id && /^STEP_5_SLICE_PACKET\.md$/i.test(file)) {
+      issues.push({
+        severity: 'warning',
+        message: 'STEP_5_SLICE_PACKET.md uses the legacy generic name',
+        detail: `rename it to ${slicePacketFileName(identity.id)} so each slice keeps its own file`,
+      });
+    }
+  }
 }
 
 // Optional packet frontmatter (warn-only). Packets without a `---` block are

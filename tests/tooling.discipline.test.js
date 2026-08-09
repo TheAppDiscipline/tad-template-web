@@ -3274,3 +3274,33 @@ test('slice identity: completion packets that disagree do not consume the slice'
   assert.match(out.disagree.reason, /SLICE_COMPLETION_PACKET_rerun\.md -> failed/)
   assert.equal(out.agree.consumed, true)
 })
+
+// The validator is where identity problems have to surface for a project that is not running
+// anything yet: a duplicated slice, a plan that contradicts itself, or a packet claiming two
+// slices are all states where the next command would have to guess.
+test('discipline:validate reports duplicated slices, plan contradictions and packet identity conflicts', () => {
+  const clean = createDisciplineProject()
+  fs.writeFileSync(path.join(clean, 'task_plan.md'), [
+    '# task_plan.md', '', '## 4) Ready Slices', '',
+    '| # | Slice | Status |', '|---|---|---|', '| 1 | S13 - Sync | ready |', '',
+    '## Slice S13 - Sync', '- Status: ready', '',
+    '## 5) Deferred / Later', '- none', '',
+  ].join('\n'), 'utf8')
+  const cleanRun = runTsx('tools/discipline/validate-discipline.ts', ['--project-dir', clean])
+  assert.equal(cleanRun.status, 0, getOutput(cleanRun))
+
+  const broken = createDisciplineProject({
+    'STEP_5_SLICE_PACKET_13.md': '---\nslice: 14\n---\n\n# STEP_5_SLICE_PACKET\n\nSLICE: 14\n\n## Goal\n- x\n## Scope\n- x\n## Contracts\n- x\n## Acceptance criteria\n- x\n',
+  })
+  fs.writeFileSync(path.join(broken, 'task_plan.md'), [
+    '# task_plan.md', '', '## 4) Ready Slices', '',
+    '| # | Slice | Status |', '|---|---|---|', '| 1 | S13 - Sync | blocked |', '| 2 | 13 - Sync again | ready |', '',
+    '## Slice S13 - Sync', '- Status: ready', '',
+    '## 5) Deferred / Later', '- none', '',
+  ].join('\n'), 'utf8')
+  const brokenRun = runTsx('tools/discipline/validate-discipline.ts', ['--project-dir', broken])
+  const out = getOutput(brokenRun)
+  assert.notEqual(brokenRun.status, 0, out)
+  assert.match(out, /Ready Slices lists slice "13" 2 times/)
+  assert.match(out, /claims more than one slice/)
+})

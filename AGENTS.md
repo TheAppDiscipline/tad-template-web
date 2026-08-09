@@ -142,6 +142,7 @@ Run `npm run discipline:validate` before closing a pipeline branch or opening a 
 - required directories under `.discipline/`
 - semantic completeness of key packets such as `STEP_5_SLICE_PACKET`, `DEPLOY_READINESS_PACKET`, `POST_DEPLOY_FEEDBACK_PACKET` and `PROD_HARDENING_PACKET`
 - ready `STEP_5_SLICE_PACKET`s also need `Provider Impact`, `AI Impact`, `Files to touch`, `Manual Verification`, and `Estimate` before implementation; missing sections warn so legacy packets remain compatible
+- slice identity: a slice described or listed twice, a status the §4 table and the slice's own section disagree about, and a packet that claims two different slices are errors; the legacy generic packet name is a warning
 
 ## Backend Adapter Pattern
 
@@ -150,6 +151,35 @@ Backend is a plugin: `src/lib/backend/index.ts` is the factory. Never import Sup
 SDKs are installed on demand:
 - `npm i @supabase/supabase-js`
 - `npm i firebase`
+
+## Slice Identity
+
+Which slice a file is about is decided in one place, `tools/discipline/lib/slice-identity.ts`, and every
+command reads it from there: the runner, the assembler, the validator and the watcher.
+
+- **Ids compare normalized.** `Slice S13`, `S13` and `13` are the same slice. `S13.2` and `S13-a` are
+  not: composite ids stay distinct. A request for `1` never resolves to `S13`.
+- **One packet per file.** The canonical name is `.discipline/packets/STEP_5_SLICE_PACKET_<slice>.md`,
+  and the paste-ready it produces is `.discipline/paste-ready/step-5-<slice>-input.md`. Nothing moves in
+  and out of a shared slot, so two slices can be ready at once without overwriting each other.
+- **A packet must say which slice it is for.** Any of these count as a declaration: the suffixed
+  filename, frontmatter `slice:`, the root `SLICE:` field, a `## Slice S13` heading, or the first entry
+  of a `## Slice` section. **Two declarations that disagree fail closed**, naming every source. No field
+  outranks another, because a winner is how a contradiction survives.
+- **The legacy generic `STEP_5_SLICE_PACKET.md` still works**, but only when it identifies the slice you
+  asked for and no other: it is accepted with a warning, and refused when it names a different slice.
+  A packet with no declaration at all is accepted only when the plan has exactly one slice it could be.
+- **`task_plan.md` must not contradict itself.** A slice described twice, listed twice in the §4 Ready
+  Slices table, or carrying one status in the table and another in its own section stops the command.
+  Only a table with a slice column AND a status column is read as statuses; prose tables in that section
+  are left alone.
+- **Consumed means closed, not superseded.** A slice packet counts as consumed only when its slice has a
+  `SLICE_COMPLETION_PACKET` with an explicit `GATE_STATE: passed`. Several completion packets for the
+  same slice are all read: if they disagree, the slice is not consumed and both are named.
+
+**Existing projects:** nothing has to be renamed to keep working. `npm run discipline:validate` warns
+once per generic packet and tells you the suffixed name to move it to; do it when the slice closes, not
+mid-flight.
 
 ## Anchor Rules
 
