@@ -98,7 +98,7 @@ export function findSliceHeadings(taskPlan: string): SliceHeading[] {
     if (!match) continue;
     // Without the keyword the id must look like a slice id, so acceptance-criteria headings
     // (`### C1`, `### AC2`) and section headings never become slices.
-    const withKeyword = /^#{2,4}[ 	]+slice[ 	]/i.test(lines[i]);
+    const withKeyword = /^#{2,4}[ \t]+slice[ \t]/i.test(lines[i]);
     if (!withKeyword && !/^s?\d/i.test(match[2])) continue;
     const id = normalizeSliceId(match[2]);
     if (!id) continue;
@@ -263,7 +263,7 @@ export function readSliceDeclarations(content: string, fileName?: string): Slice
   // Everything below reads the BODY. Scanning the whole file would let the frontmatter's own
   // `slice:` line answer as the root `SLICE:` field (the match is case-insensitive), which hides
   // exactly the contradiction this function exists to surface.
-  const body = content.replace(/^﻿/, '').replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '');
+  const body = content.replace(/^\uFEFF/, '').replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '');
 
   // Root field, the form Step 4 emits and every real packet carries: `SLICE: S27E3b - Title`.
   // Only the HEADER counts, meaning the lines before the first `##` section. Prose further down
@@ -417,19 +417,99 @@ export function locateSlicePacket(root: string, sliceId: string, taskPlan?: stri
   return { ok: true, path: generic, sliceId: wanted, legacy: true, warnings };
 }
 
-/** Active (not archived) Step 5 packets with the slice each one identifies. */
-export function activeSlicePackets(root: string): Array<{ path: string; sliceId: string | null; legacy: boolean }> {
+/** What a packet says about itself, beyond which slice it is for. */
+export interface ActiveSlicePacket {
+  path: string;
+  fileName: string;
+  /** The single slice it declares, or null when it declares none. */
+  sliceId: string | null;
+  /** Set when the packet declares two different slices. The packet is unusable until fixed. */
+  identityError: string | null;
+  /** Frontmatter `status:` if present, else the header `STATUS:` field, lowercased. */
+  status: string | null;
+  legacy: boolean;
+}
+
+/**
+ * The status a packet claims: frontmatter `status:` first, then the header `STATUS:` field that
+ * Step 4 writes. Only the header is read for the second form, for the same reason the SLICE field
+ * is: prose further down wraps, and a sentence is not a state.
+ */
+export function packetStatus(content: string): string | null {
+  const { meta } = parsePacketMeta(content);
+  if (meta && typeof meta.status === 'string' && meta.status.trim()) return meta.status.trim().toLowerCase();
+
+  const body = content.replace(/^\uFEFF/, '').replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '');
+  const lines = body.split('\n');
+  const titleLine = lines.findIndex((line) => /^#{1,4}[ \t]/.test(line));
+  const nextHeading = lines.findIndex((line, index) => index > titleLine && /^#{1,4}[ \t]/.test(line));
+  const header = lines.slice(0, nextHeading === -1 ? lines.length : nextHeading).join('\n');
+  const field = header.match(/^[ \t]*STATUS:[ \t]*(.+?)[ \t]*$/im);
+  return field ? field[1].trim().toLowerCase() : null;
+}
+
+/** Active (not archived) Step 5 packets, each with what it declares about itself. */
+export function activeSlicePackets(root: string): ActiveSlicePacket[] {
   const dir = path.join(root, '.discipline', 'packets');
   if (!fs.existsSync(dir)) return [];
-  const found: Array<{ path: string; sliceId: string | null; legacy: boolean }> = [];
+  const found: ActiveSlicePacket[] = [];
   for (const file of fs.readdirSync(dir)) {
     // Archived packets carry extra name segments (`.S12.consumed.md`); they are history, not work.
     if (!/^STEP_5_SLICE_PACKET(_[A-Za-z0-9._-]+)?\.md$/i.test(file)) continue;
     const full = path.join(dir, file);
-    const identity = resolvePacketIdentity(fs.readFileSync(full, 'utf-8'), file);
-    found.push({ path: full, sliceId: identity.ok ? identity.id : null, legacy: /^STEP_5_SLICE_PACKET\.md$/i.test(file) });
+    const content = fs.readFileSync(full, 'utf-8');
+    const identity = resolvePacketIdentity(content, file);
+    found.push({
+      path: full,
+      fileName: file,
+      sliceId: identity.ok ? identity.id : null,
+      identityError: identity.ok ? null : identity.message,
+      status: packetStatus(content),
+      legacy: /^STEP_5_SLICE_PACKET\.md$/i.test(file),
+    });
   }
   return found;
+}
+
+export type Step5Selection =
+  | { ok: true; packets: Array<{ path: string; sliceId: string }> }
+  | { ok: false; reason: string };
+
+/**
+ * The packets a Step 5 handoff may be assembled from, or a refusal. Fail closed on purpose: an
+ * invalid packet sitting next to a valid one used to be skipped silently, a `draft` packet was
+ * treated as work to hand off, and two files for one slice would have written the same
+ * paste-ready twice in the same tick.
+ */
+export function selectStep5Packets(root: string): Step5Selection {
+  const active = activeSlicePackets(root);
+  if (active.length === 0) return { ok: true, packets: [] };
+
+  const broken = active.filter((packet) => packet.identityError);
+  if (broken.length > 0) {
+    return { ok: false, reason: broken.map((packet) => packet.identityError).join(' | ') };
+  }
+  const anonymous = active.filter((packet) => !packet.sliceId);
+  if (anonymous.length > 0) {
+    return {
+      ok: false,
+      reason: `${anonymous.map((packet) => packet.fileName).join(', ')} do(es) not say which slice it is for, so it cannot be assembled per slice. Add a SLICE: line or rename it to STEP_5_SLICE_PACKET_<slice>.md.`,
+    };
+  }
+
+  const byslice = new Map<string, ActiveSlicePacket[]>();
+  for (const packet of active) byslice.set(packet.sliceId!, [...(byslice.get(packet.sliceId!) ?? []), packet]);
+  const duplicated = [...byslice.entries()].filter(([, packets]) => packets.length > 1);
+  if (duplicated.length > 0) {
+    return {
+      ok: false,
+      reason: duplicated.map(([slice, packets]) => `slice ${slice} has ${packets.length} active packets (${packets.map((p) => p.fileName).join(', ')})`).join('; ') + '. Keep one per slice.',
+    };
+  }
+
+  // Only READY packets are work. A draft is a spec still being written, and a consumed one is done.
+  const ready = active.filter((packet) => packet.status === 'ready' && !isSliceConsumed(root, packet.sliceId!).consumed);
+  return { ok: true, packets: ready.map((packet) => ({ path: packet.path, sliceId: packet.sliceId! })) };
 }
 
 /**
@@ -444,17 +524,31 @@ export function markSliceConsumed(root: string, sliceId: string): string | null 
   if (!target) return null;
 
   const content = fs.readFileSync(target.path, 'utf-8');
-  const hasFrontmatter = /^﻿?---\r?\n/.test(content);
-  let next: string;
-  if (hasFrontmatter) {
-    if (/^status:[ \t]*consumed[ \t]*$/im.test(content)) return target.path; // already marked: idempotent
-    next = /^status:[ \t]*.*$/im.test(content)
-      ? content.replace(/^status:[ \t]*.*$/im, 'status: consumed')
-      : content.replace(/^(﻿?---\r?\n)/, '$1status: consumed\n');
-  } else {
-    next = `---\nstatus: consumed\nslice: ${wanted}\n---\n\n${content}`;
+  const eol = content.includes('\r\n') ? '\r\n' : '\n';
+  const bom = content.startsWith('\uFEFF') ? '\uFEFF' : '';
+  const withoutBom = content.slice(bom.length);
+
+  // The edit is bounded by the REAL frontmatter block. Searching the whole document for a
+  // `status:` line would rewrite the header's own `STATUS: ready` and leave the metadata without
+  // a state, which is the opposite of recording one.
+  const lines = withoutBom.split(/\r?\n/);
+  if (lines[0]?.trim() !== '---') {
+    const front = ['---', 'status: consumed', `slice: ${wanted}`, '---', ''].join(eol);
+    fs.writeFileSync(target.path, `${bom}${front}${eol}${withoutBom}`, 'utf-8');
+    return target.path;
   }
-  fs.writeFileSync(target.path, next, 'utf-8');
+
+  const closing = lines.findIndex((line, index) => index > 0 && line.trim() === '---');
+  if (closing === -1) return null; // unterminated frontmatter: leave it alone, validate reports it
+
+  const front = lines.slice(1, closing);
+  const statusAt = front.findIndex((line) => /^status:/i.test(line));
+  if (statusAt !== -1 && /^status:[ \t]*consumed[ \t]*$/i.test(front[statusAt])) return target.path; // idempotent
+  if (statusAt !== -1) front[statusAt] = 'status: consumed';
+  else front.unshift('status: consumed');
+
+  const next = [lines[0], ...front, ...lines.slice(closing)].join(eol);
+  fs.writeFileSync(target.path, bom + next, 'utf-8');
   return target.path;
 }
 

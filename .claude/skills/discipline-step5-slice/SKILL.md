@@ -32,9 +32,10 @@ NOTE: Step 5 (implementation) is still iterative and manual in the daily driver.
 
 ### Phase 0: Verify DoR
 
-Read the slice's own packet, `.discipline/packets/STEP_5_SLICE_PACKET_<slice>.md` (the generic
-`STEP_5_SLICE_PACKET.md` is legacy: it still works when it identifies THIS slice and no other, and
-`discipline:validate` tells you the suffixed name to move it to). Confirm:
+Read the slice's own packet, `.discipline/packets/STEP_5_SLICE_PACKET_<slice>.md`. A project that
+still has the generic `STEP_5_SLICE_PACKET.md` keeps working: it is accepted while it identifies
+THIS slice and no other. Migrating it to the suffixed name is a deliberate decision the operator
+takes between slices, never something this step does on its way past. Confirm:
 - Goal defined
 - Scope IN/OUT explicit
 - Contracts (data model, API/IO, interaction surface)

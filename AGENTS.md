@@ -177,9 +177,11 @@ command reads it from there: the runner, the assembler, the validator and the wa
   `SLICE_COMPLETION_PACKET` with an explicit `GATE_STATE: passed`. Several completion packets for the
   same slice are all read: if they disagree, the slice is not consumed and both are named.
 
-**Existing projects:** nothing has to be renamed to keep working. `npm run discipline:validate` warns
-once per generic packet and tells you the suffixed name to move it to; do it when the slice closes, not
-mid-flight.
+**Existing projects, one policy:** nothing has to be renamed to keep working, and no step renames
+anything on its own. `npm run discipline:validate` warns once per generic packet and names the
+suffixed file it belongs in; moving it is a deliberate decision the operator takes between slices,
+with the pipeline idle. Inside a slice nothing is renamed, moved or hand-marked: consumption is
+recorded in place by the watcher when the completion packet carries a green gate.
 
 ## Anchor Rules
 

@@ -495,10 +495,15 @@ npm run discipline:patch
 
 If the output says `Rollback incomplete` instead of `Rollback complete`, stop harder and say so: the state files may be half-patched, and the operator has to compare them against `.discipline/backups/` before running anything else.
 
-Assemble the paste-ready for Step 5:
+Assemble one paste-ready PER SLICE you expanded, naming the slice explicitly:
 ```bash
-npm run discipline:assemble -- --step 5
+npm run discipline:assemble -- --step 5 --slice <slice>
 ```
+
+Run it once per expanded slice. Each run reads that slice's own `STEP_5_SLICE_PACKET_<slice>.md`
+and writes `.discipline/paste-ready/step-5-<slice>-input.md`. Without `--slice` the command looks
+for the generic `STEP_5_SLICE_PACKET.md`, which this step no longer writes, so it would fail on a
+packet that does not exist while the real one sits next to it.
 
 This generates `.discipline/paste-ready/step-5-input.md` with the STEP_5_SLICE_PACKET and all the context Step 5 needs to implement the slice.
 
@@ -527,7 +532,8 @@ First slice prepared: Slice <N> - <name> [complexity]
 
 Generated files:
 - .discipline/step4-outputs/READY_SLICES_BLOCK.md
-- .discipline/packets/STEP_5_SLICE_PACKET.md (Slice <N>)
+- .discipline/packets/STEP_5_SLICE_PACKET_<slice>.md (one per expanded slice)
+- .discipline/paste-ready/step-5-<slice>-input.md (one per expanded slice)
 - .discipline/patches/pending/ (<N> patch blocks)
 
 Patches applied: <N>

@@ -10,7 +10,7 @@ import { resolveProjectRoot } from './lib/discipline-config.js';
 import { copyToClipboard as writeTextToClipboard } from './lib/clipboard.js';
 import { extractEmbeddedPatches } from './lib/parse-patch.js';
 import { applyPatches } from './apply-patch.js';
-import { activeSlicePackets, isSliceConsumed, markSliceConsumed, packetSliceId, slicePasteReadyFileName } from './lib/slice-identity.js';
+import { isSliceConsumed, markSliceConsumed, resolvePacketIdentity, selectStep5Packets, slicePasteReadyFileName } from './lib/slice-identity.js';
 import { updateProgress, completionGateState } from './update-progress.js';
 import { assemblePasteReady } from './assemble-paste-ready.js';
 import { logRun } from './log-run.js';
@@ -84,6 +84,11 @@ function openTool(stepId: StepId) {
 
 export async function handlePacket(root: string, filePath: string) {
   const fileName = path.basename(filePath);
+  // Set when a packet's own declarations contradict each other: nothing advances on top of that.
+  let identityBlocked = false;
+  // The paste-ready files this tick actually wrote, so the run-log records them and not a name
+  // taken from the step map that may never have been produced.
+  let assembledFiles: string[] = [];
   const pendingDir = path.join(root, '.discipline', 'patches', 'pending');
 
   disciplineInfo(`[${new Date().toTimeString().slice(0, 8)}] New packet: ${fileName}`);
@@ -91,7 +96,6 @@ export async function handlePacket(root: string, filePath: string) {
   const content = fs.readFileSync(filePath, 'utf-8');
   const patches = extractEmbeddedPatches(content, filePath);
   const logNotes: string[] = [];
-  let assembledStep: StepId | null = null;
   let assembledOK = false;
 
   // Hold the writer lock around both mutations (patch application and progress
@@ -132,18 +136,25 @@ export async function handlePacket(root: string, filePath: string) {
       // Consumption is recorded only when THIS slice's completion packet carries a green gate,
       // and it is recorded in place: the packet keeps its name and its content, it just stops
       // being the next thing to implement. Renaming or moving it is what used to lose it.
-      const closedSlice = packetSliceId(fs.readFileSync(filePath, 'utf-8'), fileName);
-      if (closedSlice) {
-        const verdict = isSliceConsumed(root, closedSlice);
+      const closedIdentity = resolvePacketIdentity(fs.readFileSync(filePath, 'utf-8'), fileName);
+      if (!closedIdentity.ok) {
+        // A completion packet that names two slices closes none of them. Saying "no identity"
+        // here would hide the contradiction and let the pipeline advance past it.
+        disciplineWarn(`  ${closedIdentity.message}`);
+        disciplineWarn('  Not marking anything consumed and not advancing: fix the packet and re-drop it.');
+        logNotes.push('completion-identity-conflict');
+        identityBlocked = true;
+      } else if (closedIdentity.id) {
+        const verdict = isSliceConsumed(root, closedIdentity.id);
         if (verdict.consumed) {
-          const marked = markSliceConsumed(root, closedSlice);
+          const marked = markSliceConsumed(root, closedIdentity.id);
           if (marked) {
-            disciplineInfo(`  Slice ${closedSlice} consumed: ${path.basename(marked)} marked status: consumed.`);
-            logNotes.push(`consumed=${closedSlice}`);
+            disciplineInfo(`  Slice ${closedIdentity.id} consumed: ${path.basename(marked)} marked status: consumed.`);
+            logNotes.push(`consumed=${closedIdentity.id}`);
           }
         } else {
-          disciplineWarn(`  Slice ${closedSlice} not marked consumed: ${verdict.reason}.`);
-          logNotes.push(`not-consumed=${closedSlice}`);
+          disciplineWarn(`  Slice ${closedIdentity.id} not marked consumed: ${verdict.reason}.`);
+          logNotes.push(`not-consumed=${closedIdentity.id}`);
         }
       }
     }
@@ -157,27 +168,39 @@ export async function handlePacket(root: string, filePath: string) {
     // SLICE_COMPLETION_PACKET, so guarding only 4-reentry let a later high-priority packet bypass
     // a stale failed or unverified completion.
     const completionPath = path.join(root, '.discipline', 'packets', 'SLICE_COMPLETION_PACKET.md');
-    if (fs.existsSync(completionPath) && completionGateState(root) !== 'passed') {
+    if (identityBlocked) {
+      logNotes.push('advance-blocked');
+    } else if (fs.existsSync(completionPath) && completionGateState(root) !== 'passed') {
       disciplineWarn('  Completion gate is not green; not assembling or opening the next handoff. Declare "GATE_STATE: passed" and re-drop the packet.');
       logNotes.push('advance-blocked');
     } else {
       try {
-        // Step 5 assembles PER SLICE: one handoff per ready packet, named after its slice, so two
-        // ready slices never overwrite each other's input. A packet whose slice cannot be
-        // identified falls back to the single legacy handoff.
-        const step5Slices = next === '5'
-          ? activeSlicePackets(root).filter((packet) => packet.sliceId && !isSliceConsumed(root, packet.sliceId).consumed)
-          : [];
+        // Step 5 assembles PER SLICE, and only from packets that are usable: selectStep5Packets
+        // refuses the whole set when any active packet contradicts itself, declares no slice, or
+        // duplicates another, and it keeps only `ready` ones. Skipping a broken packet because a
+        // valid one sits next to it is how a draft or a foreign spec reaches an implementer.
+        let step5Slices: Array<{ path: string; sliceId: string }> = [];
+        if (next === '5') {
+          const selection = selectStep5Packets(root);
+          if (!selection.ok) {
+            disciplineWarn(`  Not assembling Step 5: ${selection.reason}`);
+            logNotes.push('step5-selection-refused');
+            throw new Error(selection.reason);
+          }
+          step5Slices = selection.packets;
+          if (step5Slices.length === 0) {
+            disciplineWarn('  No ready Step 5 packet to assemble (a packet is work only while its status is ready).');
+          }
+        }
         const assembled = step5Slices.length > 0
-          ? (await Promise.all(step5Slices.map((packet) => assemblePasteReady(root, next, packet.sliceId!)))).join('\n')
+          ? (await Promise.all(step5Slices.map((packet) => assemblePasteReady(root, next, packet.sliceId)))).join('\n')
           : await assemblePasteReady(root, next);
-        const outputFile = step5Slices.length > 0
-          ? step5Slices.map((packet) => slicePasteReadyFileName(packet.sliceId!)).join(', ')
-          : STEP_ASSEMBLY_MAP[next].outputFile;
-        disciplineInfo(`  Paste-ready assembled for Step ${next}: .discipline/paste-ready/${outputFile}`);
+        assembledFiles = step5Slices.length > 0
+          ? step5Slices.map((packet) => slicePasteReadyFileName(packet.sliceId))
+          : [STEP_ASSEMBLY_MAP[next].outputFile];
+        disciplineInfo(`  Paste-ready assembled for Step ${next}: .discipline/paste-ready/${assembledFiles.join(', ')}`);
         copyToClipboard(assembled);
         openTool(next);
-        assembledStep = next;
         assembledOK = true;
         logNotes.push(`next=${next}`);
       } catch {
@@ -194,7 +217,7 @@ export async function handlePacket(root: string, filePath: string) {
       step: 'watch',
       tool: 'discipline:watch',
       inputPacket: fileName,
-      outputPacket: assembledOK && assembledStep ? STEP_ASSEMBLY_MAP[assembledStep].outputFile : '-',
+      outputPacket: assembledOK && assembledFiles.length > 0 ? assembledFiles.join(', ') : '-',
       notes: logNotes.length > 0 ? logNotes.join(', ') : 'no-op',
     });
   } catch (err) {

@@ -3436,3 +3436,100 @@ test('discipline:watch marks a slice packet consumed in place, and only on a gre
     ['STEP_5_SLICE_PACKET_13.md'],
   )
 })
+
+// Consumption is metadata, so the edit has to stay inside the frontmatter block. Searching the
+// whole document for a `status:` line rewrote the header's own `STATUS: ready` instead and left
+// the metadata with no state at all.
+test('slice identity: consuming a slice edits the frontmatter only, never the body', () => {
+  const packet = ['---', 'slice: S14', '---', '', '# STEP_5_SLICE_PACKET', '', 'STATUS: ready', 'SLICE: S14 - Sync', '', '## Goal', '- x', ''].join('\n')
+  const projectRoot = createDisciplineProject({ 'STEP_5_SLICE_PACKET_14.md': packet })
+  const packetPath = path.join(projectRoot, '.discipline', 'packets', 'STEP_5_SLICE_PACKET_14.md')
+
+  const crlfRoot = createDisciplineProject({ 'STEP_5_SLICE_PACKET_14.md': packet.replace(/\n/g, '\r\n') })
+  const out = sliceIdentityEval(`
+    emit({
+      marked: slice.markSliceConsumed(${JSON.stringify(projectRoot)}, 'S14'),
+      again: slice.markSliceConsumed(${JSON.stringify(projectRoot)}, 'S14'),
+      crlf: slice.markSliceConsumed(${JSON.stringify(crlfRoot)}, 'S14'),
+    })
+  `)
+  assert.ok(out.marked)
+
+  const marked = fs.readFileSync(packetPath, 'utf8')
+  const frontmatter = marked.split('---')[1]
+  assert.match(frontmatter, /status: consumed/, 'the state belongs in the frontmatter')
+  assert.match(marked, /^STATUS: ready$/m, "the header's own STATUS field is not the metadata and must survive")
+  assert.match(marked, /SLICE: S14 - Sync/)
+  assert.match(marked, /## Goal/)
+
+  // Running it twice changes nothing more.
+  assert.equal(fs.readFileSync(packetPath, 'utf8'), marked)
+
+  // A CRLF packet stays CRLF: the marker must not rewrite the file's line endings.
+  const crlf = fs.readFileSync(path.join(crlfRoot, '.discipline', 'packets', 'STEP_5_SLICE_PACKET_14.md'), 'utf8')
+  assert.match(crlf, /status: consumed\r\n/)
+  assert.ok(!/[^\r]\n/.test(crlf), 'no bare LF may be introduced into a CRLF file')
+})
+
+// The watcher used to assemble whatever carried an identity. A draft is a spec still being
+// written, a contradictory packet is unusable, and two active files for one slice would write the
+// same paste-ready twice in one tick.
+test('discipline:watch assembles Step 5 only from ready, unambiguous, deduplicated packets', () => {
+  const packet = (slice, status) => ['---', `slice: ${slice}`, `status: ${status}`, '---', '',
+    '# STEP_5_SLICE_PACKET', '', `SLICE: ${slice}`, '', '## Goal', '- x', '## Scope', '- x',
+    '## Contracts', '- x', '## Acceptance criteria', '- x', ''].join('\n')
+
+  const draft = createDisciplineProject({ 'STEP_5_SLICE_PACKET_13.md': packet('S13', 'draft') })
+  const conflicting = createDisciplineProject({
+    'STEP_5_SLICE_PACKET_13.md': packet('S13', 'ready'),
+    'STEP_5_SLICE_PACKET_14.md': ['---', 'slice: S14', 'status: ready', '---', '', '# P', '', 'SLICE: S15', ''].join('\n'),
+  })
+  const duplicated = createDisciplineProject({
+    'STEP_5_SLICE_PACKET_13.md': packet('S13', 'ready'),
+    'STEP_5_SLICE_PACKET.md': packet('S13', 'ready'),
+  })
+  const ready = createDisciplineProject({ 'STEP_5_SLICE_PACKET_13.md': packet('S13', 'ready') })
+
+  const out = sliceIdentityEval(`
+    emit({
+      draft: slice.selectStep5Packets(${JSON.stringify(draft)}),
+      conflicting: slice.selectStep5Packets(${JSON.stringify(conflicting)}),
+      duplicated: slice.selectStep5Packets(${JSON.stringify(duplicated)}),
+      ready: slice.selectStep5Packets(${JSON.stringify(ready)}),
+    })
+  `)
+  assert.equal(out.draft.ok, true)
+  assert.deepEqual(out.draft.packets, [], 'a draft packet is not work to hand off')
+  // One broken packet refuses the whole set: skipping it because a valid one sits next to it is
+  // exactly how a foreign spec reaches an implementer.
+  assert.equal(out.conflicting.ok, false)
+  assert.match(out.conflicting.reason, /Contradictory slice declarations/)
+  assert.equal(out.duplicated.ok, false)
+  assert.match(out.duplicated.reason, /2 active packets/)
+  assert.equal(out.ready.ok, true)
+  assert.equal(out.ready.packets.length, 1)
+  assert.equal(out.ready.packets[0].sliceId, '13')
+})
+
+// A completion packet that names two slices closes none of them. Reporting it as "no identity"
+// hid the contradiction and let the tick advance on top of it.
+test('discipline:watch blocks consumption and advance on a self-contradictory completion packet', () => {
+  const projectRoot = createDisciplineProject({
+    'STEP_5_SLICE_PACKET_13.md': ['---', 'slice: S13', 'status: ready', '---', '', '# STEP_5_SLICE_PACKET', '', 'SLICE: S13', '', '## Goal', '- x', ''].join('\n'),
+    'SLICE_COMPLETION_PACKET.md': ['## SLICE_COMPLETION_PACKET', '', '## Slice', '- Slice S13', '',
+      '## S14 - the heading says another slice', '', '### Outcome', '- done', '',
+      '### Gates passed', '- GATE_STATE: passed', '', '### Deploy signal', '- ready_for_preview', ''].join('\n'),
+    'STEP_4_EXECUTION_PACKET.md': '## STEP_4_EXECUTION_PACKET\n\nSTATUS: validated\n\nbody\n',
+  })
+  const result = runHandlePacket(projectRoot)
+  const output = getOutput(result)
+
+  assert.match(output, /Contradictory slice declarations/)
+  assert.match(output, /Not marking anything consumed and not advancing/)
+  const packet = fs.readFileSync(path.join(projectRoot, '.discipline', 'packets', 'STEP_5_SLICE_PACKET_13.md'), 'utf8')
+  assert.doesNotMatch(packet, /status: consumed/)
+  // Nothing was assembled on top of a packet nobody could identify.
+  const pasteReady = path.join(projectRoot, '.discipline', 'paste-ready')
+  assert.deepEqual(fs.existsSync(pasteReady) ? fs.readdirSync(pasteReady).filter((f) => f.endsWith('.md')) : [], [])
+  assert.match(fs.readFileSync(path.join(projectRoot, '.discipline', 'run-log.md'), 'utf8'), /completion-identity-conflict/)
+})
