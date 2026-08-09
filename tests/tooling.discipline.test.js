@@ -2899,6 +2899,8 @@ test('discipline:progress picks up an open issue added to an already-logged pack
 
 test('discipline:watch does not assemble the next handoff when the completion packet is refused', () => {
   const projectRoot = createDisciplineProject({
+    // The slice has its packet, so the tick reaches the progress engine at all.
+    'STEP_5_SLICE_PACKET_1.md': ['---', 'slice: 1', 'status: ready', '---', '', '# STEP_5_SLICE_PACKET', '', 'SLICE: 1', '', '## Goal', '- x', ''].join('\n'),
     // No ### Outcome and no ### Gates passed -> updateProgress refuses.
     'SLICE_COMPLETION_PACKET.md': '## SLICE_COMPLETION_PACKET\n\n### Slice\n- Slice 1\n\n### Scope delivered\n- did stuff\n',
   })
@@ -2934,6 +2936,7 @@ function runHandlePacket(projectRoot, packetFile = 'SLICE_COMPLETION_PACKET.md')
 test('discipline:watch does not advance the pipeline when the gate is not green (unverified)', () => {
   const projectRoot = createDisciplineProject({
     // Recognized packet, valid outcome, but a bare gate command -> gate state "unverified".
+    'STEP_5_SLICE_PACKET_1.md': ['---', 'slice: 1', 'status: ready', '---', '', '# STEP_5_SLICE_PACKET', '', 'SLICE: 1', '', '## Goal', '- x', ''].join('\n'),
     'SLICE_COMPLETION_PACKET.md': ['## SLICE_COMPLETION_PACKET', '', '### Slice', '- Slice 1', '',
       '### Outcome', '- done', '', '### Gates passed', '- npm run gate', '', '### Deploy signal', '- ready_for_preview', ''].join('\n'),
     // Reentry also needs the validated execution packet; this isolates the block to the completion gate.
@@ -2952,6 +2955,7 @@ test('discipline:watch does not advance the pipeline when the gate is not green 
 
 test('discipline:watch advances the pipeline only on a green gate', () => {
   const projectRoot = createDisciplineProject({
+    'STEP_5_SLICE_PACKET_1.md': ['---', 'slice: 1', 'status: ready', '---', '', '# STEP_5_SLICE_PACKET', '', 'SLICE: 1', '', '## Goal', '- x', ''].join('\n'),
     'SLICE_COMPLETION_PACKET.md': ['## SLICE_COMPLETION_PACKET', '', '### Slice', '- Slice 1', '',
       '### Outcome', '- done', '', '### Gates passed', '- GATE_STATE: passed', '- npm run gate: PASS', '', '### Deploy signal', '- ready_for_preview', ''].join('\n'),
     'STEP_4_EXECUTION_PACKET.md': '## STEP_4_EXECUTION_PACKET\n\nSTATUS: validated\n\nbody\n',
@@ -2965,6 +2969,7 @@ test('discipline:watch advances the pipeline only on a green gate', () => {
 
 test('discipline:watch keeps blocking across events while a non-green completion lingers', () => {
   const projectRoot = createDisciplineProject({
+    'STEP_5_SLICE_PACKET_1.md': ['---', 'slice: 1', 'status: ready', '---', '', '# STEP_5_SLICE_PACKET', '', 'SLICE: 1', '', '## Goal', '- x', ''].join('\n'),
     'SLICE_COMPLETION_PACKET.md': ['## SLICE_COMPLETION_PACKET', '', '### Slice', '- Slice 1', '',
       '### Outcome', '- done', '', '### Gates passed', '- npm run gate', '', '### Deploy signal', '- ready_for_preview', ''].join('\n'),
     // Validated execution packet present throughout, so the block is the lingering completion gate.
@@ -3601,9 +3606,10 @@ test('slice identity: consumption refuses an ambiguous or unwritable target', ()
   assert.match(out.duplicated.reason, /2 active packets/)
   assert.equal(out.unterminated.ok, false)
   assert.match(out.unterminated.reason, /unterminated frontmatter/)
-  // Nothing to mark is not a failure: a project may close a slice that never had a packet file.
-  assert.equal(out.missing.ok, true)
-  assert.equal(out.missing.path, null)
+  // An absent packet is a refusal now: a closure with nothing to record it in is a project state
+  // a human has to look at, not something the watcher may advance past.
+  assert.equal(out.missing.ok, false)
+  assert.match(out.missing.reason, /no active packet for slice/)
   // Neither refusal wrote anything.
   assert.doesNotMatch(fs.readFileSync(path.join(duplicated, '.discipline', 'packets', 'STEP_5_SLICE_PACKET_13.md'), 'utf8'), /consumed/)
   assert.doesNotMatch(fs.readFileSync(path.join(unterminated, '.discipline', 'packets', 'STEP_5_SLICE_PACKET_13.md'), 'utf8'), /consumed/)
@@ -3618,8 +3624,34 @@ test('discipline:watch does not advance when consumption cannot be recorded', ()
     'STEP_4_EXECUTION_PACKET.md': '## STEP_4_EXECUTION_PACKET\n\nSTATUS: validated\n\nbody\n',
   })
   const output = getOutput(runHandlePacket(projectRoot))
-  assert.match(output, /Could not record consumption/)
+  // Refused before progress.md is touched, not after: the packet is proven writable first.
+  assert.match(output, /Cannot record the closure of slice 13/)
+  assert.match(output, /unterminated frontmatter/)
+  assert.doesNotMatch(output, /Updating progress/)
   const pasteReady = path.join(projectRoot, '.discipline', 'paste-ready')
   assert.deepEqual(fs.existsSync(pasteReady) ? fs.readdirSync(pasteReady).filter((f) => f.endsWith('.md')) : [], [])
-  assert.match(fs.readFileSync(path.join(projectRoot, '.discipline', 'run-log.md'), 'utf8'), /consumption-failed/)
+  assert.match(fs.readFileSync(path.join(projectRoot, '.discipline', 'run-log.md'), 'utf8'), /consumption-target-refused/)
+})
+
+// A completion packet that does not say which slice it closes is as unusable as one that names
+// two. It used to pass identity resolution with id: null, update progress.md, skip consumption
+// quietly and let the tick advance.
+test('discipline:watch blocks a completion packet that names no slice at all', () => {
+  const projectRoot = createDisciplineProject({
+    'STEP_5_SLICE_PACKET_13.md': ['---', 'slice: S13', 'status: ready', '---', '', '# STEP_5_SLICE_PACKET', '', 'SLICE: S13', '', '## Goal', '- x', ''].join('\n'),
+    'SLICE_COMPLETION_PACKET.md': ['## SLICE_COMPLETION_PACKET', '', '### Outcome', '- done', '',
+      '### Gates passed', '- GATE_STATE: passed', '', '### Deploy signal', '- ready_for_preview', ''].join('\n'),
+    'STEP_4_EXECUTION_PACKET.md': '## STEP_4_EXECUTION_PACKET\n\nSTATUS: validated\n\nbody\n',
+  })
+  const progressBefore = fs.readFileSync(path.join(projectRoot, 'progress.md'))
+
+  const output = getOutput(runHandlePacket(projectRoot))
+  assert.match(output, /does not say which slice it closes/)
+  assert.match(output, /Nothing written/)
+  assert.doesNotMatch(output, /Updating progress/)
+
+  assert.deepEqual(fs.readFileSync(path.join(projectRoot, 'progress.md')), progressBefore, 'progress.md must be byte-identical')
+  assert.doesNotMatch(fs.readFileSync(path.join(projectRoot, '.discipline', 'packets', 'STEP_5_SLICE_PACKET_13.md'), 'utf8'), /status: consumed/)
+  const pasteReady = path.join(projectRoot, '.discipline', 'paste-ready')
+  assert.deepEqual(fs.existsSync(pasteReady) ? fs.readdirSync(pasteReady).filter((f) => f.endsWith('.md')) : [], [])
 })

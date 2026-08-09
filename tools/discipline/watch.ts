@@ -10,7 +10,7 @@ import { resolveProjectRoot } from './lib/discipline-config.js';
 import { copyToClipboard as writeTextToClipboard } from './lib/clipboard.js';
 import { extractEmbeddedPatches } from './lib/parse-patch.js';
 import { applyPatches } from './apply-patch.js';
-import { isSliceConsumed, markSliceConsumed, resolvePacketIdentity, selectStep5Packets, slicePasteReadyFileName } from './lib/slice-identity.js';
+import { isSliceConsumed, markSliceConsumed, resolveConsumptionTarget, resolvePacketIdentity, selectStep5Packets, slicePasteReadyFileName } from './lib/slice-identity.js';
 import { updateProgress, completionGateState } from './update-progress.js';
 import { assemblePasteReady } from './assemble-paste-ready.js';
 import { logRun } from './log-run.js';
@@ -122,47 +122,58 @@ export async function handlePacket(root: string, filePath: string) {
     }
 
     if (fileName.includes('SLICE_COMPLETION_PACKET')) {
-      // Identity FIRST, before anything is written. A packet that names two slices describes a
-      // state nobody can act on, and progress.md is a state file: letting updateProgress run on it
-      // records a slice closing that may not be the slice that closed.
+      // Everything that could refuse this closure is checked BEFORE anything is written. progress.md
+      // is a state file: recording a slice as closed and only then discovering that its packet is
+      // missing, duplicated or unwritable leaves the repo saying two different things at once.
       const closedIdentity = resolvePacketIdentity(fs.readFileSync(filePath, 'utf-8'), fileName);
-      if (!closedIdentity.ok) {
-        disciplineWarn(`  ${closedIdentity.message}`);
+      const identityProblem = !closedIdentity.ok
+        ? closedIdentity.message
+        : !closedIdentity.id
+          ? `${fileName} does not say which slice it closes. Add a SLICE: line, or a "## Slice" section, naming exactly one slice.`
+          : null;
+
+      if (identityProblem) {
+        disciplineWarn(`  ${identityProblem}`);
         disciplineWarn('  Nothing written: progress.md, the packets and the handoffs are untouched. Fix the packet and re-drop it.');
         logNotes.push('completion-identity-conflict');
         identityBlocked = true;
       } else {
-        disciplineInfo('  Updating progress...');
-        // Record progress honestly (updateProgress refuses only a packet with no outcome/gate). The
-        // decision to advance is taken below from the packet's PERSISTED gate state, not from here.
-        try {
-          const res = await updateProgress(root);
-          logNotes.push(res.gate === 'passed' ? 'progress-updated' : `progress-updated,gate-${res.gate}`);
-        } catch (err) {
-          disciplineWarn(`  Refused progress.md update: ${err instanceof Error ? err.message : err}`);
-          logNotes.push('progress-refused');
-        }
+        const closedSlice = closedIdentity.ok && closedIdentity.id ? closedIdentity.id : '';
+        const target = resolveConsumptionTarget(root, closedSlice);
+        if (!target.ok) {
+          disciplineWarn(`  Cannot record the closure of slice ${closedSlice}: ${target.reason}.`);
+          disciplineWarn('  Nothing written: progress.md, the packets and the handoffs are untouched.');
+          logNotes.push('consumption-target-refused');
+          identityBlocked = true;
+        } else {
+          disciplineInfo('  Updating progress...');
+          // Record progress honestly (updateProgress refuses only a packet with no outcome/gate). The
+          // decision to advance is taken below from the packet's PERSISTED gate state, not from here.
+          try {
+            const res = await updateProgress(root);
+            logNotes.push(res.gate === 'passed' ? 'progress-updated' : `progress-updated,gate-${res.gate}`);
+          } catch (err) {
+            disciplineWarn(`  Refused progress.md update: ${err instanceof Error ? err.message : err}`);
+            logNotes.push('progress-refused');
+          }
 
-        // Consumption is recorded only when THIS slice's completion packet carries a green gate,
-        // and it is recorded in place: the packet keeps its name and its content, it just stops
-        // being the next thing to implement. Renaming or moving it is what used to lose it.
-        if (closedIdentity.id) {
-          const verdict = isSliceConsumed(root, closedIdentity.id);
+          // Consumption is recorded only when THIS slice's completion packet carries a green gate,
+          // and it is recorded in place: the packet keeps its name and its content, it just stops
+          // being the next thing to implement. Renaming or moving it is what used to lose it.
+          const verdict = isSliceConsumed(root, closedSlice);
           if (verdict.consumed) {
-            const marked = markSliceConsumed(root, closedIdentity.id);
+            const marked = markSliceConsumed(root, closedSlice);
             if (!marked.ok) {
-              // The slice closed but the record could not be written. Advancing on top of that
-              // would hand off work whose state nothing on disk agrees about.
               disciplineWarn(`  Could not record consumption: ${marked.reason}.`);
               logNotes.push('consumption-failed');
               identityBlocked = true;
-            } else if (marked.path) {
-              disciplineInfo(`  Slice ${closedIdentity.id} consumed: ${path.basename(marked.path)} marked status: consumed.`);
-              logNotes.push(`consumed=${closedIdentity.id}`);
+            } else {
+              disciplineInfo(`  Slice ${closedSlice} consumed: ${path.basename(marked.path)} marked status: consumed.`);
+              logNotes.push(`consumed=${closedSlice}`);
             }
           } else {
-            disciplineWarn(`  Slice ${closedIdentity.id} not marked consumed: ${verdict.reason}.`);
-            logNotes.push(`not-consumed=${closedIdentity.id}`);
+            disciplineWarn(`  Slice ${closedSlice} not marked consumed: ${verdict.reason}.`);
+            logNotes.push(`not-consumed=${closedSlice}`);
           }
         }
       }

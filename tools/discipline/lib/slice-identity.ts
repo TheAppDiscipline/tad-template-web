@@ -512,28 +512,57 @@ export function selectStep5Packets(root: string): Step5Selection {
   return { ok: true, packets: ready.map((packet) => ({ path: packet.path, sliceId: packet.sliceId! })) };
 }
 
-/** Outcome of recording consumption. `path: null` means there was no packet to mark. */
-export type MarkResult = { ok: true; path: string | null } | { ok: false; reason: string };
+/** Outcome of recording consumption. */
+export type MarkResult = { ok: true; path: string } | { ok: false; reason: string };
+
+/** The packet a slice's closure would be recorded in, proven to exist and to be editable. */
+export type ConsumptionTarget = { ok: true; packet: ActiveSlicePacket } | { ok: false; reason: string };
 
 /**
- * Record that a slice's packet was consumed, IN PLACE. The packet keeps its filename and its
- * content: the old ritual of renaming it to `.consumed.md` (or moving it out of a shared slot) is
- * what made two slices fight over one file and what lost the packet that was there before.
- * Returns the packet path when it wrote something, null when there was nothing to mark.
+ * Find the ONE active packet a slice's closure belongs to and prove it can carry the record,
+ * WITHOUT writing anything. The watcher runs this before it touches progress.md: discovering
+ * afterwards that the packet is missing, duplicated or unwritable leaves progress.md saying the
+ * slice closed while the packet still says ready, and nothing on disk agrees.
+ *
+ * An absent packet is a refusal, not a clean close. Step 5 implements from a packet, so a closure
+ * with no packet to record it in is a project state a human has to look at, not something the
+ * watcher may advance past on its own.
  */
-export function markSliceConsumed(root: string, sliceId: string): MarkResult {
+export function resolveConsumptionTarget(root: string, sliceId: string): ConsumptionTarget {
   const wanted = normalizeSliceId(sliceId);
   const targets = activeSlicePackets(root).filter((packet) => packet.sliceId === wanted);
-  // Exactly one target, or nothing is written. Picking the first of several would edit an
-  // arbitrary file moments before the selector refuses the same duplication.
+
+  if (targets.length === 0) {
+    return {
+      ok: false,
+      reason: `no active packet for slice ${sliceId}: expected ${slicePacketFileName(wanted)}. If this project archived it, restore it or record the closure by hand before running the pipeline again`,
+    };
+  }
   if (targets.length > 1) {
     return {
       ok: false,
       reason: `slice ${sliceId} has ${targets.length} active packets (${targets.map((t) => t.fileName).join(', ')}); consumption is not recorded until one remains`,
     };
   }
-  if (targets.length === 0) return { ok: true, path: null };
+
   const target = targets[0];
+  const probe = fs.readFileSync(target.path, 'utf-8').replace(/^\uFEFF/, '').split(/\r?\n/);
+  if (probe[0]?.trim() === '---' && probe.findIndex((line, index) => index > 0 && line.trim() === '---') === -1) {
+    return { ok: false, reason: `${target.fileName} has an unterminated frontmatter block; fix it before the slice can be recorded as consumed` };
+  }
+  return { ok: true, packet: target };
+}
+
+/**
+ * Record that a slice's packet was consumed, IN PLACE. The packet keeps its filename and its
+ * content: the old ritual of renaming it to `.consumed.md` (or moving it out of a shared slot) is
+ * what made two slices fight over one file and what lost the packet that was there before.
+ */
+export function markSliceConsumed(root: string, sliceId: string): MarkResult {
+  const wanted = normalizeSliceId(sliceId);
+  const resolved = resolveConsumptionTarget(root, wanted);
+  if (!resolved.ok) return { ok: false, reason: resolved.reason };
+  const target = resolved.packet;
 
   const content = fs.readFileSync(target.path, 'utf-8');
   const eol = content.includes('\r\n') ? '\r\n' : '\n';
@@ -551,11 +580,9 @@ export function markSliceConsumed(root: string, sliceId: string): MarkResult {
   }
 
   const closing = lines.findIndex((line, index) => index > 0 && line.trim() === '---');
-  if (closing === -1) {
-    // Unterminated frontmatter: the file is not safe to edit, and staying quiet about it would
-    // let the tick advance as if the slice had been recorded as consumed.
-    return { ok: false, reason: `${target.fileName} has an unterminated frontmatter block; fix it before the slice can be recorded as consumed` };
-  }
+  // resolveConsumptionTarget already refused an unterminated block; this stays as a hard stop
+  // rather than a write that would corrupt the file if the two ever disagree.
+  if (closing === -1) return { ok: false, reason: `${target.fileName} has an unterminated frontmatter block` };
 
   const front = lines.slice(1, closing);
   const statusAt = front.findIndex((line) => /^status:/i.test(line));

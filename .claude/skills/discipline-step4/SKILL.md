@@ -5,7 +5,7 @@ description: "Automate Discipline Loop Step 4: expand the validated STEP_4_EXECU
 
 # /discipline-step4 - Automate Step 4 of the Discipline Loop pipeline
 
-This skill runs the full Step 4: it first resolves which origin it is running for (first expansion, reentry from Step 5, feedback from Step 6, or hardening from Step 7), then expands the slices into executable slices with scope, contracts, acceptance criteria, and DoD, generates the STEP_5_SLICE_PACKET for the first ready slice, emits patch blocks, and leaves the paste-readies ready for Step 5.
+This skill runs the full Step 4: it first resolves which origin it is running for (first expansion, reentry from Step 5, feedback from Step 6, or hardening from Step 7), then expands the slices into executable slices with scope, contracts, acceptance criteria, and DoD, generates one STEP_5_SLICE_PACKET per slice it promotes to `ready`, emits patch blocks, and leaves one paste-ready per promoted slice for Step 5.
 
 ## Origin resolution (fail-loud)
 
@@ -42,7 +42,7 @@ No external tools required. Claude generates everything directly.
 3. It checks that the STEP_4_EXECUTION_PACKET exists and has STATUS: validated, plus the packets that origin requires
 4. Reads all available packets and the project context
 5. Expands each slice with detailed scope, contracts, acceptance criteria, and complexity
-6. Generates the STEP_5_SLICE_PACKET for the first ready slice
+6. Generates one STEP_5_SLICE_PACKET per slice it promotes to ready (the others stay `planned`, with no packet)
 7. Emits patch blocks for task_plan.md, discipline.md, and findings.md
 8. Applies patches, assembles paste-readies, and reports a summary
 
@@ -327,13 +327,19 @@ Estimated total: <sum of estimates>
 Save to: `.discipline/step4-outputs/READY_SLICES_BLOCK.md`
 Report progress per slice: `Slice N/M expanded: <name> [complexity]`
 
-### Phase 2: Generate STEP_5_SLICE_PACKET
+### Phase 2: Generate one STEP_5_SLICE_PACKET per promoted slice
+
+**Which slices get a packet is the same question as which slices become `ready`.** `READY_PROMOTION:
+per_packet` means a slice is `ready` only when its own packet exists, so generate a packet for every
+slice you are about to promote, and promote exactly those. A slice you expanded but did not promote
+stays `planned` and gets no packet and no paste-ready: Phase 4 assembles one handoff per promoted
+slice, so a promoted slice with no packet would fail there.
 
 **Determine which slice goes first.** Selection criteria:
 1. If `progress.md` exists and indicates a specific slice as next, use that one
 2. Otherwise, use the first slice in the execution order (typically Slice 0 / bootstrap)
 
-**For the selected slice, assemble the full implementation context:**
+**For each slice you are promoting to ready, assemble the full implementation context:**
 
 ```markdown
 # STEP_5_SLICE_PACKET
@@ -438,7 +444,7 @@ ANCHOR: ## Ready Slices
 ...
 ```
 
-Only the selected slice with an emitted packet and satisfied dependencies may be `ready`. Preserve slices already marked `done`; detailed expansion alone never promotes a slice.
+Only a slice with its own emitted packet and satisfied dependencies may be `ready`, and every slice you promote must have one (that is what `READY_PROMOTION: per_packet` means). Preserve slices already marked `done`; detailed expansion alone never promotes a slice.
 
 Save to: `.discipline/patches/pending/TASK_PLAN_PATCH_step4_<YYYY-MM-DD-HHMMSS>.md`, using this run's timestamp so a retry never overwrites an unapplied patch from an earlier run.
 
