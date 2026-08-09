@@ -85,6 +85,16 @@ export function disciplineError(message: string): never {
   process.exit(1);
 }
 
+/**
+ * Report an error WITHOUT exiting. Use it when the caller still has cleanup to run
+ * before the process ends (rollback, lock release, ledger entry): disciplineError()
+ * exits on the spot, so anything written after it in the same block is dead code.
+ * The caller owns the exit code.
+ */
+export function disciplineErrorMessage(message: string): void {
+  console.error(`[Discipline Loop ERROR] ${message}`);
+}
+
 export function disciplineWarn(message: string): void {
   console.warn(`[Discipline Loop WARN] ${message}`);
 }

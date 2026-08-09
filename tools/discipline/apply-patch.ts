@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import minimist from 'minimist';
-import { disciplineError, disciplineInfo } from './lib/types.js';
+import { disciplineError, disciplineErrorMessage, disciplineInfo } from './lib/types.js';
 import { resolveProjectRoot } from './lib/discipline-config.js';
 import { parsePatchFile } from './lib/parse-patch.js';
 import { findSectionBounds, isDuplicateAnchor, PATCH_APPLICATION_ORDER, ALLOWED_PATCH_TARGETS, normalizeLineEndings } from './lib/anchors.js';
@@ -146,9 +146,13 @@ function applyPatchesLocked(root: string, patches: PatchList): number {
 
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      disciplineError(`Patch failed: ${patch.name} -> ${msg}`);
+      // disciplineErrorMessage, NOT disciplineError: the latter exits immediately, which
+      // would skip the rollback, the lock release and the ledger entry below. The batch is
+      // all-or-nothing, so a failure here must leave the repo exactly as it was found.
+      disciplineErrorMessage(`Patch failed: ${patch.name} -> ${msg}`);
 
       // Rollback all previously applied patches in this batch
+      let rollbackFailures = 0;
       if (backupMap.length > 0) {
         disciplineInfo(`\nRolling back ${backupMap.length} previously applied patch(es)...`);
         for (const entry of backupMap.reverse()) {
@@ -162,16 +166,36 @@ function applyPatchesLocked(root: string, patches: PatchList): number {
               fs.renameSync(entry.appliedPath, entry.patchSourcePath);
             }
           } catch (rollbackErr) {
-            disciplineError(`  Rollback failed for ${path.basename(entry.targetPath)}: ${rollbackErr}`);
+            // Keep restoring the rest: a single failed entry must not strand the others.
+            rollbackFailures++;
+            disciplineErrorMessage(`  Rollback failed for ${path.basename(entry.targetPath)}: ${rollbackErr}`);
           }
         }
-        disciplineInfo('Rollback complete. All files restored to pre-patch state.');
+        if (rollbackFailures > 0) {
+          disciplineErrorMessage(
+            `Rollback incomplete: ${rollbackFailures} of ${backupMap.length} entr(ies) could not be restored. ` +
+            'The state files may be half-patched. Compare them against .discipline/backups/ before running anything else.',
+          );
+        } else {
+          disciplineInfo('Rollback complete. All files restored to pre-patch state.');
+        }
       }
 
       // process.exit() below skips withWriterLock's finally, so release the
       // writer lock here to avoid leaving a stale lock behind on failure.
       try { releaseWriterLock(root); } catch { /* best-effort cleanup */ }
-      try { appendLedger(root, { event: 'patch_applied', targets: [patch.targetFile], count: applied, ok: false }); } catch { /* best-effort */ }
+      // count = patches still in effect after the rollback: 0 when it restored everything,
+      // and the raw applied count when it did not, because then the tree really is half-patched.
+      try {
+        appendLedger(root, {
+          event: 'patch_applied',
+          targets: [patch.targetFile],
+          count: rollbackFailures > 0 ? applied : 0,
+          ok: false,
+          rolled_back: backupMap.length,
+          rollback_failures: rollbackFailures,
+        });
+      } catch { /* best-effort */ }
       process.exit(1);
     }
   }

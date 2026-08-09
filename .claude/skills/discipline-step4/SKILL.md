@@ -478,12 +478,18 @@ Apply pending patches:
 npm run discipline:patch
 ```
 
+**If that command exits non-zero, this step stops here.** The patch engine treats the batch as all-or-nothing: it restores from `.discipline/backups/` every state file it had already written, and moves those patch files from `applied/` back to `pending/`. The repo is left as it was before this phase and every block this run produced is still in `pending/`, where the next run's preflight will surface it. Do not assemble, do not log the run, do not show the summary. A paste-ready assembled now would carry a `task_plan.md` whose Ready Slices were never patched, so Step 5 would implement against a slice table that does not exist yet. Report the failing patch name and the engine's error verbatim, and hand the decision back to the operator.
+
+If the output says `Rollback incomplete` instead of `Rollback complete`, stop harder and say so: the state files may be half-patched, and the operator has to compare them against `.discipline/backups/` before running anything else.
+
 Assemble the paste-ready for Step 5:
 ```bash
 npm run discipline:assemble -- --step 5
 ```
 
 This generates `.discipline/paste-ready/step-5-input.md` with the STEP_5_SLICE_PACKET and all the context Step 5 needs to implement the slice.
+
+**If the assemble exits non-zero, this step also stops here.** The patches are applied but the handoff is not: report the error verbatim, do not log the run, and do not present Step 5 as ready. A `step-5-input.md` left over from the previous slice is indistinguishable from a fresh one for whoever pastes it, and it points at the wrong slice.
 
 Record in the run-log:
 ```bash
@@ -533,8 +539,8 @@ Next step: implement Slice <N> - <name> using `.discipline/paste-ready/step-5-in
 - If `STEP_4_EXECUTION_PACKET` does not exist: stop with "Run /discipline-step2 first."
 - If `STEP_4_EXECUTION_PACKET` does not have STATUS validated: stop with a message telling the user to run /discipline-step2 to validate.
 - If the EXECUTION_PACKET has no slices defined: stop with "The STEP_4_EXECUTION_PACKET contains no slices. Review the output of Step 2."
-- If `npm run discipline:patch` fails: report the error and continue with the assembly. The patch blocks are saved in `.discipline/patches/pending/` and the operator can apply them manually.
-- If `npm run discipline:assemble` fails: report which files were missing and suggest a review. The STEP_5_SLICE_PACKET is already saved in `.discipline/packets/` and can be used directly.
+- If `npm run discipline:patch` fails: stop. Report the failing patch and the engine's error verbatim. The batch was rolled back and every block is back in `.discipline/patches/pending/`; do not assemble, do not log, do not summarize. Fixing the block and re-running the step is the operator's call.
+- If `npm run discipline:assemble` fails: stop. Report which files were missing. The patches are applied, so re-running only the assemble is safe once the cause is fixed. The STEP_5_SLICE_PACKET is already in `.discipline/packets/` and the operator may use it directly, but do not present Step 5 as ready on the strength of an old paste-ready.
 - If `npm run discipline:log` fails: report the error but do not stop. The log is informational, not critical.
 - If there are inconsistencies between the EXECUTION_PACKET and other packets (e.g. UI_HANDOFF_PACKET references screens that do not match the slices): document the inconsistency in FINDINGS_APPEND_BLOCK and resolve it using the EXECUTION_PACKET as the source of truth for scope and the specialized packets as the source of truth for detail.
 
@@ -543,6 +549,7 @@ Next step: implement Slice <N> - <name> using `.discipline/paste-ready/step-5-in
 ## Critical rules
 
 - Never run `discipline:patch` if `pending/` contained files before this run. The command applies everything in the directory with no per-file selection; the preflight is the only guard.
+- Never assemble, log, or announce this step as complete after a failed `discipline:patch` or `discipline:assemble`. A handoff built on unpatched state files is worse than no handoff: it looks finished and sends Step 5 at a slice table that was never written.
 - Never guess the origin. Resolve it with `discipline:step4-origin`; on ambiguous or invalid, stop and ask. `--mode` chooses the branch but never skips the resolver's validation.
 - Do not claim currency. The resolver proves structural/transitional coherence only (Phase 1 has no consumption model); a single residual packet reads as coherent. Say so if relevant.
 - Use Extended Thinking for slice expansion. The value of this step is precise scope and verifiable acceptance criteria.

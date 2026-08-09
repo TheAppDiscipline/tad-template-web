@@ -552,6 +552,63 @@ should not be applied
   assert.match(getOutput(result), /TARGET_FILE not allowed/)
 })
 
+// A failed patch must leave the repo exactly as it was found: the batch is all-or-nothing.
+// Regression: the rollback used to be unreachable. The catch block reported the failure with
+// disciplineError(), which calls process.exit(1) on the spot, so the rollback, the writer-lock
+// release and the ledger entry below it never ran. A failing batch left the earlier patches
+// applied, their patch files moved to applied/ (invisible to the next run's pending/ preflight),
+// a stale writer.lock, and no record of the failure.
+test('apply-patch rolls the whole batch back when one patch fails', () => {
+  const projectRoot = createDisciplineProject()
+  // findings.md is patched before progress.md (PATCH_APPLICATION_ORDER), so the valid patch is
+  // already written to disk by the time the broken one fails.
+  writePatch(projectRoot, 'a-valid-findings', `# Valid Block
+TARGET_FILE: findings.md
+PATCH_MODE: append
+ANCHOR: ## Decisions
+
+### CONTENT
+- ROLLBACK_MARKER_MUST_NOT_SURVIVE
+`)
+  writePatch(projectRoot, 'b-broken-progress', `# Broken Block
+TARGET_FILE: progress.md
+PATCH_MODE: append
+ANCHOR: ## Anchor That Does Not Exist
+
+### CONTENT
+never applied
+`)
+  const findingsBefore = fs.readFileSync(path.join(projectRoot, 'findings.md'), 'utf8')
+
+  const result = runTsx('tools/discipline/apply-patch.ts', ['--project-dir', projectRoot])
+  assert.notEqual(result.status, 0, getOutput(result))
+  assert.match(getOutput(result), /Rollback complete/)
+
+  // 1. The state file the first patch had already written is restored byte for byte.
+  assert.equal(fs.readFileSync(path.join(projectRoot, 'findings.md'), 'utf8'), findingsBefore)
+
+  // 2. Both patches are back in pending/, so the next run's preflight surfaces them.
+  const pendingDir = path.join(projectRoot, '.discipline', 'patches', 'pending')
+  const appliedDir = path.join(projectRoot, '.discipline', 'patches', 'applied')
+  assert.deepEqual(fs.readdirSync(pendingDir).sort(), ['a-valid-findings.md', 'b-broken-progress.md'])
+  assert.deepEqual(fs.readdirSync(appliedDir), [])
+
+  // 3. No stale writer lock survives the failure.
+  assert.equal(fs.existsSync(path.join(projectRoot, '.discipline', 'locks', 'writer.lock')), false)
+
+  // 4. The failure is on the ledger, with count 0 because nothing stayed applied.
+  const ledgerDir = path.join(projectRoot, '.discipline', 'ledger')
+  assert.ok(fs.existsSync(ledgerDir), 'a failed batch must still leave a ledger entry')
+  const events = fs.readdirSync(ledgerDir)
+    .flatMap((f) => fs.readFileSync(path.join(ledgerDir, f), 'utf8').trim().split('\n'))
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+  const failure = events.find((e) => e.event === 'patch_applied' && e.ok === false)
+  assert.ok(failure, 'expected a patch_applied event with ok: false')
+  assert.equal(failure.count, 0)
+  assert.equal(failure.rollback_failures, 0)
+})
+
 function pathToImport(absPath) {
   // Convert an absolute Windows path to a file:// URL that tsx can resolve.
   return 'file:///' + absPath.replace(/\\/g, '/').replace(/^\//, '')

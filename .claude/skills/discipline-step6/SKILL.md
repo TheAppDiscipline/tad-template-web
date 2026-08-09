@@ -317,6 +317,15 @@ Apply the patches if any were generated:
 npm run discipline:patch
 ```
 
+**If that command exits non-zero, this step stops here.** The patch engine treats the batch as all-or-nothing: it restores from `.discipline/backups/` every state file it had already written, and moves those patch files from `applied/` back to `pending/`. The repo is left as it was before this phase and every block this run produced is still in `pending/`, where the next run's preflight will surface it. Do not assemble and do not present the step as complete. A paste-ready assembled now would send Step 4 or Step 7 into a `findings.md` that never received this deploy's feedback.
+
+The deploy is not undone by any of this, and `POST_DEPLOY_FEEDBACK_PACKET.md` stays where it is: it is the evidence of a real deploy, not a handoff. So record the interruption instead of the success line, and report the failing patch and the engine's error verbatim:
+```bash
+npm run discipline:log -- --step 6 --tool "Claude" --notes "INCOMPLETE: deploy done, discipline:patch failed. Blocks left in pending/, no paste-ready assembled."
+```
+
+If the output says `Rollback incomplete` instead of `Rollback complete`, stop harder and say so: the state files may be half-patched, and the operator has to compare them against `.discipline/backups/` before running anything else.
+
 Determine the next step based on the "Recommended branch" in the packet:
 
 If it is "Step 4 feedback loop":
@@ -328,6 +337,8 @@ If it is "Step 7 productization":
 ```bash
 npm run discipline:assemble -- --step 7
 ```
+
+**If the assemble exits non-zero, this step also stops here.** The patches are applied but the handoff is not: report which files were missing and do not present the next step as ready. A stale `step-4-feedback.md` or `step-7-input.md` from an earlier cycle is indistinguishable from a fresh one for whoever pastes it, and it carries the previous deploy's feedback. Use the same INCOMPLETE run-log line as above, naming `discipline:assemble` as what failed, and skip the success line below.
 
 Log it in the run-log:
 ```bash
@@ -373,13 +384,15 @@ Next step:
 - If the deploy fails: report the error, do not generate POST_DEPLOY_FEEDBACK_PACKET (there was no real deploy).
 - If Playwright is not available: skip automated verification, continue with manual feedback.
 - If the operator does not answer all the feedback questions: generate the packet with what is available. Unanswered questions are marked "N/A - not evaluated".
-- If `npm run discipline:patch` or `discipline:assemble` fail: report the error and continue. The files are already in `.discipline/packets/`.
+- If `npm run discipline:patch` fails: stop. Report the failing patch and the engine's error verbatim. The batch was rolled back and every block is back in `pending/`; do not assemble and do not present the step as complete. The deploy stands and its packet stays in `.discipline/packets/`: log the run as INCOMPLETE so the deploy is on record without claiming the handoff exists.
+- If `npm run discipline:assemble` fails: stop. Report which files were missing. The patches are applied, so re-running only the assemble is safe once the cause is fixed; the next step must not start from the previous cycle's paste-ready.
 
 ---
 
 ## Critical rules
 
 - Never run `discipline:patch` if `pending/` contained files before this run. The command applies everything in the directory with no per-file selection; the preflight is the only guard.
+- Never assemble or announce this step as complete after a failed `discipline:patch` or `discipline:assemble`. A handoff built on unpatched state files is worse than no handoff: the next cycle would plan against the previous deploy's feedback. The run-log still gets an INCOMPLETE entry, because the deploy did happen.
 - Do not deploy without gates passing. Never. No exceptions.
 - Do not deploy without the operator's explicit confirmation. The skill proposes, the operator approves.
 - Do not invent feedback. The POST_DEPLOY_FEEDBACK_PACKET reflects what the operator said, not what Claude infers.

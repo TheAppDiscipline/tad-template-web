@@ -313,10 +313,16 @@ Apply pending patches:
 npm run discipline:patch
 ```
 
+**If that command exits non-zero, this step stops here.** The patch engine treats the batch as all-or-nothing: it restores from `.discipline/backups/` every state file it had already written, and moves those patch files from `applied/` back to `pending/`. The repo is left as it was before this phase and every block this run produced is still in `pending/`, where the next run's preflight will surface it. Do not assemble, do not log the run, do not show the summary. A paste-ready assembled now would carry a `discipline.md` still on the previous PROFILE and a `task_plan.md` without the hardening slices, while claiming the productization decision was applied. Report the failing patch name and the engine's error verbatim, and hand the decision back to the operator.
+
+If the output says `Rollback incomplete` instead of `Rollback complete`, stop harder and say so: the state files may be half-patched, and the operator has to compare them against `.discipline/backups/` before running anything else.
+
 Assemble the paste-ready for hardening in Step 4:
 ```bash
 npm run discipline:assemble -- --step 4-hardening
 ```
+
+**If the assemble exits non-zero, this step also stops here.** The patches are applied but the handoff is not: report which files were missing, do not log the run, and do not present Step 4 as ready. `PROD_HARDENING_PACKET.md` stays in `.discipline/packets/` and the operator may read it directly, but a stale `step-4-hardening.md` from an earlier run is indistinguishable from a fresh one.
 
 Record it in the run-log:
 ```bash
@@ -361,8 +367,8 @@ Next step: /discipline-step4 to expand the hardening slices
 - If the preflight finds pending patches: stop before reading inputs. Never apply work this run did not produce as a side effect of running this step.
 - If `POST_DEPLOY_FEEDBACK_PACKET` does not exist: stop with "Run /discipline-step6 first."
 - If the user has no product decision: stop with clear options (stay on SHARED_SYNC, gather more feedback, etc.)
-- If `npm run discipline:patch` fails: report the error and continue with the assembly. The patch blocks are in `.discipline/patches/pending/` for manual application.
-- If `npm run discipline:assemble` fails: report which files were missing. The PROD_HARDENING_PACKET is already in `.discipline/packets/`.
+- If `npm run discipline:patch` fails: stop. Report the failing patch and the engine's error verbatim. The batch was rolled back and every block is back in `.discipline/patches/pending/`; do not assemble, do not log, do not summarize. Never present a PROFILE change as applied when its patch failed.
+- If `npm run discipline:assemble` fails: stop. Report which files were missing. The patches are applied, so re-running only the assemble is safe once the cause is fixed. The PROD_HARDENING_PACKET is already in `.discipline/packets/`, but do not present Step 4 as ready on the strength of an old paste-ready.
 - If `npm run discipline:log` fails: report it but do not block.
 - If the feedback does not have enough evidence to decide areas: document the uncertainty in findings.md and recommend more real usage before hardening.
 
@@ -371,6 +377,7 @@ Next step: /discipline-step4 to expand the hardening slices
 ## Critical rules
 
 - Never run `discipline:patch` if `pending/` contained files before this run. The command applies everything in the directory with no per-file selection; the preflight is the only guard.
+- Never assemble, log, or announce this step as complete after a failed `discipline:patch` or `discipline:assemble`. A handoff built on unpatched state files is worse than no handoff: it looks finished while the PROFILE and the hardening backlog stayed where they were.
 - Use Extended Thinking for all outputs. Hardening decisions are architectural.
 - Do not activate areas without real evidence from the feedback. "Just in case" is not a justification.
 - Do not harden everything at once. Assign PROD-1/2/3 phases and start with only the immediate phase.

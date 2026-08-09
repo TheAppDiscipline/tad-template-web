@@ -220,6 +220,10 @@ Apply pending patches:
 npm run discipline:patch
 ```
 
+**If that command exits non-zero, this step stops here.** The patch engine treats the batch as all-or-nothing: it restores from `.discipline/backups/` every state file it had already written, and moves those patch files from `applied/` back to `pending/`. The repo is left as it was before this phase and every block this run produced is still in `pending/`, where the next run's preflight will surface it. Do not assemble, do not log the run, do not show the summary. A paste-ready assembled now would carry a `discipline.md`, `task_plan.md` or `findings.md` that was never patched, and the step that reads it has no way to tell. Report the failing patch name and the engine's error verbatim, and hand the decision back to the operator.
+
+If the output says `Rollback incomplete` instead of `Rollback complete`, stop harder and say so: the state files may be half-patched, and the operator has to compare them against `.discipline/backups/` before running anything else.
+
 Assemble paste-readies for the following steps:
 
 ```bash
@@ -235,6 +239,8 @@ If LANE is neither BACKEND nor CLI (has UI):
 ```bash
 npm run discipline:assemble -- --step 3
 ```
+
+**If any of those assembles exits non-zero, this step also stops here.** The patches are applied but the handoff is not: report which paste-ready failed and the error verbatim, do not log the run, and do not present the next step as ready. A stale `step-*-input.md` from an earlier run is indistinguishable from a fresh one for whoever pastes it.
 
 Record in the run-log:
 ```bash
@@ -274,8 +280,8 @@ Next step: <determine per config>
 
 - If the preflight finds pending patches: stop before reading inputs. Never apply work this run did not produce as a side effect of running this step.
 - If `STEP_2_ARCHITECTURE_PACKET` does not exist: stop with "Run /discipline-step1 first."
-- If `npm run discipline:patch` fails: report the error and continue with the assembly. The operator can apply patches manually.
-- If `npm run discipline:assemble` fails: report which files were missing and suggest a review.
+- If `npm run discipline:patch` fails: stop. Report the failing patch and the engine's error verbatim. The batch was rolled back and every block is back in `pending/`; do not assemble, do not log, do not summarize. Fixing the block and re-running the step is the operator's call.
+- If `npm run discipline:assemble` fails: stop. Report which paste-ready failed and which files were missing. The patches are applied, so re-running only the assemble is safe once the cause is fixed; the next step must not start from the previous run's file.
 - If an output is inconsistent with the previous ones: fix it before continuing (same pattern as Output 8 of Step 1).
 
 ---
@@ -283,6 +289,7 @@ Next step: <determine per config>
 ## Critical rules
 
 - Never run `discipline:patch` if `pending/` contained files before this run. The command applies everything in the directory with no per-file selection; the preflight is the only guard.
+- Never assemble, log, or announce this step as complete after a failed `discipline:patch` or `discipline:assemble`. A handoff built on unpatched state files is worse than no handoff: it looks finished and carries stale contracts into the next step.
 - Use Extended Thinking for outputs 1-5. The value of this step is the deep reasoning.
 - Do not invent business logic. If information is missing, document the assumption in findings.md.
 - Do not change the lane or the stack without strong justification.
