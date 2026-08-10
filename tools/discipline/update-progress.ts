@@ -9,6 +9,7 @@ import {
   cleanBullet, completionGate, escapeRe, firstMeaningful, inlineField, readCompletion,
   collectBullets, isNone, meaningfulItems, sectionItems, type GateState,
 } from './lib/completion-packet.js';
+import { isSliceConsumed, markSliceConsumed, packetSliceId, resolveConsumptionTarget } from './lib/slice-identity.js';
 
 const args = minimist(process.argv.slice(2));
 const projectRoot = resolveProjectRoot(args['project-dir']);
@@ -33,8 +34,14 @@ export async function updateProgress(root: string, completionPacketPath?: string
   const packet = parsePacketFile(packetPath, fileContent);
   const body = packet.body;
 
-  const sliceNumber = packet.slice || extractSliceNumber(body);
-  const sliceName = extractSliceName(body) || `Slice ${sliceNumber}`;
+  // WHICH slice this packet closes comes from the one identity resolver, not from a second regex
+  // over a body the packet parser may have truncated. A packet whose only declaration is a root
+  // `SLICE: 13` line lost it there and was logged as "Slice 0", which also made detectNextSlice
+  // pick the wrong "Working on".
+  const declaredId = packetSliceId(fileContent, packetPath);
+  const declaredNumber = declaredId ? parseInt(declaredId.replace(/^[A-Za-z]+/, ''), 10) : NaN;
+  const sliceNumber = packet.slice || (Number.isNaN(declaredNumber) ? extractSliceNumber(body) : declaredNumber);
+  const sliceName = extractSliceName(body) || (declaredId ? `Slice ${declaredId}` : `Slice ${sliceNumber}`);
   // The same refusals the watcher's preflight ran BEFORE it wrote anything, from the same
   // function: what the progress engine will not record, nothing else may act on either. Throw (not
   // disciplineError, which process.exit()s) so watch/run tolerate it and keep the process alive;
@@ -85,6 +92,66 @@ export async function updateProgress(root: string, completionPacketPath?: string
   fs.writeFileSync(progressPath, progress.replace(/\n/g, eol), 'utf-8');
   disciplineInfo(`progress.md updated: ${sliceName} (${outcome}, gates: ${gatesPassed}). Next: ${nextSlice}`);
   return { gate: gate.state };
+}
+
+/** Injectable so a test can fail the LAST write of the transition and check what survives. */
+export interface ClosureOps {
+  mark: (root: string, sliceId: string) => { ok: true; path: string } | { ok: false; reason: string };
+}
+
+export type ClosureResult =
+  | { ok: true; consumed: boolean; packet?: string }
+  | { ok: false; reason: string; restored: boolean };
+
+/**
+ * Record a completion as ONE transition: progress.md and, when the packet closes the slice, the
+ * consumption marker. It either lands whole or leaves progress.md byte-identical.
+ *
+ * The order used to be write-then-check: progress.md was updated and only afterwards did the
+ * engine ask whether the slice could be consumed. When it could not (an earlier completion packet
+ * that disagrees, a packet that can no longer be edited), progress.md declared the slice complete
+ * while the packet still said `ready`, the command exited non-zero, and nothing on disk agreed
+ * with anything else. So: prove the target AND every completion packet first, and if a later write
+ * still fails, put the previous bytes back.
+ *
+ * `requireConsumption` is the difference between the two callers. A run must CLOSE the slice it
+ * leased, so a non-terminal outcome is a failure there. The watcher records whatever the packet
+ * says: `Outcome: partial` is a legitimate entry in the log that consumes nothing.
+ */
+export async function recordClosure(
+  root: string,
+  sliceId: string,
+  completionPacketPath: string,
+  options: { requireConsumption: boolean },
+  ops: ClosureOps = { mark: markSliceConsumed },
+): Promise<ClosureResult> {
+  // 1. Everything that can be known without writing, is known before writing.
+  const target = resolveConsumptionTarget(root, sliceId);
+  if (!target.ok) return { ok: false, reason: target.reason, restored: false };
+  const verdict = isSliceConsumed(root, sliceId);
+  if (options.requireConsumption && !verdict.consumed) {
+    return { ok: false, reason: verdict.reason, restored: false };
+  }
+
+  // 2. The previous bytes, kept exactly (BOM, CRLF and all) so a restore is a restore.
+  const progressPath = path.join(root, 'progress.md');
+  const before = fs.existsSync(progressPath) ? fs.readFileSync(progressPath) : null;
+
+  try {
+    await updateProgress(root, completionPacketPath);
+    // A packet that does not close the slice is recorded and nothing else: that is the whole
+    // difference between logging what happened and declaring the work finished.
+    if (!verdict.consumed) return { ok: true, consumed: false };
+    const marked = ops.mark(root, sliceId);
+    if (!marked.ok) throw new Error(marked.reason);
+    return { ok: true, consumed: true, packet: marked.path };
+  } catch (err) {
+    let restored = false;
+    if (before !== null) {
+      try { fs.writeFileSync(progressPath, before); restored = true; } catch { /* report the original failure */ }
+    }
+    return { ok: false, reason: err instanceof Error ? err.message : String(err), restored };
+  }
 }
 
 function firstLine(s: string): string { return s.split('\n')[0].trim(); }

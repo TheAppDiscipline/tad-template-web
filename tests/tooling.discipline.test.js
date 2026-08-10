@@ -2398,6 +2398,87 @@ test('run: a builder that writes no completion packet is not a green run', () =>
   fs.rmSync(repo, { recursive: true, force: true })
 })
 
+// The closing transition wrote progress.md and only afterwards asked whether the slice could be
+// consumed. When it could not, progress.md declared the slice complete, the packet stayed `ready`,
+// the command exited non-zero, and nothing on disk agreed with anything else.
+test('run: a conflicting earlier completion leaves progress.md byte-identical', () => {
+  const gitProbe = spawnSync('git', ['--version'], { encoding: 'utf8' })
+  if (gitProbe.status !== 0) return
+  const repo = makeRunFixtureRepo()
+  const packetPath = path.join(repo, '.discipline', 'packets', 'STEP_5_SLICE_PACKET.md')
+  // A completion packet from an earlier attempt at the SAME slice, which disagrees with the one the
+  // builder is about to write. It is not part of this run, so the run's own preflight never sees it.
+  fs.writeFileSync(
+    path.join(repo, '.discipline', 'packets', 'SLICE_COMPLETION_PACKET_1_earlier.md'),
+    ['# SLICE_COMPLETION_PACKET', '', 'SLICE: 1', '', '## Outcome', '- blocked', '', '## Gates passed', '- GATE_STATE: failed', ''].join('\n'),
+    'utf8',
+  )
+  spawnSync('git', ['add', '-A'], { cwd: repo, encoding: 'utf8' })
+  spawnSync('git', ['commit', '-q', '-m', 'earlier completion'], { cwd: repo, encoding: 'utf8' })
+  const progressBefore = fs.readFileSync(path.join(repo, 'progress.md'), 'utf8')
+  const packetBefore = fs.readFileSync(packetPath, 'utf8')
+
+  const res = spawnSync(process.execPath, [tsxCli, 'tools/discipline/run.ts', '--slice', '1', '--yes', '--no-open', '--project-dir', repo], {
+    cwd: repoRoot, env: { ...process.env, DISCIPLINE_FAKE_PROVIDER_CMD: fakeCli, FAKE_MODE: 'build', FAKE_BUILD_DIR: repo }, encoding: 'utf8',
+  })
+  const out = getOutput(res)
+  assert.equal(res.status, 5, out)
+  assert.match(out, /completion packets that disagree/)
+  // The gate DID run and the patches DID apply: it is the closure that is refused, and refusing it
+  // has to leave the two files that would disagree exactly as they were.
+  assert.match(fs.readFileSync(path.join(repo, 'findings.md'), 'utf8'), /fake builder/i)
+  assert.equal(fs.readFileSync(path.join(repo, 'progress.md'), 'utf8'), progressBefore,
+    'progress.md must not declare a closure that could not be recorded')
+  assert.equal(fs.readFileSync(packetPath, 'utf8'), packetBefore, 'and the packet must still say what it said')
+  assert.doesNotMatch(fs.readFileSync(packetPath, 'utf8'), /status: consumed/)
+  fs.rmSync(repo, { recursive: true, force: true })
+})
+
+// The other half: when the LAST write of the transition fails, the first one is undone. The failure
+// is injected because a real one (a packet that became unwritable between the check and the write)
+// is a race no test can stage reliably; what is being proved is what survives it.
+test('discipline:progress: a closure whose consumption cannot be written restores progress.md', () => {
+  const completion = ['## SLICE_COMPLETION_PACKET', '', 'SLICE: 13', '', '### Outcome', '- done', '',
+    '### Gates passed', '- GATE_STATE: passed', '', '### Deploy signal', '- ready_for_preview', ''].join('\n')
+  const projectRoot = createDisciplineProject({
+    'STEP_5_SLICE_PACKET_13.md': ['---', 'slice: 13', 'status: ready', '---', '', '# STEP_5_SLICE_PACKET', '', 'SLICE: 13', '', '## Goal', '- x', ''].join('\n'),
+    'SLICE_COMPLETION_PACKET_13.md': completion,
+  })
+  const progressPath = path.join(projectRoot, 'progress.md')
+  const packetPath = path.join(projectRoot, '.discipline', 'packets', 'STEP_5_SLICE_PACKET_13.md')
+  const completionPath = path.join(projectRoot, '.discipline', 'packets', 'SLICE_COMPLETION_PACKET_13.md')
+  const before = fs.readFileSync(progressPath, 'utf8')
+
+  const failed = runTsxModule(
+    [
+      `const __out = {}`,
+      `const failing = { mark: () => ({ ok: false, reason: 'simulated: the packet could not be written' }) }`,
+      `__out.result = await recordClosure(${JSON.stringify(projectRoot)}, '13', ${JSON.stringify(completionPath)}, { requireConsumption: true }, failing)`,
+    ],
+    { '{ recordClosure }': 'tools/discipline/update-progress.ts' },
+  )
+  assert.equal(failed.result.ok, false)
+  assert.match(failed.result.reason, /simulated/)
+  assert.equal(failed.result.restored, true)
+  assert.equal(fs.readFileSync(progressPath, 'utf8'), before,
+    'progress.md must be byte-identical when the consumption cannot be recorded')
+  assert.doesNotMatch(fs.readFileSync(packetPath, 'utf8'), /status: consumed/)
+
+  // Positive control: the same call without the injected failure records BOTH halves.
+  const recorded = runTsxModule(
+    [
+      `const __out = {}`,
+      `__out.result = await recordClosure(${JSON.stringify(projectRoot)}, '13', ${JSON.stringify(completionPath)}, { requireConsumption: true })`,
+    ],
+    { '{ recordClosure }': 'tools/discipline/update-progress.ts' },
+  )
+  assert.equal(recorded.result.ok, true, recorded.result.reason)
+  assert.equal(recorded.result.consumed, true)
+  assert.notEqual(fs.readFileSync(progressPath, 'utf8'), before)
+  assert.match(fs.readFileSync(progressPath, 'utf8'), /Slice 13/)
+  assert.match(fs.readFileSync(packetPath, 'utf8'), /status: consumed/)
+})
+
 // The §4 Ready Slices table is the plan's most visible statement about a slice, and the runner
 // threw it away: a row marked done, planned or blocked was invisible whenever the slice's own
 // section did not repeat the status, and the legacy "no status means ready" fallback then handed

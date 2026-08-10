@@ -10,8 +10,8 @@ import { resolveProjectRoot } from './lib/discipline-config.js';
 import { copyToClipboard as writeTextToClipboard } from './lib/clipboard.js';
 import { extractEmbeddedPatches } from './lib/parse-patch.js';
 import { applyPatches } from './apply-patch.js';
-import { isSliceConsumed, markSliceConsumed, resolveConsumptionTarget, resolvePacketIdentity, selectStep5Packets, slicePasteReadyFileName } from './lib/slice-identity.js';
-import { updateProgress, completionGateState, hasCompletionPacket } from './update-progress.js';
+import { isSliceConsumed, resolveConsumptionTarget, resolvePacketIdentity, selectStep5Packets, slicePasteReadyFileName } from './lib/slice-identity.js';
+import { recordClosure, completionGateState, hasCompletionPacket } from './update-progress.js';
 import { readCompletion } from './lib/completion-packet.js';
 import { assemblePasteReady } from './assemble-paste-ready.js';
 import { logRun } from './log-run.js';
@@ -183,41 +183,31 @@ export async function handlePacket(root: string, filePath: string) {
       const closedSlice = resolvePacketIdentity(content, fileName).id ?? '';
 
       disciplineInfo('  Updating progress...');
+      // ONE transition: progress.md and, when the packet closes the slice, the consumption marker.
       // The EXACT file that was validated, not the canonical filename: a suffixed completion packet
       // used to be validated while progress.md recorded whatever sat in SLICE_COMPLETION_PACKET.md.
-      // updateProgress refuses a packet with no outcome or no gate, and that refusal is the whole
-      // signal: what the progress engine will not record, the consumption engine may not act on.
-      let progressRecorded = true;
-      try {
-        const res = await updateProgress(root, filePath);
-        logNotes.push(res.gate === 'passed' ? 'progress-updated' : `progress-updated,gate-${res.gate}`);
-      } catch (err) {
-        disciplineWarn(`  Refused progress.md update: ${err instanceof Error ? err.message : err}`);
-        disciplineWarn('  Nothing consumed and nothing assembled: a completion packet the progress engine refuses cannot close a slice.');
+      // Writing progress.md first and asking about consumption afterwards left progress.md saying
+      // the slice was complete while the packet still said ready, so it either lands whole or
+      // progress.md keeps the bytes it had.
+      //
+      // Consumption is recorded IN PLACE: the packet keeps its name and its content, it just stops
+      // being the next thing to implement. Renaming or moving it is what used to lose it.
+      const closure = await recordClosure(root, closedSlice, filePath, { requireConsumption: false });
+      if (!closure.ok) {
+        disciplineWarn(`  Refused to record the closure of slice ${closedSlice}: ${closure.reason}.`);
+        disciplineWarn(closure.restored
+          ? '  progress.md was restored to what it said before; nothing consumed and nothing assembled.'
+          : '  Nothing written: a completion packet the progress engine refuses cannot close a slice.');
         logNotes.push('progress-refused');
-        progressRecorded = false;
         identityBlocked = true;
-      }
-
-      if (progressRecorded && closedSlice) {
-        // Consumption is recorded only when THIS slice's completion packet carries a green gate,
-        // and it is recorded in place: the packet keeps its name and its content, it just stops
-        // being the next thing to implement. Renaming or moving it is what used to lose it.
+      } else if (closure.consumed) {
+        disciplineInfo(`  Slice ${closedSlice} consumed: ${path.basename(closure.packet ?? '')} marked status: consumed.`);
+        logNotes.push('progress-updated', `consumed=${closedSlice}`);
+      } else {
+        // A packet that records `partial` or a non-green gate belongs in the log and closes nothing.
         const verdict = isSliceConsumed(root, closedSlice);
-        if (verdict.consumed) {
-          const marked = markSliceConsumed(root, closedSlice);
-          if (!marked.ok) {
-            disciplineWarn(`  Could not record consumption: ${marked.reason}.`);
-            logNotes.push('consumption-failed');
-            identityBlocked = true;
-          } else {
-            disciplineInfo(`  Slice ${closedSlice} consumed: ${path.basename(marked.path)} marked status: consumed.`);
-            logNotes.push(`consumed=${closedSlice}`);
-          }
-        } else {
-          disciplineWarn(`  Slice ${closedSlice} not marked consumed: ${verdict.reason}.`);
-          logNotes.push(`not-consumed=${closedSlice}`);
-        }
+        disciplineWarn(`  Slice ${closedSlice} not marked consumed: ${verdict.reason}.`);
+        logNotes.push('progress-updated', `not-consumed=${closedSlice}`);
       }
     }
   });

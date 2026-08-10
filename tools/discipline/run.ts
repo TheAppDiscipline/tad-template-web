@@ -36,9 +36,9 @@ import { appendLedger, errorSignature } from './lib/ledger.js';
 import { assemblePasteReady } from './assemble-paste-ready.js';
 import { extractEmbeddedPatches } from './lib/parse-patch.js';
 import { applyPatches } from './apply-patch.js';
-import { isSliceConsumed, locateSlicePacket, markSliceConsumed, normalizeSliceId, packetStatus, resolvePacketIdentity, resolveSlice, slicePasteReadyFileName } from './lib/slice-identity.js';
+import { locateSlicePacket, normalizeSliceId, packetStatus, resolvePacketIdentity, resolveSlice, slicePasteReadyFileName } from './lib/slice-identity.js';
 import { readCompletion } from './lib/completion-packet.js';
-import { updateProgress } from './update-progress.js';
+import { recordClosure } from './update-progress.js';
 import { runGateReport, writeGateReport, type GateReport } from './gate-report.js';
 import { createCheckpoint } from './checkpoint.js';
 import { diffToHtml } from './diff-report.js';
@@ -730,22 +730,20 @@ async function applyPlanUnderLock(root: string, patches: ParsedPatch[]): Promise
 }
 
 /**
- * Record the closure: progress.md, then consumption. Runs only after the gate is GREEN, because a
- * green gate is what makes the closure true; recording it before the gate logged slices as closed
- * that the very next step refused.
+ * Record the closure, as one transition that either lands whole or leaves progress.md as it was.
+ * Runs only after the gate is GREEN, because a green gate is what makes the closure true; recording
+ * it before the gate logged slices as closed that the very next step refused.
  */
 async function recordClosureUnderLock(root: string, sliceId: string, completionPath: string): Promise<{ ok: boolean; reason?: string }> {
   acquireWriterLock(root, { tool: 'discipline:run' });
   try {
-    await updateProgress(root, completionPath);
-    const verdict = isSliceConsumed(root, sliceId);
-    if (!verdict.consumed) return { ok: false, reason: verdict.reason };
-    const marked = markSliceConsumed(root, sliceId);
-    if (!marked.ok) return { ok: false, reason: marked.reason };
-    disciplineInfo(`Slice ${sliceId} consumed: ${path.basename(marked.path)} marked status: consumed.`);
+    // A run must CLOSE the slice it leased: a packet that records `partial` has not finished it.
+    const result = await recordClosure(root, sliceId, completionPath, { requireConsumption: true });
+    if (!result.ok) {
+      return { ok: false, reason: result.restored ? `${result.reason} (progress.md restored)` : result.reason };
+    }
+    disciplineInfo(`Slice ${sliceId} consumed: ${path.basename(result.packet ?? '')} marked status: consumed.`);
     return { ok: true };
-  } catch (err) {
-    return { ok: false, reason: err instanceof Error ? err.message : String(err) };
   } finally {
     releaseWriterLock(root);
   }
