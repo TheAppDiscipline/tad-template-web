@@ -4897,6 +4897,108 @@ test('step 5 schema: --allow-draft covers exactly draft, not every non-ready sta
   assert.equal(assemble(draft, ['--allow-draft']).status, 0)
 })
 
+// Markdown gives the same sentence a dozen spellings, and each rule used to roll its own regex, so
+// each accepted a different subset. `- **none**` was not the string "none"; `+ APPLIES: no` was not
+// a bullet the not-applicable check knew. A contract you can satisfy by changing a bullet character
+// is not a contract, so every declaration and every value goes through one normalization.
+test('step 5 schema: the contract reads the declaration, not its markdown costume', () => {
+  const gut = (packet, section, replacement) => packet.replace(new RegExp(`## ${section}\\n[^#]*`, 'm'), `## ${section}\n${replacement}\n\n`)
+  const out = step5SchemaEval({
+    boldNone: gut(V2_PACKET, 'Goal', '- **none**'),
+    tickedNone: gut(V2_PACKET, 'Goal', '- `none`'),
+    italicNotApplicable: gut(V2_PACKET, 'Contracts', '- *not applicable*'),
+    plusApplies: gut(V2_PACKET, 'Provider Impact', '+ APPLIES: no'),
+    starApplies: gut(V2_PACKET, 'AI Impact', '* APPLIES: no\n* RATIONALE: n/a'),
+    boldEvidence: V2_PACKET.replace('- AC1 failed against the previous build: the empty state was never rendered.', '- **none**'),
+    plusMethod: V2_PACKET.replace('- METHOD: red-evidence', '+ METHOD: red-evidence'),
+    boldControl: V2_PACKET.replace('| AC2 | one item | tick it | it renders as done | untick it and it renders as pending |', '| AC2 | one item | tick it | it renders as done | **none** |'),
+    boldHeader: V2_PACKET.replace('| ID | Setup | Action | Observable result | Negative control |', '| **ID** | Setup | Action | Observable result | `Negative control` |'),
+    duplicateBoldId: V2_PACKET.replace('| AC2 | one item', '| **AC1** | one item'),
+  })
+
+  // A section that says nothing, however it is dressed.
+  assert.match(out.boldNone.errors.join('; '), /"Goal" is empty/)
+  assert.match(out.tickedNone.errors.join('; '), /"Goal" is empty/)
+  assert.match(out.italicNotApplicable.errors.join('; '), /"Contracts" is empty/)
+  // `+` is a markdown bullet too, so `+ APPLIES: no` is the same declaration as `- APPLIES: no`.
+  assert.match(out.plusApplies.errors.join('; '), /"Provider Impact" declares APPLIES: no without a checkable RATIONALE/)
+  assert.match(out.starApplies.errors.join('; '), /"AI Impact" declares APPLIES: no without a checkable RATIONALE/)
+  // Falsifiability evidence uses the SAME evasive test: "METHOD: red-evidence" then "none" is a
+  // packet declaring that it proved nothing, which is the one thing the section rules out.
+  assert.match(out.boldEvidence.errors.join('; '), /declares METHOD: red-evidence and shows nothing/)
+  // A METHOD written with another bullet is still the declaration, not a missing one.
+  assert.deepEqual(out.plusMethod.errors, [])
+  // The false green this negative control exists to prevent.
+  assert.match(out.boldControl.errors.join('; '), /row 2 has no negative control/)
+  // And the table itself is read the same way, header and ids included.
+  assert.deepEqual(out.boldHeader.errors, [])
+  assert.match(out.duplicateBoldId.errors.join('; '), /"ac1" appears 2 times/)
+})
+
+// The migration writes three files and deletes one. Either all of that happened or none of it did:
+// the order used to be write-then-check, so a collision left a backup behind that made every later
+// attempt refuse, and a pre-existing `.sha256` was silently replaced.
+test('discipline:migrate-packets: the migration is a transaction, and a failure leaves no residue', () => {
+  const legacyPacket = ['# STEP_5_SLICE_PACKET', '', 'SLICE: 13', '', '## Goal', '- x', ''].join('\n')
+  const project = () => createDisciplineProject({ 'STEP_5_SLICE_PACKET.md': legacyPacket })
+  const listing = (root) => {
+    const packets = path.join(root, '.discipline', 'packets')
+    const legacy = path.join(packets, 'legacy')
+    return [
+      ...fs.readdirSync(packets).sort(),
+      ...(fs.existsSync(legacy) ? fs.readdirSync(legacy).sort().map((f) => `legacy/${f}`) : []),
+    ]
+  }
+
+  // 1. A pre-existing `.sha256` is an output this call would create, so it is refused BEFORE the
+  //    backup is written, not overwritten after.
+  const collidingHash = project()
+  const legacyDir = path.join(collidingHash, '.discipline', 'packets', 'legacy')
+  fs.mkdirSync(legacyDir, { recursive: true })
+  fs.writeFileSync(path.join(legacyDir, 'STEP_5_SLICE_PACKET.13.md.sha256'), 'SOMEBODY ELSE WROTE THIS\n', 'utf8')
+  const before = listing(collidingHash)
+  const refused = runTsx('tools/discipline/migrate-packets.ts', ['--project-dir', collidingHash, '--write', '--stamp', 'T'])
+  assert.notEqual(refused.status, 0, getOutput(refused))
+  assert.match(getOutput(refused), /sha256 already exists; nothing is overwritten/)
+  assert.equal(fs.readFileSync(path.join(legacyDir, 'STEP_5_SLICE_PACKET.13.md.sha256'), 'utf8'), 'SOMEBODY ELSE WROTE THIS\n')
+  assert.deepEqual(listing(collidingHash), before, 'a refusal writes nothing, not even the backup')
+
+  // 2. A failure after EACH write leaves the directory as it was, and the next attempt is clean.
+  //    The failure is injected because a disk that fills up between two writes is not a state a
+  //    test can stage; what is being proved is what survives it.
+  for (const failAfter of [1, 2, 3]) {
+    const root = project()
+    const start = listing(root)
+    const out = runTsxModule(
+      [
+        `const __out = {}`,
+        `const fs = await import('node:fs')`,
+        `let writes = 0`,
+        `const ops = {`,
+        `  write: (file, data, exclusive) => {`,
+        `    writes += 1`,
+        `    fs.writeFileSync(file, data, exclusive ? { flag: 'wx' } : {})`,
+        `    if (writes === ${failAfter}) throw new Error('simulated failure after write ${failAfter}')`,
+        `  },`,
+        `  remove: (file) => fs.rmSync(file),`,
+        `}`,
+        `__out.result = migratePackets(${JSON.stringify(root)}, { write: true, stamp: 'T' }, ops)`,
+      ],
+      { '{ migratePackets }': 'tools/discipline/migrate-packets.ts' },
+    )
+    assert.equal(out.result.ok, false, `failing after write ${failAfter} must not report success`)
+    assert.match(out.result.plans[0].reason, new RegExp(`simulated failure after write ${failAfter}`))
+    assert.match(out.result.plans[0].reason, /Nothing was left behind/)
+    assert.deepEqual(listing(root), start, `a failure after write ${failAfter} must leave no residue`)
+    assert.equal(fs.readFileSync(path.join(root, '.discipline', 'packets', 'STEP_5_SLICE_PACKET.md'), 'utf8'), legacyPacket)
+
+    // 3. And the retry, with nothing injected, works: the residue is what used to block it.
+    const retry = runTsx('tools/discipline/migrate-packets.ts', ['--project-dir', root, '--write', '--stamp', 'T'])
+    assert.equal(retry.status, 0, getOutput(retry))
+    assert.deepEqual(listing(root), ['STEP_5_SLICE_PACKET_13.md', 'legacy', 'legacy/STEP_5_SLICE_PACKET.13.md', 'legacy/STEP_5_SLICE_PACKET.13.md.sha256'])
+  }
+})
+
 // Migration is a decision the operator takes between slices, so it says what it would do and
 // touches nothing until asked. The original is kept verbatim with its hash: a migration nobody can
 // check against the original is a rewrite.

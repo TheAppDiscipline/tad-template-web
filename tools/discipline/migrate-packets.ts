@@ -163,7 +163,30 @@ export function planMigration(root: string, stamp: string): MigrationResult {
   return { plans, ok: plans.every((plan) => plan.action !== 'refuse') };
 }
 
-export function applyMigration(root: string, plan: MigrationPlan, stamp: string): { ok: boolean; reason?: string } {
+/** Injectable so a test can fail the migration AFTER a write and check what survives. */
+export interface MigrationOps {
+  /** `exclusive` means the write must fail rather than overwrite an existing file. */
+  write: (file: string, data: Buffer | string, exclusive: boolean) => void;
+  remove: (file: string) => void;
+}
+
+const DEFAULT_OPS: MigrationOps = {
+  write: (file, data, exclusive) => fs.writeFileSync(file, data, exclusive ? { flag: 'wx' } : {}),
+  remove: (file) => fs.rmSync(file),
+};
+
+/**
+ * Migrate ONE packet as a transaction: either all three outputs exist and the source is gone, or
+ * the directory looks exactly as it did.
+ *
+ * The order used to be write-then-check: the backup was created, the `.sha256` was written over
+ * whatever was already there, and only afterwards did the code ask whether the target was free. So
+ * a collision left a backup behind that made every later attempt refuse ("backup already exists"),
+ * and a pre-existing hash file was silently replaced. Now every output is checked BEFORE any of
+ * them is created, each is created exclusively so a race loses instead of overwriting, and a
+ * failure removes what this call made. The source is deleted last, when everything else is on disk.
+ */
+export function applyMigration(root: string, plan: MigrationPlan, stamp: string, ops: MigrationOps = DEFAULT_OPS): { ok: boolean; reason?: string } {
   if (plan.action !== 'migrate' || !plan.slice || !plan.target || !plan.status) {
     return { ok: false, reason: 'nothing to apply' };
   }
@@ -171,37 +194,73 @@ export function applyMigration(root: string, plan: MigrationPlan, stamp: string)
   const legacyDir = path.join(packetsDir, 'legacy');
   const source = path.join(packetsDir, plan.file);
   const target = path.join(packetsDir, plan.target);
+  const backup = path.join(legacyDir, `${path.basename(plan.file, '.md')}.${sliceFileToken(plan.slice)}.md`);
+  const backupHash = `${backup}.sha256`;
+  // A packet already under its canonical name is rewritten IN PLACE: its target is its source.
+  const inPlace = path.resolve(source) === path.resolve(target);
   const original = fs.readFileSync(source);
 
-  // 1. The original, byte for byte, plus the hash that proves it. Written FIRST: a migration whose
-  //    backup failed must not have produced the new packet.
-  fs.mkdirSync(legacyDir, { recursive: true });
-  const backup = path.join(legacyDir, `${path.basename(plan.file, '.md')}.${sliceFileToken(plan.slice)}.md`);
-  if (fs.existsSync(backup)) return { ok: false, reason: `${path.relative(root, backup)} already exists; nothing is overwritten` };
-  fs.writeFileSync(backup, original);
-  fs.writeFileSync(`${backup}.sha256`, `${crypto.createHash('sha256').update(original).digest('hex')}  ${plan.file}\n`, 'utf-8');
+  // 1. PREFLIGHT: every path this call would create has to be free, decided before it creates any.
+  for (const output of [backup, backupHash, ...(inPlace ? [] : [target])]) {
+    if (fs.existsSync(output)) {
+      return { ok: false, reason: `${path.relative(root, output).replace(/\\/g, '/')} already exists; nothing is overwritten` };
+    }
+  }
 
-  // 2. The migrated packet.
   const { meta } = parsePacketMeta(original.toString('utf-8'));
   const migrated = buildV2Frontmatter(plan.slice, plan.status, stamp, meta) + stripFrontmatter(original.toString('utf-8'));
-  if (fs.existsSync(target) && path.resolve(target) !== path.resolve(source)) {
-    return { ok: false, reason: `${plan.target} already exists; nothing is overwritten` };
-  }
-  fs.writeFileSync(target, migrated, 'utf-8');
+  const digest = `${crypto.createHash('sha256').update(original).digest('hex')}  ${plan.file}\n`;
 
-  // 3. The old file, only when it moved to a new name. Its content is in legacy/ either way.
-  if (path.resolve(source) !== path.resolve(target)) fs.rmSync(source);
+  // 2. Create. The rollback undoes every output this call COULD have created, not the ones it got
+  // around to recording: a failure that happens after the bytes have landed is the only kind worth
+  // defending against, and "did we reach the line that appends to a list" is not the same question
+  // as "is the file there".
+  const outputs = [backup, backupHash, ...(inPlace ? [] : [target])];
+  const legacyDirExisted = fs.existsSync(legacyDir);
+  const rollback = () => {
+    for (const file of [...outputs].reverse()) {
+      try { if (fs.existsSync(file)) ops.remove(file); } catch { /* report the original failure, not the cleanup */ }
+    }
+    // An in-place rewrite has no file to delete: it has bytes to put back.
+    if (inPlace) { try { ops.write(target, original, false); } catch { /* same */ } }
+    if (!legacyDirExisted && fs.existsSync(legacyDir) && fs.readdirSync(legacyDir).length === 0) {
+      try { fs.rmdirSync(legacyDir); } catch { /* same */ }
+    }
+  };
+
+  try {
+    fs.mkdirSync(legacyDir, { recursive: true });
+    ops.write(backup, original, true);
+    ops.write(backupHash, digest, true);
+    ops.write(target, migrated, !inPlace);
+  } catch (err) {
+    rollback();
+    return {
+      ok: false,
+      reason: `${err instanceof Error ? err.message : err}. Nothing was left behind; run this again once the cause is fixed.`,
+    };
+  }
+
+  // 3. The old file goes LAST, and only when it moved to a new name. Its content is in legacy/.
+  if (!inPlace) {
+    try {
+      ops.remove(source);
+    } catch (err) {
+      rollback();
+      return { ok: false, reason: `could not remove ${plan.file} after migrating it: ${err instanceof Error ? err.message : err}. Nothing was left behind.` };
+    }
+  }
   return { ok: true };
 }
 
-export function migratePackets(root: string, options: { write: boolean; stamp: string }): MigrationResult {
+export function migratePackets(root: string, options: { write: boolean; stamp: string }, ops: MigrationOps = DEFAULT_OPS): MigrationResult {
   const planned = planMigration(root, options.stamp);
   if (!options.write) return planned;
 
   const plans: MigrationPlan[] = [];
   for (const plan of planned.plans) {
     if (plan.action !== 'migrate') { plans.push(plan); continue; }
-    const applied = applyMigration(root, plan, options.stamp);
+    const applied = applyMigration(root, plan, options.stamp, ops);
     plans.push(applied.ok ? plan : { ...plan, action: 'refuse', reason: applied.reason });
   }
   return { plans, ok: plans.every((plan) => plan.action !== 'refuse') };

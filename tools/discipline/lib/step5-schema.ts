@@ -73,6 +73,26 @@ function bodyOf(content: string): string {
 }
 
 /**
+ * ONE normalization for every declaration and every value this module reads.
+ *
+ * Markdown gives the same sentence a dozen spellings, and each rule that rolled its own regex
+ * accepted a different subset of them: `- **none**` slipped past the evasive-value check because it
+ * was not the string "none", and `+ APPLIES: no` slipped past the not-applicable check because that
+ * regex knew `-` and `*` but not `+`. A contract that can be satisfied by changing a bullet
+ * character is not a contract, so the list marker, the emphasis and the code ticks come off HERE,
+ * once, and every rule below reads the result.
+ */
+export function plainDeclaration(raw: string): string {
+  return raw
+    .trim()
+    .replace(/^[-*+]\s+/, '')                 // one list marker
+    .replace(/`/g, '')                         // code ticks, anywhere
+    .replace(/\*\*/g, '').replace(/__/g, '')   // strong
+    .replace(/^[*_]+/, '').replace(/[*_]+$/, '') // leftover single emphasis
+    .trim();
+}
+
+/**
  * A cell nobody filled in: empty, a template slot, or a "later" marker.
  *
  * `none` is deliberately NOT here. "Committed effects: none" is an ANSWER (this state writes
@@ -80,7 +100,7 @@ function bodyOf(content: string): string {
  * an evasion, the rule says so on its own: see `isEvasive`.
  */
 function isPlaceholder(text: string): boolean {
-  const bare = text.trim().toLowerCase();
+  const bare = plainDeclaration(text).toLowerCase();
   if (bare === '') return true;
   if (/^<[^>]*>$/.test(bare)) return true;
   return ['-', '--', 'tbd', 'todo', 'pending', '...', '???', '?'].includes(bare.replace(/[.\s]+$/, ''));
@@ -89,13 +109,13 @@ function isPlaceholder(text: string): boolean {
 /** Unfilled, or filled with a non-answer. Used where "none" cannot be the truth. */
 function isEvasive(text: string): boolean {
   if (isPlaceholder(text)) return true;
-  const bare = text.trim().toLowerCase().replace(/[.\s]+$/, '');
+  const bare = plainDeclaration(text).toLowerCase().replace(/[.\s]+$/, '');
   return ['n/a', 'n.a', 'na', 'none', 'no', 'nothing', 'not applicable', 'does not apply', 'nil'].includes(bare);
 }
 
 /** True when a section explicitly says it does not apply. Its RATIONALE is checked separately. */
 function declaresNotApplicable(lines: string[]): boolean {
-  return lines.some((line) => /^[-*]?\s*APPLIES\s*:\s*no\b/i.test(line));
+  return lines.some((line) => /^APPLIES\s*:\s*no\b/i.test(plainDeclaration(line)));
 }
 
 /**
@@ -112,7 +132,7 @@ function hasSubstance(lines: string[]): boolean {
     if (/^#{1,6}\s/.test(line)) return false;          // a sub-heading is more structure
     if (/^\|[\s:|-]+\|$/.test(line)) return false;      // a table separator row
     if (/^(-{3,}|_{3,}|\*{3,})$/.test(line)) return false; // a horizontal rule
-    return !isEvasive(line.replace(/^[-*+]\s*/, ''));
+    return !isEvasive(line);
   });
 }
 
@@ -342,7 +362,7 @@ function checkTable(body: string, name: string, columns: string[], severity: Sch
     findings.push({ severity, message: `${where}"${name}" has no table`, detail: `Expected columns: ${columns.join(' | ')}` });
     return null;
   }
-  const header = table.header.map((cell) => cell.toLowerCase().replace(/[*_`]/g, '').trim());
+  const header = table.header.map((cell) => plainDeclaration(cell).toLowerCase());
   const missing = columns.filter((column) => !header.includes(column));
   if (missing.length) {
     findings.push({ severity, message: `${where}"${name}" table is missing the column(s): ${missing.join(', ')}`, detail: `Found: ${table.header.join(' | ')}` });
@@ -365,7 +385,7 @@ function checkTable(body: string, name: string, columns: string[], severity: Sch
 function checkAcceptanceCriteria(body: string, severity: SchemaFinding['severity'], where: string, findings: SchemaFinding[]) {
   const table = checkTable(body, 'Acceptance Criteria', ACCEPTANCE_COLUMNS, severity, where, findings);
   if (!table) return;
-  const header = table.header.map((cell) => cell.toLowerCase().replace(/[*_`]/g, '').trim());
+  const header = table.header.map((cell) => plainDeclaration(cell).toLowerCase());
 
   // A criterion with no negative control is the false-green shape this whole system exists to
   // prevent: a check that passes is worth nothing until you know what would have made it fail. So
@@ -387,7 +407,7 @@ function checkAcceptanceCriteria(body: string, severity: SchemaFinding['severity
   if (idAt === -1) return;
   const seen = new Map<string, number[]>();
   table.rows.forEach((row, index) => {
-    const id = (row[idAt] ?? '').trim().toLowerCase();
+    const id = plainDeclaration(row[idAt] ?? '').toLowerCase();
     if (!id) return;
     seen.set(id, [...(seen.get(id) ?? []), index + 1]);
   });
@@ -406,7 +426,7 @@ function checkFalsifiability(body: string, severity: SchemaFinding['severity'], 
   const lines = sectionLines(body, 'Falsifiability');
   if (lines === null) return;
   const methods = lines
-    .map((line) => line.match(/^[-*]?\s*METHOD\s*:\s*(.+)$/i)?.[1]?.trim().toLowerCase())
+    .map((line) => plainDeclaration(line).match(/^METHOD\s*:\s*(.+)$/i)?.[1]?.trim().toLowerCase())
     .filter((value): value is string => Boolean(value));
   if (methods.length === 0) {
     findings.push({
@@ -424,7 +444,11 @@ function checkFalsifiability(body: string, severity: SchemaFinding['severity'], 
     findings.push({ severity, message: `${where}"Falsifiability" METHOD is "${methods[0]}"`, detail: `Valid: ${FALSIFIABILITY_METHODS.join(', ')}` });
     return;
   }
-  const evidence = lines.filter((line) => !/^[-*]?\s*METHOD\s*:/i.test(line)).filter((line) => !isPlaceholder(line.replace(/^[-*]\s*/, '')));
+  // isEvasive, not isPlaceholder: "METHOD: red-evidence" followed by "- none" is a packet
+  // declaring that it proved nothing, which is the one thing this section exists to rule out.
+  const evidence = lines
+    .filter((line) => !/^METHOD\s*:/i.test(plainDeclaration(line)))
+    .filter((line) => !isEvasive(line));
   if (evidence.length === 0) {
     findings.push({
       severity,
@@ -443,10 +467,10 @@ function checkNotApplicableRationales(body: string, severity: SchemaFinding['sev
   for (const section of V2_SECTIONS) {
     const lines = sectionLines(body, section);
     if (lines === null) continue;
-    const declaresNo = lines.some((line) => /^[-*]?\s*APPLIES\s*:\s*no\b/i.test(line));
+    const declaresNo = lines.some((line) => /^APPLIES\s*:\s*no\b/i.test(plainDeclaration(line)));
     if (!declaresNo) continue;
     const rationale = lines
-      .map((line) => line.match(/^[-*]?\s*RATIONALE\s*:\s*(.+)$/i)?.[1]?.trim())
+      .map((line) => plainDeclaration(line).match(/^RATIONALE\s*:\s*(.+)$/i)?.[1]?.trim())
       .find((value): value is string => Boolean(value));
     if (!rationale || isEvasive(rationale) || rationale.length < 12) {
       findings.push({

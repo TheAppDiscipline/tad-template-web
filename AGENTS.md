@@ -254,6 +254,10 @@ Required sections: `Goal`, `Scope`, `Contracts`, `Provider Impact`, `AI Impact`,
   They are what a slice IS. A slice with none of them is not a slice with an exemption.
 - **`--allow-draft` covers exactly `draft`.** `consumed` and `superseded` do not mean "being
   written", they mean that slice is over, and the flag does not reopen them.
+- **The markdown costume does not matter.** `- **none**`, ``- `none``, `+ APPLIES: no` and
+  `* METHOD: mutation` are read exactly like their plain forms: the list marker (`-`, `*`, `+`),
+  the emphasis and the code ticks come off before any rule looks at the value. A contract you can
+  satisfy by changing a bullet character is not a contract.
 
 **Migrating existing packets** is a decision the operator takes between slices, with the pipeline idle:
 
@@ -265,7 +269,10 @@ npm run discipline:migrate-packets -- --write # applies it
 It infers the slice from the same declarations everything else reads and **refuses ambiguity rather
 than guessing**. With `--write` the original is kept verbatim under `.discipline/packets/legacy/`
 next to a `.sha256` of its bytes, the suffixed packet is created, and nothing is ever overwritten,
-so running it twice does what running it once did. The migrated packet keeps `status: ready` only
+so running it twice does what running it once did. **Each packet migrates as a transaction**: every
+output path is checked before any of them is created, each is created exclusively, a failure removes
+what that attempt made, and the original is deleted last. So a collision leaves nothing behind to
+block the retry. The migrated packet keeps `status: ready` only
 when it already meets v2; otherwise it lands as `draft`, which is honest about the sections Step 4
 still has to write. No surface is invented for you: a guessed surface is a gate the slice skips.
 
