@@ -2324,16 +2324,18 @@ test('run --dry-run: prints the resolved plan and creates no lease/tag (temp rep
   fs.rmSync(repo, { recursive: true, force: true })
 })
 
-// A run leases ONE slice. buildBuilderPrompt assembled without it, which is the one door that does
-// not check identity, so the builder could be handed the generic packet or another slice's; and
-// the plumbing read EVERY packet on disk, re-applying the patch blocks of runs long finished.
-test('run: the prompt and the plumbing are scoped to the leased slice', () => {
+// A run leases ONE slice and its contract is to CLOSE it. The plumbing used to apply the patches
+// first and look at the completion afterwards, warning when it was missing, foreign, duplicated or
+// unrecordable, and then reporting exit 0 on a green gate. So a builder could rewrite the four
+// state files, close somebody else's slice, and the run reported success for a slice it never
+// completed. The prompt was assembled without the slice too, which is how the builder got there.
+test('run: a completion that closes another slice is refused before anything is written', () => {
   const gitProbe = spawnSync('git', ['--version'], { encoding: 'utf8' })
   if (gitProbe.status !== 0) return
   const repo = makeRunFixtureRepo()
   const packets = path.join(repo, '.discipline', 'packets')
   fs.writeFileSync(path.join(repo, 'task_plan.md'), ['# task_plan.md', '', '## 4) Ready Slices', '',
-    '## Slice 1 - Feature', '#### Goal', 'x', '', '## Slice 2 - Other', '#### Goal', 'y', '', '## 5) Deferred / Later', '- none', ''].join('\n'), 'utf8')
+    '## Slice 1 - Feature', '- Status: ready', '#### Goal', 'x', '', '## Slice 2 - Other', '- Status: ready', '#### Goal', 'y', '', '## 5) Deferred / Later', '- none', ''].join('\n'), 'utf8')
   fs.rmSync(path.join(packets, 'STEP_5_SLICE_PACKET.md'))
   const slicePacket = (id, marker) => ['---', `slice: ${id}`, 'status: ready', '---', '', '# STEP_5_SLICE_PACKET', '', `SLICE: ${id}`, '',
     '## Goal', `- ${marker}`, '## Scope', '- x', '## Contracts', '- x', '## Acceptance criteria', '- x', ''].join('\n')
@@ -2346,31 +2348,95 @@ test('run: the prompt and the plumbing are scoped to the leased slice', () => {
   spawnSync('git', ['add', '-A'], { cwd: repo, encoding: 'utf8' })
   spawnSync('git', ['commit', '-q', '-m', 'two ready slices'], { cwd: repo, encoding: 'utf8' })
 
+  const STATE = ['findings.md', 'progress.md', 'task_plan.md', 'discipline.md']
+  const before = STATE.map((f) => fs.readFileSync(path.join(repo, f), 'utf8'))
+  // The fake builder always closes "Slice 1", and its completion carries a WELL-FORMED patch block.
   const res = spawnSync(process.execPath, [tsxCli, 'tools/discipline/run.ts', '--slice', '2', '--yes', '--no-open', '--project-dir', repo], {
     cwd: repoRoot, env: { ...process.env, DISCIPLINE_FAKE_PROVIDER_CMD: fakeCli, FAKE_MODE: 'build', FAKE_BUILD_DIR: repo }, encoding: 'utf8',
   })
   const out = getOutput(res)
-  assert.equal(res.status, 0, out)
 
-  // The handoff the builder was given is slice 2's, written to slice 2's own file.
+  // NOT green. The run did not close the slice it leased, and the exit code is what a CI job reads.
+  assert.equal(res.status, 5, out)
+  assert.match(out, /closes slice 1, and this run leased slice 2/)
+  assert.match(out, /Nothing written/)
+  assert.deepEqual(STATE.map((f) => fs.readFileSync(path.join(repo, f), 'utf8')), before, 'a refused completion must not have applied its patch first')
+  const pending = path.join(repo, '.discipline', 'patches', 'pending')
+  assert.deepEqual(fs.existsSync(pending) ? fs.readdirSync(pending) : [], [], 'nor materialised into pending/')
+  // The historical packet's patch belongs to a run that already happened, and is never re-applied.
+  assert.doesNotMatch(fs.readFileSync(path.join(repo, 'findings.md'), 'utf8'), /STALE_PATCH_FROM_SLICE_9/)
+
+  // The handoff the builder was given was still the leased slice's, written to its own file.
   const pasteReady = fs.readdirSync(path.join(repo, '.discipline', 'paste-ready'))
   assert.ok(pasteReady.includes('step-5-2-input.md'), `expected the slice handoff, found: ${pasteReady.join(', ')}`)
   assert.ok(!pasteReady.includes('step-5-input.md'), 'the slice-less assembly is what handed the builder another slice')
   const handoff = fs.readFileSync(path.join(repo, '.discipline', 'paste-ready', 'step-5-2-input.md'), 'utf8')
   assert.match(handoff, /ONLY_SLICE_TWO/)
   assert.doesNotMatch(handoff, /ONLY_SLICE_ONE/)
-
-  // The old packet's patch belongs to a run that already happened; this one does not re-apply it.
-  assert.doesNotMatch(fs.readFileSync(path.join(repo, 'findings.md'), 'utf8'), /STALE_PATCH_FROM_SLICE_9/)
-  // The fake builder closes "Slice 1", which is not the slice this run leased: nothing is recorded.
-  assert.match(out, /No SLICE_COMPLETION_PACKET for slice 2/)
-  assert.doesNotMatch(fs.readFileSync(path.join(repo, 'progress.md'), 'utf8'), /Slice 9/)
   fs.rmSync(repo, { recursive: true, force: true })
 })
 
-// A packet is work only while its status is ready, the same rule the watcher's Step 5 selection
-// applies. Without it a run could implement a draft, or re-implement a slice already consumed,
-// because a file with the right name was still sitting in .discipline/packets/.
+// The RUN CONTRACT asks for a SLICE_COMPLETION_PACKET. A builder that writes none has not closed
+// the slice, whatever the gate says about the code it left behind.
+test('run: a builder that writes no completion packet is not a green run', () => {
+  const gitProbe = spawnSync('git', ['--version'], { encoding: 'utf8' })
+  if (gitProbe.status !== 0) return
+  const repo = makeRunFixtureRepo()
+  const STATE = ['findings.md', 'progress.md', 'task_plan.md', 'discipline.md']
+  const before = STATE.map((f) => fs.readFileSync(path.join(repo, f), 'utf8'))
+  // FAKE_MODE=ok reports success and writes nothing at all.
+  const res = spawnSync(process.execPath, [tsxCli, 'tools/discipline/run.ts', '--slice', '1', '--yes', '--no-open', '--project-dir', repo], {
+    cwd: repoRoot, env: { ...process.env, DISCIPLINE_FAKE_PROVIDER_CMD: fakeCli, FAKE_MODE: 'ok' }, encoding: 'utf8',
+  })
+  const out = getOutput(res)
+  assert.equal(res.status, 5, out)
+  assert.match(out, /wrote no SLICE_COMPLETION_PACKET for it/)
+  assert.match(out, /Nothing written/)
+  assert.deepEqual(STATE.map((f) => fs.readFileSync(path.join(repo, f), 'utf8')), before)
+  // The gate never ran: there was nothing to gate.
+  assert.doesNotMatch(out, /Gate is GREEN/)
+  fs.rmSync(repo, { recursive: true, force: true })
+})
+
+// The §4 Ready Slices table is the plan's most visible statement about a slice, and the runner
+// threw it away: a row marked done, planned or blocked was invisible whenever the slice's own
+// section did not repeat the status, and the legacy "no status means ready" fallback then handed
+// the slice straight back to the runner.
+test('run: the slice status is read from the §4 table too, not only from the section', () => {
+  const plan = (row, sectionStatus) => ['# task_plan.md', '', '## 4) Ready Slices', '',
+    ...(row ? ['| Slice | Name | Status |', '|---|---|---|', `| 1 | Feature | ${row} |`, ''] : []),
+    '## Slice 1 - Feature', ...(sectionStatus ? [`- Status: ${sectionStatus}`] : []), '#### Goal', 'x', ''].join('\n')
+  const out = runTsxModule(
+    [
+      `const __out = {}`,
+      `const plans = ${JSON.stringify({
+        tableReady: plan('ready', null),
+        tablePlanned: plan('planned', null),
+        tableDone: plan('done', null),
+        tableBlocked: plan('blocked', null),
+        legacyNoStatusAnywhere: plan(null, null),
+        sectionOnly: plan(null, 'done'),
+        agreeing: plan('done', 'done'),
+        contradicting: plan('done', 'ready'),
+      })}`,
+      `for (const [name, taskPlan] of Object.entries(plans)) __out[name] = parseSliceStatus(taskPlan, '1')`,
+    ],
+    { '{ parseSliceStatus }': 'tools/discipline/run.ts' },
+  )
+  assert.deepEqual(out.tableReady, { found: true, status: 'ready', ready: true })
+  assert.deepEqual(out.tablePlanned, { found: true, status: 'planned', ready: false })
+  assert.deepEqual(out.tableDone, { found: true, status: 'done', ready: false })
+  assert.deepEqual(out.tableBlocked, { found: true, status: 'blocked', ready: false })
+  // Legacy: a plan that states nothing anywhere still runs. That fallback is the ONLY reason a
+  // status-less slice is runnable, and it must not extend to a slice the table already answered for.
+  assert.deepEqual(out.legacyNoStatusAnywhere, { found: true, status: null, ready: true })
+  assert.deepEqual(out.sectionOnly, { found: true, status: 'done', ready: false })
+  assert.deepEqual(out.agreeing, { found: true, status: 'done', ready: false })
+  // Table and section disagreeing is not a tie to break: the plan does not say what state it is in.
+  assert.equal(out.contradicting.found, false)
+  assert.match(out.contradicting.status, /"done" in the §4 Ready Slices table .* and "ready" in its own section/)
+})
+
 test('run: refuses a slice packet that is not ready', () => {
   const gitProbe = spawnSync('git', ['--version'], { encoding: 'utf8' })
   if (gitProbe.status !== 0) return
@@ -3487,11 +3553,13 @@ test('step 4: the patch blocks the skill teaches apply to a fresh template, and 
   const pending = path.join(projectRoot, '.discipline', 'patches', 'pending')
   const table = blockFromSkill('TASK_PLAN_PATCH_BLOCK - Step 4 ready slices')
     .replace('| 0 | <name> | S/M/L | none | ready |', '| 0 | Bootstrap & Backend Confirmation | S | none | done |')
-    .replace('| 1 | <name> | S/M/L | 0 | planned (awaiting its own STEP_5_SLICE_PACKET) |', '| 7 | Shopping list | M | 0 | ready |')
-    .replace('| 2 | <name> | S/M/L | 0 | planned (awaiting its own STEP_5_SLICE_PACKET) |', '| 8 | Sharing | M | 7 | planned |')
+    .replace('| 1 | <name> | S/M/L | 0 | planned |', '| 7 | Shopping list | M | 0 | ready |')
+    .replace('| 2 | <name> | S/M/L | 0 | planned |', '| 8 | Sharing | M | 7 | planned |')
     .replace('...\n', '')
   const sections = blockFromSkill('TASK_PLAN_SLICES_APPEND_BLOCK - Step 4 new slice sections')
     .replace('## Slice <id> - <name>', '## Slice 7 - Shopping list')
+    // The section states the same status as its row: the runner reads both and stops if they differ.
+    .replace('- Status: <ready|planned|blocked|done>', '- Status: ready')
     .replace(/<one sentence>/g, 'Add and tick items.')
     .replace(/<\.\.\.>/g, 'x')
   fs.writeFileSync(path.join(pending, '2026-08-09_TASK_PLAN_PATCH_step4.md'), table, 'utf8')

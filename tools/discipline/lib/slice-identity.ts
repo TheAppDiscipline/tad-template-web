@@ -555,9 +555,16 @@ export type ConsumptionTarget = { ok: true; packet: ActiveSlicePacket } | { ok: 
  */
 export function resolveConsumptionTarget(root: string, sliceId: string): ConsumptionTarget {
   const wanted = normalizeSliceId(sliceId);
-  const targets = activeSlicePackets(root).filter((packet) => packet.sliceId === wanted);
+  const active = activeSlicePackets(root);
+  const targets = active.filter((packet) => packet.sliceId === wanted);
 
   if (targets.length === 0) {
+    // The SAME legacy rule locateSlicePacket applies, so a project on the generic packet name can
+    // still close a slice. Requiring the suffixed name here while the runner and the assembler
+    // accepted the generic one meant a legacy project could run a slice and then never record its
+    // closure: the run stopped at "no active packet", with the work already done.
+    const legacy = legacyConsumptionTarget(root, wanted, active);
+    if (legacy) return finishConsumptionTarget(legacy);
     return {
       ok: false,
       reason: `no active packet for slice ${sliceId}: expected ${slicePacketFileName(wanted)}. If this project archived it, restore it or record the closure by hand before running the pipeline again`,
@@ -570,7 +577,27 @@ export function resolveConsumptionTarget(root: string, sliceId: string): Consump
     };
   }
 
-  const target = targets[0];
+  return finishConsumptionTarget(targets[0]);
+}
+
+/**
+ * The generic `STEP_5_SLICE_PACKET.md` as this slice's packet, under exactly the rule
+ * locateSlicePacket uses: it declares no slice of its own, it is the only active packet, and the
+ * plan leaves exactly one slice it could be. A generic packet that names a DIFFERENT slice is not
+ * a candidate, and is left to the caller's refusal.
+ */
+function legacyConsumptionTarget(root: string, wanted: string, active: ActiveSlicePacket[]): ActiveSlicePacket | null {
+  if (active.length !== 1) return null;
+  const generic = active[0];
+  if (!generic.legacy || generic.sliceId !== null) return null;
+  const planPath = path.join(root, 'task_plan.md');
+  if (!fs.existsSync(planPath)) return null;
+  const headings = findSliceHeadings(fs.readFileSync(planPath, 'utf-8'));
+  if (headings.length !== 1 || headings[0].id !== wanted) return null;
+  return generic;
+}
+
+function finishConsumptionTarget(target: ActiveSlicePacket): ConsumptionTarget {
   const probe = fs.readFileSync(target.path, 'utf-8').replace(/^\uFEFF/, '').split(/\r?\n/);
   if (probe[0]?.trim() === '---' && probe.findIndex((line, index) => index > 0 && line.trim() === '---') === -1) {
     return { ok: false, reason: `${target.fileName} has an unterminated frontmatter block; fix it before the slice can be recorded as consumed` };

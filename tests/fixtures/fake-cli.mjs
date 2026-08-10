@@ -111,7 +111,7 @@ async function main() {
         '- fake feature file',
         '',
         '## Gates passed',
-        '- yes',
+        '- GATE_STATE: passed',
         '',
         '## Deploy signal',
         '- local only',

@@ -113,7 +113,7 @@ discipline run --with-llm --provider claude|codex|gemini|cursor --slice <id>   #
 discipline cross-validate --with-llm [--provider X]                            # advisory review of the current diff only
 ```
 
-- **0** green (gate passed, stopped before commit) - **2** config/precondition error (STOP switch, dirty tree without `--allow-dirty`, unknown/not-ready slice, missing `STEP_5_SLICE_PACKET`, bad provider) - **3** parked (rate limit / auth / CLI not found; **never** consumes the repair budget) - **4** stopped by the repair budget (two identical error signatures, or attempts exhausted).
+- **0** green (gate passed, stopped before commit) - **2** config/precondition error (STOP switch, dirty tree without `--allow-dirty`, unknown/not-ready slice, missing `STEP_5_SLICE_PACKET`, bad provider) - **3** parked (rate limit / auth / CLI not found; **never** consumes the repair budget) - **4** stopped by the repair budget (two identical error signatures, or attempts exhausted) - **5** incomplete: the gate may even be green, but the run cannot close its slice (the builder wrote no `SLICE_COMPLETION_PACKET` for the leased slice, wrote one that closes another slice or contradicts itself, wrote two, or the closure could not be recorded). A run that cannot close its slice is never exit 0.
 
 Preconditions for level >=2: a clean working tree (else `--allow-dirty`), the slice present and `ready` in `task_plan.md` §Ready Slices, and a `STEP_5_SLICE_PACKET` for the slice under `.discipline/packets/`. The run takes the slice lease, writes a pre-run tag `disc/run-<id>-pre` (rollback: `git reset --hard <tag>`), logs `run_started` before any spawn, and releases the lease on exit.
 

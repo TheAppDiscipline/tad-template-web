@@ -439,8 +439,8 @@ ANCHOR: ## 4) Ready Slices
 | Slice | Name | Complexity | Dependencies | Status |
 |---|---|---|---|---|
 | 0 | <name> | S/M/L | none | ready |
-| 1 | <name> | S/M/L | 0 | planned (awaiting its own STEP_5_SLICE_PACKET) |
-| 2 | <name> | S/M/L | 0 | planned (awaiting its own STEP_5_SLICE_PACKET) |
+| 1 | <name> | S/M/L | 0 | planned |
+| 2 | <name> | S/M/L | 0 | planned |
 ...
 ```
 
@@ -457,6 +457,7 @@ ANCHOR: ## 4) Ready Slices
 
 ### CONTENT
 ## Slice <id> - <name>
+- Status: <ready|planned|blocked|done>
 ### Goal
 <one sentence>
 #### Scope IN
@@ -469,7 +470,7 @@ ANCHOR: ## 4) Ready Slices
 - [ ] <...>
 ```
 
-The status a slice's own section declares (`- Status: ready`, or a `[ready]` marker in the heading) must agree with its row in the table. When they disagree the tooling stops rather than picking one, because both are written by hand and a plan that contradicts itself does not say what state the slice is in.
+**Write the status in BOTH places, with the same word.** `discipline run` reads the table row and the slice's own `- Status:` line, and it stops when they disagree rather than picking one. A status written in neither place is the legacy case: the slice is assumed `ready`, which is exactly how a slice already `done` gets handed back to the runner. Use a bare status word in the table cell (`planned`, not `planned (awaiting the packet)`): the cell is compared to the section, not read as prose.
 
 Only a slice with its own emitted packet and satisfied dependencies may be `ready`, and every slice you promote must have one (that is what `READY_PROMOTION: per_packet` means). Preserve slices already marked `done`; detailed expansion alone never promotes a slice.
 

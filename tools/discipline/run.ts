@@ -36,7 +36,8 @@ import { appendLedger, errorSignature } from './lib/ledger.js';
 import { assemblePasteReady } from './assemble-paste-ready.js';
 import { extractEmbeddedPatches } from './lib/parse-patch.js';
 import { applyPatches } from './apply-patch.js';
-import { locateSlicePacket, normalizeSliceId, packetStatus, resolvePacketIdentity, resolveSlice, slicePasteReadyFileName } from './lib/slice-identity.js';
+import { isSliceConsumed, locateSlicePacket, markSliceConsumed, normalizeSliceId, packetStatus, resolvePacketIdentity, resolveSlice, slicePasteReadyFileName } from './lib/slice-identity.js';
+import { readCompletion } from './lib/completion-packet.js';
 import { updateProgress } from './update-progress.js';
 import { runGateReport, writeGateReport, type GateReport } from './gate-report.js';
 import { createCheckpoint } from './checkpoint.js';
@@ -45,7 +46,10 @@ import { loadAutonomy, enforceValidatorFamily, type AutonomyConfig, type Provide
 import { getAdapter, runAdapter, familyOf, CODEX_RESUME_ARGS, type RunAdapterOutcome } from './lib/providers/index.js';
 import { buildCrossValidationReport, parseVerdict } from './lib/cross-validation.js';
 
-export const RUN_EXIT = { GREEN: 0, CONFIG: 2, PARKED: 3, REPAIR_STOP: 4 } as const;
+// INCOMPLETE: the builder ran but this run cannot close its slice, so it is NOT green. A run that
+// reported 0 while saying "no completion packet for slice 2" is the false green this code exists to
+// prevent: the exit code is what a CI job, a wrapper script or a tired human actually reads.
+export const RUN_EXIT = { GREEN: 0, CONFIG: 2, PARKED: 3, REPAIR_STOP: 4, INCOMPLETE: 5 } as const;
 
 /** Crockford-ish run id: 8 time chars + 8 random chars (monotonic-ish, sortable). */
 export function makeRunId(now = Date.now(), rand = crypto.randomBytes(5)): string {
@@ -77,7 +81,10 @@ export function parseSliceStatus(taskPlan: string, sliceId: string): SliceStatus
   // instead of resolved to the first match: the two copies can carry different statuses.
   const resolution = resolveSlice(taskPlan, sliceId);
   if (!resolution.ok) {
-    return { found: false, status: resolution.reason === 'duplicate' ? resolution.message : null, ready: false };
+    // Every refusal that has something to say says it: reporting only the duplicate case left a
+    // table/section contradiction as a bare "not found in task_plan.md", which sends the operator
+    // looking for a missing slice instead of at the two lines that disagree.
+    return { found: false, status: resolution.reason === 'not-found' ? null : resolution.message, ready: false };
   }
   const start = resolution.heading.line;
   const level = resolution.heading.level;
@@ -95,21 +102,33 @@ export function parseSliceStatus(taskPlan: string, sliceId: string): SliceStatus
   const heading = lines[start];
   const section = lines.slice(start, end).join('\n');
   // Status from a `Status:` line or a bracketed marker in the heading.
-  let status: string | null = null;
+  let sectionStatus: string | null = null;
   const statusLine = section.match(/^[-*]?\s*(?:\*\*)?status(?:\*\*)?\s*:\s*(.+)$/im);
-  if (statusLine) status = normalizeSliceStatus(statusLine[1]);
+  if (statusLine) sectionStatus = normalizeSliceStatus(statusLine[1]);
   else {
     const bracket = heading.match(/\[([^\]]+)\]/);
-    if (bracket) status = normalizeSliceStatus(bracket[1]);
+    if (bracket) sectionStatus = normalizeSliceStatus(bracket[1]);
   }
 
+  // The §4 Ready Slices table is a statement about the slice too, and the plan's most visible one.
+  // Reading only the section threw it away: a row marked `done`, `planned` or `blocked` was
+  // invisible whenever the slice's own section did not repeat the status, and the legacy
+  // "no status means ready" fallback then handed the slice straight back to the runner. resolveSlice
+  // already refuses a table that disagrees with the section, so when both are present they agree.
+  const tableStatus = resolution.tableStatus ? normalizeSliceStatus(resolution.tableStatus) : null;
+  const status = sectionStatus ?? tableStatus;
+
+  // The legacy fallback applies ONLY when the plan states no status anywhere: an old plan with no
+  // table and no Status line still runs, a plan that says something is taken at its word.
   const ready = status === null || status.toLowerCase() === 'ready';
   return { found: true, status, ready };
 }
 
 function normalizeSliceStatus(raw: string): string {
   const value = raw.trim();
-  const recognized = /^(ready|in-progress(?:[a-z-]*)?|in_progress(?:_[a-z_]*)?|blocked|done|complete|cloud|hold|wip)$/i;
+  // `planned` is what Step 4 writes for a slice it expanded but did not promote, so it has to be a
+  // recognized state and not an "invalid marker": both are refused, but only one is honest.
+  const recognized = /^(ready|planned|in-progress(?:[a-z-]*)?|in_progress(?:_[a-z_]*)?|blocked|done|complete|cloud|hold|wip)$/i;
   return recognized.test(value) ? value : `invalid marker: ${value}`;
 }
 
@@ -507,8 +526,25 @@ export async function runReconciler(root: string, opts: RunOptions): Promise<num
 
     let sessionId = buildOutcome.sessionId;
 
-    // (g) Plumbing: process the packets THIS spawn wrote, exactly like watch does, under the lock.
-    await processPacketsUnderLock(root, opts.slice, packetsBeforeBuild);
+    // (g) Plumbing: decide on the packets THIS spawn wrote BEFORE writing anything, then apply.
+    const incomplete = (reason: string, wrote: boolean) => {
+      disciplineWarn(`This run cannot close slice ${opts.slice}: ${reason}`);
+      disciplineWarn(wrote
+        ? 'The gate ran and the patches were applied; the closure was not recorded. Review the diff, fix the completion packet and re-run.'
+        : 'Nothing written: no patch applied, progress.md and the packets untouched.');
+      disciplineWarn('The RUN CONTRACT asks the builder for exactly one SLICE_COMPLETION_PACKET for this slice, with an outcome and an explicit GATE_STATE.');
+      safeLedger(root, { event: 'run_finished', run_id: runId, slice: opts.slice, outcome: 'incomplete' });
+      return RUN_EXIT.INCOMPLETE;
+    };
+
+    const built = preflightPackets(root, opts.slice, packetsWrittenSince(root, packetsBeforeBuild));
+    if (!built.ok) { releaseLease(); return incomplete(built.reason, false); }
+    if (!built.plan.completion) {
+      releaseLease();
+      return incomplete('the builder wrote no SLICE_COMPLETION_PACKET for it', false);
+    }
+    let completionPath = built.plan.completion;
+    await applyPlanUnderLock(root, built.plan.patches);
 
     // (h) Gate + repair loop.
     const repairState: RepairState = { attempts: 1, signatures: [], repairMax: autonomy.repairMax };
@@ -543,11 +579,26 @@ export async function runReconciler(root: string, opts: RunOptions): Promise<num
       }
       if (repairOutcome.sessionId) sessionId = repairOutcome.sessionId;
 
-      await processPacketsUnderLock(root, opts.slice, packetsBeforeRepair);
+      // A repair turn may or may not re-emit the packet. What it DOES emit is validated the same
+      // way, and a completion it writes replaces the one this run is closing with; writing none
+      // leaves the build pass's completion in place, which is still a completion for this slice.
+      const repaired = preflightPackets(root, opts.slice, packetsWrittenSince(root, packetsBeforeRepair));
+      if (!repaired.ok) { releaseLease(); return incomplete(repaired.reason, true); }
+      if (repaired.plan.completion) completionPath = repaired.plan.completion;
+      await applyPlanUnderLock(root, repaired.plan.patches);
       report = runGateAndLog(root, runId);
     }
 
     disciplineInfo('Gate is GREEN.');
+
+    // (i) The closure is recorded only now: the gate is what makes it true. If it cannot be
+    // recorded, the run is not green, however green the gate is.
+    const closure = await recordClosureUnderLock(root, opts.slice, completionPath);
+    if (!closure.ok) {
+      await terminalStop(root, runId, opts, preTag, 'incomplete');
+      releaseLease();
+      return incomplete(`the closure could not be recorded: ${closure.reason}`, true);
+    }
 
     // (i) Cross-validation advisory (family-different validator). Never blocks.
     if (validator) {
@@ -592,79 +643,109 @@ function runGateAndLog(root: string, runId: string): GateReport {
   return report;
 }
 
-/**
- * Extract+apply patches and update progress on completion packets, under the
- * writer lock (the same plumbing watch does). Async: it AWAITS applyPatches and
- * updateProgress so the mutations complete before the gate runs. We hold the
- * SYNC writer lock across the awaits (single process); applyPatches re-enters it
- * without re-acquiring. Only runs updateProgress if progress.md still has its
- * fixed header (it errors loudly otherwise, which we tolerate as a warning).
- */
-async function processPacketsUnderLock(root: string, sliceId: string, before: Map<string, string>): Promise<void> {
-  const packetsDir = path.join(root, '.discipline', 'packets');
-  if (!fs.existsSync(packetsDir)) return;
-  // ONLY what this spawn wrote. Reading the whole directory re-applied the patch blocks of every
-  // historical packet on every tick and re-recorded whatever sat in the generic completion file,
-  // so a run for slice 14 could plumb slice 9's leftovers and log slice 9's closure.
-  const fresh = packetsWrittenSince(root, before);
-  if (fresh.length === 0) {
-    disciplineWarn('The builder wrote no packet under .discipline/packets/. Nothing plumbed: no patches applied, progress.md untouched.');
-    return;
-  }
-  const pendingDir = path.join(root, '.discipline', 'patches', 'pending');
+/** What a spawn's packets amount to: the patches to apply and the completion it closes with. */
+interface PacketPlan {
+  patches: ParsedPatch[];
+  /** The single completion packet for the leased slice, or null when this spawn wrote none. */
+  completion: string | null;
+}
+type PacketPreflight = { ok: true; plan: PacketPlan } | { ok: false; reason: string };
 
+/**
+ * Read everything this spawn wrote and decide what the run may do, WITHOUT writing a byte.
+ *
+ * Ordering is the whole point. The plumbing used to apply the patches first and look at the
+ * completion afterwards, warning if it was missing, foreign, duplicated or unrecordable, and the
+ * run still went on to a green gate and exit 0. So a builder could rewrite the four state files,
+ * close somebody else's slice, and the run reported success for a slice it never completed. A
+ * completion that cannot close this slice is now a rejection, decided before any patch is staged.
+ *
+ * ONLY what this spawn wrote is considered: reading the whole directory re-applied the patch
+ * blocks of every historical packet on every tick.
+ */
+function preflightPackets(root: string, sliceId: string, fresh: string[]): PacketPreflight {
+  const packetsDir = path.join(root, '.discipline', 'packets');
+  const patches: ParsedPatch[] = [];
+  const completions: string[] = [];
+
+  for (const name of fresh) {
+    const full = path.join(packetsDir, name);
+    let content: string;
+    try {
+      content = fs.readFileSync(full, 'utf-8');
+    } catch (err) {
+      return { ok: false, reason: `${name} could not be read: ${err instanceof Error ? err.message : err}` };
+    }
+    try {
+      patches.push(...extractEmbeddedPatches(content, full));
+    } catch (err) {
+      return { ok: false, reason: `malformed patch block in ${name}: ${err instanceof Error ? err.message : err}` };
+    }
+    if (!name.includes('SLICE_COMPLETION_PACKET')) continue;
+
+    // A completion packet has to prove what it closes, and it has to close THIS slice.
+    const identity = resolvePacketIdentity(content, name);
+    if (!identity.ok) return { ok: false, reason: identity.message };
+    if (!identity.id) return { ok: false, reason: `${name} does not say which slice it closes. Add a SLICE: line naming exactly one slice.` };
+    if (normalizeSliceId(identity.id) !== normalizeSliceId(sliceId)) {
+      return { ok: false, reason: `${name} closes slice ${identity.id}, and this run leased slice ${sliceId}. A run implements the slice it leased.` };
+    }
+    // The same refusals the progress engine makes, from the same function, before the patches.
+    const reading = readCompletion(content);
+    if (!reading.ok) return { ok: false, reason: `${name}: ${reading.reason}` };
+    completions.push(full);
+  }
+
+  if (completions.length > 1) {
+    return { ok: false, reason: `${completions.length} completion packets claim slice ${sliceId} (${completions.map((c) => path.basename(c)).join(', ')}); the run will not pick one for you.` };
+  }
+  return { ok: true, plan: { patches, completion: completions[0] ?? null } };
+}
+
+/**
+ * Stage and apply the patches a preflight approved, under the writer lock (the same plumbing watch
+ * does). Async: it AWAITS applyPatches so the mutations complete before the gate runs. We hold the
+ * SYNC writer lock across the await (single process); applyPatches re-enters it without
+ * re-acquiring.
+ */
+async function applyPlanUnderLock(root: string, patches: ParsedPatch[]): Promise<void> {
+  if (patches.length === 0) return;
+  const pendingDir = path.join(root, '.discipline', 'patches', 'pending');
   acquireWriterLock(root, { tool: 'discipline:run' });
   try {
-    // Parse EVERY fresh packet before staging a single pending file: extraction throws on a
-    // malformed block instead of silently dropping it, and staging as we parsed would leave the
-    // earlier packets' blocks in pending/ when a later one failed. Same preflight the watcher runs.
-    const staged: ParsedPatch[] = [];
-    for (const name of fresh) {
-      const full = path.join(packetsDir, name);
-      try {
-        staged.push(...extractEmbeddedPatches(fs.readFileSync(full, 'utf-8'), full));
-      } catch (err) {
-        throw new Error(`Malformed patch block in ${name}: ${err instanceof Error ? err.message : err}. Nothing was staged or applied; fix the block and re-run.`);
-      }
+    if (!fs.existsSync(pendingDir)) fs.mkdirSync(pendingDir, { recursive: true });
+    for (const patch of patches) {
+      const patchFile = path.join(pendingDir, `${new Date().toISOString().slice(0, 10)}_${patch.name}.md`);
+      fs.writeFileSync(
+        patchFile,
+        `## ${patch.name}\n\nTARGET_FILE: ${patch.targetFile}\nPATCH_MODE: ${patch.patchMode}\nANCHOR: ${patch.anchor}\n\n### CONTENT\n${patch.content}`,
+        'utf-8',
+      );
     }
-    if (staged.length > 0) {
-      if (!fs.existsSync(pendingDir)) fs.mkdirSync(pendingDir, { recursive: true });
-      for (const patch of staged) {
-        const patchFile = path.join(pendingDir, `${new Date().toISOString().slice(0, 10)}_${patch.name}.md`);
-        fs.writeFileSync(
-          patchFile,
-          `## ${patch.name}\n\nTARGET_FILE: ${patch.targetFile}\nPATCH_MODE: ${patch.patchMode}\nANCHOR: ${patch.anchor}\n\n### CONTENT\n${patch.content}`,
-          'utf-8',
-        );
-      }
-      disciplineInfo(`Extracted ${staged.length} patch block(s) from this run's packets; applying...`);
-      // applyPatches takes the (re-entrant) writer lock itself; we already hold it.
-      await applyPatches(root);
-    }
+    disciplineInfo(`Extracted ${patches.length} patch block(s) from this run's packets; applying...`);
+    await applyPatches(root);
+  } finally {
+    releaseWriterLock(root);
+  }
+}
 
-    // The completion packet of THIS slice, among the ones this spawn produced, chosen by the
-    // identity it declares and not by its filename.
-    const mine: string[] = [];
-    for (const name of fresh) {
-      if (!name.includes('SLICE_COMPLETION_PACKET')) continue;
-      const identity = resolvePacketIdentity(fs.readFileSync(path.join(packetsDir, name), 'utf-8'), name);
-      if (!identity.ok) { disciplineWarn(`${name}: ${identity.message}`); continue; }
-      if (identity.id && normalizeSliceId(identity.id) === normalizeSliceId(sliceId)) mine.push(name);
-    }
-    if (mine.length === 0) {
-      disciplineWarn(`No SLICE_COMPLETION_PACKET for slice ${sliceId} in this run's packets; progress.md untouched.`);
-    } else if (mine.length > 1) {
-      disciplineWarn(`${mine.length} completion packets claim slice ${sliceId} (${mine.join(', ')}); refusing to pick one. progress.md untouched.`);
-    } else {
-      disciplineInfo(`SLICE_COMPLETION_PACKET for slice ${sliceId} (${mine[0]}); updating progress.md...`);
-      // updateProgress refuses (throws) an incomplete packet rather than recording a false green.
-      // Tolerate it as a warning (see this function's doc comment) so the run keeps going.
-      try {
-        await updateProgress(root, path.join(packetsDir, mine[0]));
-      } catch (err) {
-        disciplineWarn(`Skipped progress.md update: ${err instanceof Error ? err.message : err}`);
-      }
-    }
+/**
+ * Record the closure: progress.md, then consumption. Runs only after the gate is GREEN, because a
+ * green gate is what makes the closure true; recording it before the gate logged slices as closed
+ * that the very next step refused.
+ */
+async function recordClosureUnderLock(root: string, sliceId: string, completionPath: string): Promise<{ ok: boolean; reason?: string }> {
+  acquireWriterLock(root, { tool: 'discipline:run' });
+  try {
+    await updateProgress(root, completionPath);
+    const verdict = isSliceConsumed(root, sliceId);
+    if (!verdict.consumed) return { ok: false, reason: verdict.reason };
+    const marked = markSliceConsumed(root, sliceId);
+    if (!marked.ok) return { ok: false, reason: marked.reason };
+    disciplineInfo(`Slice ${sliceId} consumed: ${path.basename(marked.path)} marked status: consumed.`);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: err instanceof Error ? err.message : String(err) };
   } finally {
     releaseWriterLock(root);
   }
