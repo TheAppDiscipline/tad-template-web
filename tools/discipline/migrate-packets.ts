@@ -27,7 +27,7 @@ import { parsePacketMeta } from './lib/packet-meta.js';
 import { isActiveSlicePacketName, resolvePacketIdentity, sliceFileToken, slicePacketFileName } from './lib/slice-identity.js';
 import { evaluateAsV2, step5Format } from './lib/step5-schema.js';
 
-export type MigrationAction = 'migrate' | 'skip' | 'refuse';
+export type MigrationAction = 'migrate' | 'skip' | 'refuse' | 'not-run';
 
 export interface MigrationPlan {
   file: string;
@@ -287,12 +287,24 @@ export function migratePackets(root: string, options: { write: boolean; stamp: s
   if (!options.write) return planned;
 
   const plans: MigrationPlan[] = [];
+  // An incomplete rollback means a file is in a state nobody can describe, and the command has just
+  // told the operator not to run it again until they have looked. Carrying on to mutate the NEXT
+  // packet in the same breath makes that instruction impossible to follow, and puts more of the
+  // project into the state it is asking to be inspected. One bad packet whose rollback DID complete
+  // is different: nothing was lost, so the rest of the batch proceeds.
+  let halted = false;
   for (const plan of planned.plans) {
+    if (halted) {
+      plans.push({ ...plan, action: 'not-run', reason: 'not run: the batch stopped after a rollback that could not be completed' });
+      continue;
+    }
     if (plan.action !== 'migrate') { plans.push(plan); continue; }
     const applied = applyMigration(root, plan, options.stamp, ops);
-    plans.push(applied.ok ? plan : { ...plan, action: 'refuse', reason: applied.reason, rollback: applied.rollback });
+    if (applied.ok) { plans.push(plan); continue; }
+    plans.push({ ...plan, action: 'refuse', reason: applied.reason, rollback: applied.rollback });
+    if (applied.rollback === 'incomplete') halted = true;
   }
-  return { plans, ok: plans.every((plan) => plan.action !== 'refuse') };
+  return { plans, ok: plans.every((plan) => plan.action !== 'refuse' && plan.action !== 'not-run') };
 }
 
 function report(root: string, result: MigrationResult, write: boolean): void {
@@ -302,7 +314,12 @@ function report(root: string, result: MigrationResult, write: boolean): void {
   }
   for (const plan of result.plans) {
     if (plan.action === 'skip') { disciplineInfo(`  ${plan.file}: ${plan.reason}`); continue; }
-    if (plan.action === 'refuse') { disciplineWarn(`  ${plan.file}: REFUSED, ${plan.reason}`); continue; }
+    if (plan.action === 'not-run') { disciplineWarn(`  ${plan.file}: NOT RUN, ${plan.reason}`); continue; }
+    if (plan.action === 'refuse') {
+      disciplineWarn(`  ${plan.file}: REFUSED, ${plan.reason}`);
+      if (plan.rollback === 'incomplete') disciplineWarn('  STOPPING: the rest of this batch was not run. Check the files named above before running anything again.');
+      continue;
+    }
     const verb = write ? 'migrated' : 'would migrate';
     disciplineInfo(`  ${plan.file}: ${verb} to ${plan.target} (slice ${plan.slice}, status: ${plan.status})${plan.reason ? ` — ${plan.reason}` : ''}`);
   }

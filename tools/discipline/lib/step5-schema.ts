@@ -85,10 +85,11 @@ function bodyOf(content: string): string {
 export function plainDeclaration(raw: string): string {
   return raw
     .trim()
-    .replace(/^(>\s*)+/, '')                   // blockquote markers: a quoted `none` is still none
-    .replace(/^[-*+]\s+/, '')                 // one list marker
-    .replace(/`/g, '')                         // code ticks, anywhere
-    .replace(/\*\*/g, '').replace(/__/g, '')   // strong
+    .replace(/^(>\s*)+/, '')                    // blockquote markers: a quoted `none` is still none
+    .replace(/^(?:[-*+]|\d+[.)])\s+/, '')       // one list marker, bulleted or numbered
+    .replace(/^\[[ xX]\]\s*/, '')               // task-list checkbox: `- [ ] none` is still none
+    .replace(/`/g, '')                          // code ticks, anywhere
+    .replace(/\*\*/g, '').replace(/__/g, '')    // strong
     .replace(/^[*_]+/, '').replace(/[*_]+$/, '') // leftover single emphasis
     .trim();
 }
@@ -127,12 +128,18 @@ function declaresNotApplicable(lines: string[]): boolean {
  * answer, and so is a one-line sentence.
  */
 function isSubstantiveLine(raw: string): boolean {
-  // A quote is still somebody's words, so the marker comes off before anything is judged.
-  const line = raw.trim().replace(/^(>\s*)+/, '').trim();
+  // Every marker comes off first: a quote, a bullet, a number and a checkbox are all formatting.
+  const line = plainDeclaration(raw);
   if (line === '') return false;
   if (/^#{1,6}\s/.test(line)) return false;          // a sub-heading is more structure
   if (/^\|[\s:|-]+\|$/.test(line)) return false;      // a table separator row
   if (/^(-{3,}|_{3,}|\*{3,})$/.test(line)) return false; // a horizontal rule
+  // A LABELLED line is judged on its value, never on the label. `EVIDENCE:` is a label with
+  // nothing after it, `EVIDENCE: none` is a label plus a non-answer, and `RATIONALE: n/a` under
+  // Falsifiability is a label pretending to be the evidence it is standing in for. Counting the
+  // whole line made writing the word EVIDENCE the way to satisfy the section that asks for it.
+  const labelled = line.match(/^([A-Z][A-Z0-9_ -]*)\s*:\s*(.*)$/);
+  if (labelled) return !isEvasive(labelled[2]);
   return !isEvasive(line);
 }
 
