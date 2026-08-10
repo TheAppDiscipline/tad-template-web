@@ -527,13 +527,16 @@ export async function runReconciler(root: string, opts: RunOptions): Promise<num
     let sessionId = buildOutcome.sessionId;
 
     // (g) Plumbing: decide on the packets THIS spawn wrote BEFORE writing anything, then apply.
-    const incomplete = (reason: string, wrote: boolean) => {
+    // `alreadyFinished` is set on the path that went through terminalStop, which writes the
+    // run_finished event itself. One run, one terminal event: two of them made the ledger say a
+    // run ended twice, and the ledger is what the Repair Budget and the crash check read.
+    const incomplete = (reason: string, wrote: boolean, alreadyFinished = false) => {
       disciplineWarn(`This run cannot close slice ${opts.slice}: ${reason}`);
       disciplineWarn(wrote
         ? 'The gate ran and the patches were applied; the closure was not recorded. Review the diff, fix the completion packet and re-run.'
         : 'Nothing written: no patch applied, progress.md and the packets untouched.');
       disciplineWarn('The RUN CONTRACT asks the builder for exactly one SLICE_COMPLETION_PACKET for this slice, with an outcome and an explicit GATE_STATE.');
-      safeLedger(root, { event: 'run_finished', run_id: runId, slice: opts.slice, outcome: 'incomplete' });
+      if (!alreadyFinished) safeLedger(root, { event: 'run_finished', run_id: runId, slice: opts.slice, outcome: 'incomplete' });
       return RUN_EXIT.INCOMPLETE;
     };
 
@@ -595,9 +598,10 @@ export async function runReconciler(root: string, opts: RunOptions): Promise<num
     // recorded, the run is not green, however green the gate is.
     const closure = await recordClosureUnderLock(root, opts.slice, completionPath);
     if (!closure.ok) {
+      // terminalStop writes the run_finished event for this path, so `incomplete` must not.
       await terminalStop(root, runId, opts, preTag, 'incomplete');
       releaseLease();
-      return incomplete(`the closure could not be recorded: ${closure.reason}`, true);
+      return incomplete(`the closure could not be recorded: ${closure.reason}`, true, true);
     }
 
     // (i) Cross-validation advisory (family-different validator). Never blocks.

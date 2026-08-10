@@ -2431,13 +2431,56 @@ test('run: a conflicting earlier completion leaves progress.md byte-identical', 
     'progress.md must not declare a closure that could not be recorded')
   assert.equal(fs.readFileSync(packetPath, 'utf8'), packetBefore, 'and the packet must still say what it said')
   assert.doesNotMatch(fs.readFileSync(packetPath, 'utf8'), /status: consumed/)
+  // One run, one terminal event. This path goes through terminalStop, which writes run_finished
+  // itself, and the incomplete() helper used to write a second one; the ledger is what the crash
+  // check and the Repair Budget read, so a run that "ended" twice is a run they cannot trust.
+  const ledgerDir = path.join(repo, '.discipline', 'ledger')
+  const ledger = fs.readFileSync(path.join(ledgerDir, fs.readdirSync(ledgerDir)[0]), 'utf8')
+  assert.equal((ledger.match(/run_finished/g) || []).length, 1, ledger)
   fs.rmSync(repo, { recursive: true, force: true })
 })
 
-// The other half: when the LAST write of the transition fails, the first one is undone. The failure
-// is injected because a real one (a packet that became unwritable between the check and the write)
-// is a race no test can stage reliably; what is being proved is what survives it.
-test('discipline:progress: a closure whose consumption cannot be written restores progress.md', () => {
+// A slice id is a STRING, all of it. Turning it into a number collapsed `S27E2b` to 27 and `13.2`
+// to 13, so the slice right after a composite id never compared greater: progress.md announced
+// "all slices completed" with the next slice sitting in the plan, unstarted.
+test('discipline:progress: a composite slice id keeps its whole id, so the next slice stays visible', () => {
+  const closing = (id) => ['## SLICE_COMPLETION_PACKET', '', `SLICE: ${id}`, '', '### Outcome', '- done', '',
+    '### Gates passed', '- GATE_STATE: passed', ''].join('\n')
+  const plan = (current, next) => ['# task_plan.md', '', '## 4) Ready Slices', '',
+    `## Slice ${current} - first`, '#### Goal', 'x', '', `## Slice ${next} - second`, '#### Goal', 'y', ''].join('\n')
+
+  for (const [current, next] of [['S27E2b', 'S27E2c'], ['13.2', '13.3'], ['S27E2b', 'S27E10a']]) {
+    const projectRoot = createDisciplineProject({ 'SLICE_COMPLETION_PACKET.md': closing(current) })
+    fs.writeFileSync(path.join(projectRoot, 'task_plan.md'), plan(current, next), 'utf8')
+    assert.equal(runProgress(projectRoot).status, 0)
+    const progress = fs.readFileSync(path.join(projectRoot, 'progress.md'), 'utf8')
+    assert.match(progress, new RegExp(`- Working on: Slice ${next.replace('.', '\\.')} - second`),
+      `closing ${current} must leave ${next} as the next slice, got: ${progress.split('\n')[3]}`)
+    assert.doesNotMatch(progress, /all slices completed/)
+    // And the log names the slice the packet closed, with the id as the packet wrote it.
+    assert.match(progress, new RegExp(`Slice ${current.replace('.', '\\.')}`))
+  }
+
+  // The order itself, at the level where it is decided.
+  const out = sliceIdentityEval(`emit({
+    composite: slice.compareSliceIds('27e2b', '27e2c'),
+    decimal: slice.compareSliceIds('13.2', '13.3'),
+    natural: slice.compareSliceIds('27e2c', '27e10a'),
+    shorter: slice.compareSliceIds('13', '13.2'),
+    equal: slice.compareSliceIds('13.2', '13.2'),
+    plain: slice.compareSliceIds('9', '10'),
+  })`)
+  assert.equal(out.composite, -1)
+  assert.equal(out.decimal, -1)
+  assert.equal(out.natural, -1, '27e2c comes before 27e10a: 2 < 10, not "2c" < "10a" as text')
+  assert.equal(out.shorter, -1)
+  assert.equal(out.equal, 0)
+  assert.equal(out.plain, -1)
+})
+
+// "Both halves or neither" only means something against a failure that already wrote. The packet
+// is backed up too, so a marker write that corrupts it and then fails leaves neither file changed.
+test('discipline:progress: a consumption that fails AFTER touching the packet restores both files', () => {
   const completion = ['## SLICE_COMPLETION_PACKET', '', 'SLICE: 13', '', '### Outcome', '- done', '',
     '### Gates passed', '- GATE_STATE: passed', '', '### Deploy signal', '- ready_for_preview', ''].join('\n')
   const projectRoot = createDisciplineProject({
@@ -2447,22 +2490,26 @@ test('discipline:progress: a closure whose consumption cannot be written restore
   const progressPath = path.join(projectRoot, 'progress.md')
   const packetPath = path.join(projectRoot, '.discipline', 'packets', 'STEP_5_SLICE_PACKET_13.md')
   const completionPath = path.join(projectRoot, '.discipline', 'packets', 'SLICE_COMPLETION_PACKET_13.md')
-  const before = fs.readFileSync(progressPath, 'utf8')
+  const progressBefore = fs.readFileSync(progressPath, 'utf8')
+  const packetBefore = fs.readFileSync(packetPath, 'utf8')
 
+  // The injected op TRUNCATES the packet and only then fails, which is the order that matters: a
+  // failure before any effect proves nothing about a rollback.
   const failed = runTsxModule(
     [
+      `const fs = await import('node:fs')`,
       `const __out = {}`,
-      `const failing = { mark: () => ({ ok: false, reason: 'simulated: the packet could not be written' }) }`,
+      `const failing = { mark: () => { fs.writeFileSync(${JSON.stringify(packetPath)}, 'TRUNCATED BY A HALF-WRITTEN MARKER'); return { ok: false, reason: 'simulated: the marker write failed halfway' } } }`,
       `__out.result = await recordClosure(${JSON.stringify(projectRoot)}, '13', ${JSON.stringify(completionPath)}, { requireConsumption: true }, failing)`,
     ],
     { '{ recordClosure }': 'tools/discipline/update-progress.ts' },
   )
   assert.equal(failed.result.ok, false)
-  assert.match(failed.result.reason, /simulated/)
+  assert.match(failed.result.reason, /halfway/)
   assert.equal(failed.result.restored, true)
-  assert.equal(fs.readFileSync(progressPath, 'utf8'), before,
-    'progress.md must be byte-identical when the consumption cannot be recorded')
-  assert.doesNotMatch(fs.readFileSync(packetPath, 'utf8'), /status: consumed/)
+  assert.equal(fs.readFileSync(progressPath, 'utf8'), progressBefore, 'progress.md must be byte-identical')
+  assert.equal(fs.readFileSync(packetPath, 'utf8'), packetBefore, 'and so must the packet the marker half-wrote')
+  assert.doesNotMatch(fs.readFileSync(packetPath, 'utf8'), /TRUNCATED/)
 
   // Positive control: the same call without the injected failure records BOTH halves.
   const recorded = runTsxModule(
@@ -2474,7 +2521,6 @@ test('discipline:progress: a closure whose consumption cannot be written restore
   )
   assert.equal(recorded.result.ok, true, recorded.result.reason)
   assert.equal(recorded.result.consumed, true)
-  assert.notEqual(fs.readFileSync(progressPath, 'utf8'), before)
   assert.match(fs.readFileSync(progressPath, 'utf8'), /Slice 13/)
   assert.match(fs.readFileSync(packetPath, 'utf8'), /status: consumed/)
 })

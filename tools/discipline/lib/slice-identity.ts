@@ -93,6 +93,31 @@ export function sliceFromPacketFileName(fileName: string): string | null {
 }
 
 /**
+ * Natural order over normalized slice ids: `13.2` before `13.3`, `s27e2b` before `s27e2c`, `9`
+ * before `10`. Comparing them as numbers collapsed `S27E2b` to 27 and `13.2` to 13, which made the
+ * slice right after a composite id invisible and reported "all slices completed" with work left.
+ */
+export function compareSliceIds(a: string, b: string): number {
+  const chunks = (id: string): string[] => id.match(/\d+|\D+/g) ?? [];
+  const left = chunks(a);
+  const right = chunks(b);
+  for (let i = 0; i < Math.max(left.length, right.length); i++) {
+    const x = left[i];
+    const y = right[i];
+    // A shorter id is the earlier one: `13` comes before `13.2`.
+    if (x === undefined) return -1;
+    if (y === undefined) return 1;
+    if (/^\d/.test(x) && /^\d/.test(y)) {
+      const diff = parseInt(x, 10) - parseInt(y, 10);
+      if (diff !== 0) return diff < 0 ? -1 : 1;
+      continue;
+    }
+    if (x !== y) return x < y ? -1 : 1;
+  }
+  return 0;
+}
+
+/**
  * Every slice heading in a task plan, in file order. Accepts `## Slice 13 - Name`, `## S13`,
  * `### Slice S13.2 [ready]` and the bare `## 13 - Name` a plan sometimes carries inside the
  * Ready Slices table. A heading whose id would be empty is not a slice heading.

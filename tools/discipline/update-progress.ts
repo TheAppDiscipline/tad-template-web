@@ -9,7 +9,7 @@ import {
   cleanBullet, completionGate, escapeRe, firstMeaningful, inlineField, readCompletion,
   collectBullets, isNone, meaningfulItems, sectionItems, type GateState,
 } from './lib/completion-packet.js';
-import { isSliceConsumed, markSliceConsumed, packetSliceId, resolveConsumptionTarget } from './lib/slice-identity.js';
+import { compareSliceIds, findSliceHeadings, isSliceConsumed, markSliceConsumed, normalizeSliceId, resolveConsumptionTarget, resolvePacketIdentity } from './lib/slice-identity.js';
 
 const args = minimist(process.argv.slice(2));
 const projectRoot = resolveProjectRoot(args['project-dir']);
@@ -36,12 +36,21 @@ export async function updateProgress(root: string, completionPacketPath?: string
 
   // WHICH slice this packet closes comes from the one identity resolver, not from a second regex
   // over a body the packet parser may have truncated. A packet whose only declaration is a root
-  // `SLICE: 13` line lost it there and was logged as "Slice 0", which also made detectNextSlice
-  // pick the wrong "Working on".
-  const declaredId = packetSliceId(fileContent, packetPath);
-  const declaredNumber = declaredId ? parseInt(declaredId.replace(/^[A-Za-z]+/, ''), 10) : NaN;
-  const sliceNumber = packet.slice || (Number.isNaN(declaredNumber) ? extractSliceNumber(body) : declaredNumber);
-  const sliceName = extractSliceName(body) || (declaredId ? `Slice ${declaredId}` : `Slice ${sliceNumber}`);
+  // `SLICE: 13` line lost it there and was logged as "Slice 0".
+  //
+  // The id stays a STRING, normalized, all of it. Turning it into a number collapsed `S27E2b` to 27
+  // and `13.2` to 13, so the slice right after a composite id was invisible to detectNextSlice and
+  // progress.md announced "all slices completed" with work still in the plan.
+  const identity = resolvePacketIdentity(fileContent, packetPath);
+  const legacyNumber = packet.slice || extractSliceNumber(body);
+  const sliceId = (identity.ok ? identity.id : null) ?? (legacyNumber ? normalizeSliceId(String(legacyNumber)) : null);
+  // The LABEL keeps the id as the packet wrote it (`S27E2b`, not the comparison form `27e2b`), so
+  // progress.md reads like the plan it belongs to. The filename is not a name.
+  const declared = identity.ok ? identity.declarations.find((d) => d.source !== 'filename') : undefined;
+  const declaredLabel = declared ? declared.raw.replace(/^slice\s+/i, '').trim() : null;
+  const sliceName = extractSliceName(body)
+    || (declaredLabel ? `Slice ${declaredLabel}` : null)
+    || (sliceId ? `Slice ${sliceId}` : `Slice ${legacyNumber}`);
   // The same refusals the watcher's preflight ran BEFORE it wrote anything, from the same
   // function: what the progress engine will not record, nothing else may act on either. Throw (not
   // disciplineError, which process.exit()s) so watch/run tolerate it and keep the process alive;
@@ -70,7 +79,7 @@ export async function updateProgress(root: string, completionPacketPath?: string
   let nextSlice = 'pending';
   const tpPath = path.join(root, 'task_plan.md');
   if (fs.existsSync(tpPath)) {
-    nextSlice = detectNextSlice(fs.readFileSync(tpPath, 'utf-8').replace(/\r\n/g, '\n'), sliceNumber) || 'all slices completed';
+    nextSlice = detectNextSlice(fs.readFileSync(tpPath, 'utf-8').replace(/\r\n/g, '\n'), sliceId) || 'all slices completed';
   }
 
   // Each mutation below is individually idempotent, so reprocessing the SAME packet is a no-op
@@ -133,9 +142,15 @@ export async function recordClosure(
     return { ok: false, reason: verdict.reason, restored: false };
   }
 
-  // 2. The previous bytes, kept exactly (BOM, CRLF and all) so a restore is a restore.
+  // 2. The previous bytes of BOTH files this transition writes, kept exactly (BOM, CRLF and all)
+  // so a restore is a restore. Backing up progress.md alone left the packet corrupt when the
+  // marker write failed HALFWAY: the failure that matters is the one that already wrote something.
   const progressPath = path.join(root, 'progress.md');
-  const before = fs.existsSync(progressPath) ? fs.readFileSync(progressPath) : null;
+  const packetPath = target.packet.path;
+  const backups: Array<{ file: string; bytes: Buffer }> = [];
+  for (const file of [progressPath, packetPath]) {
+    if (fs.existsSync(file)) backups.push({ file, bytes: fs.readFileSync(file) });
+  }
 
   try {
     await updateProgress(root, completionPacketPath);
@@ -146,9 +161,11 @@ export async function recordClosure(
     if (!marked.ok) throw new Error(marked.reason);
     return { ok: true, consumed: true, packet: marked.path };
   } catch (err) {
-    let restored = false;
-    if (before !== null) {
-      try { fs.writeFileSync(progressPath, before); restored = true; } catch { /* report the original failure */ }
+    // Every backup goes back, or `restored` says it did not: a partial restore reported as a
+    // restore is the same lie as the partial write it was meant to undo.
+    let restored = backups.length > 0;
+    for (const backup of backups) {
+      try { fs.writeFileSync(backup.file, backup.bytes); } catch { restored = false; }
     }
     return { ok: false, reason: err instanceof Error ? err.message : String(err), restored };
   }
@@ -358,17 +375,17 @@ function mergeOpenErrors(content: string, issues: string[]): string {
   return [...lines.slice(0, idx + 1), ...kept, ...additions, '', ...lines.slice(end)].join('\n');
 }
 
-// Slice headings are buyer-authored, so tolerate ## or ###, an ASCII hyphen / en dash / em dash /
-// colon separator, a letter-suffixed number ("Slice 3A"), and a trailing " · [status]" marker.
-// The old matcher accepted only "## Slice N - " and silently missed real next slices written in any
-// other style, mislabeling "Working on" as "all slices completed".
-function detectNextSlice(taskPlan: string, current: number): string | null {
-  const slices: { name: string; num: number }[] = [];
-  let m; const p = /^#{2,3}\s+(Slice\s+(\d+)[A-Za-z]?[^\n]*)/gim;
-  while ((m = p.exec(taskPlan)) !== null) {
-    slices.push({ name: m[1].replace(/\s*·.*$/, '').trim(), num: parseInt(m[2], 10) });
-  }
-  return slices.find((s) => s.num > current)?.name || null;
+// The slices come from findSliceHeadings, the shared resolver, so "which headings are slices" is
+// decided in one place (it already tolerates ## / ###, en and em dashes, `## S13`, and a trailing
+// `· [status]` marker). The ORDER comes from compareSliceIds, which compares the whole normalized
+// id: parseInt read `S27E2b` as 27 and `13.2` as 13, so the slice right after a composite id never
+// compared greater and progress.md announced "all slices completed" with work still in the plan.
+function detectNextSlice(taskPlan: string, current: string | null): string | null {
+  const headings = findSliceHeadings(taskPlan);
+  const label = (heading: { raw: string }) => heading.raw.replace(/^#{1,6}\s+/, '').replace(/\s*·.*$/, '').trim();
+  if (!current) return headings.length ? label(headings[0]) : null;
+  const next = headings.find((heading) => compareSliceIds(heading.id, current) > 0);
+  return next ? label(next) : null;
 }
 
 // Only execute as CLI when invoked directly (npm run discipline:progress).
