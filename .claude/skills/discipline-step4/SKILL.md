@@ -426,23 +426,50 @@ Emit the TASK_PLAN_PATCH_BLOCK below in the same run so the plan and the packets
 
 **1. TASK_PLAN_PATCH_BLOCK** (always generated):
 
-Update the Ready Slices section of `task_plan.md` with the expanded slices. Format:
+Update the Ready Slices section of `task_plan.md` with the expanded slices. **Copy the anchor from the file you are patching**, do not retype it from here: the template ships `## 4) Ready Slices`, and an anchor that does not exist fails the whole batch.
 
 ```markdown
 ## TASK_PLAN_PATCH_BLOCK - Step 4 ready slices
 
 TARGET_FILE: task_plan.md
 PATCH_MODE: replace_section
-ANCHOR: ## Ready Slices
+ANCHOR: ## 4) Ready Slices
 
 ### CONTENT
-| # | Slice | Complexity | Dependencies | Status |
+| Slice | Name | Complexity | Dependencies | Status |
 |---|---|---|---|---|
 | 0 | <name> | S/M/L | none | ready |
 | 1 | <name> | S/M/L | 0 | planned (awaiting its own STEP_5_SLICE_PACKET) |
 | 2 | <name> | S/M/L | 0 | planned (awaiting its own STEP_5_SLICE_PACKET) |
 ...
 ```
+
+**The ID goes in the `Slice` column.** That is the column `discipline:validate` reads to pair the table with each slice's own section; an id parked in a `#` column while `Slice` holds the name makes the whole table invisible, and the plan then says nothing about which slices are ready.
+
+**A table row is not a slice.** `discipline:assemble`, `discipline run` and `discipline:validate` resolve a slice through its own `## Slice <id> - <name>` section, so a slice you promote to `ready` without one is refused as "not in task_plan.md" the moment Step 5 tries to use it. `replace_section` at this anchor rewrites only what sits between the heading and the first `## Slice ...` heading, which is the table: the sections already in the file survive untouched. For a slice that does not have a section yet, emit a SECOND block that appends it:
+
+```markdown
+## TASK_PLAN_SLICES_APPEND_BLOCK - Step 4 new slice sections
+
+TARGET_FILE: task_plan.md
+PATCH_MODE: append
+ANCHOR: ## 4) Ready Slices
+
+### CONTENT
+## Slice <id> - <name>
+### Goal
+<one sentence>
+#### Scope IN
+- <...>
+#### Scope OUT
+- <...>
+#### Contracts
+- <...>
+#### Acceptance Criteria
+- [ ] <...>
+```
+
+The status a slice's own section declares (`- Status: ready`, or a `[ready]` marker in the heading) must agree with its row in the table. When they disagree the tooling stops rather than picking one, because both are written by hand and a plan that contradicts itself does not say what state the slice is in.
 
 Only a slice with its own emitted packet and satisfied dependencies may be `ready`, and every slice you promote must have one (that is what `READY_PROMOTION: per_packet` means). Preserve slices already marked `done`; detailed expansion alone never promotes a slice.
 

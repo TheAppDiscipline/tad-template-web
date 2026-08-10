@@ -83,7 +83,13 @@ export function slicePasteReadyFileName(sliceId: string): string {
 /** The slice a suffixed packet filename claims, or null for the generic legacy name. */
 export function sliceFromPacketFileName(fileName: string): string | null {
   const match = path.basename(fileName).match(/^STEP_5_SLICE_PACKET_(.+)\.md$/i);
-  return match ? normalizeSliceId(match[1]) : null;
+  if (!match) return null;
+  // `_13.consumed.md` is slice 13, archived. Reading the marker as part of the id made the
+  // filename contradict the packet's own SLICE field, so archiving a packet, which is exactly what
+  // the doctrine asks the operator to do between slices, turned it into a permanent hard error.
+  const segments = match[1].split('.');
+  while (segments.length > 0 && ARCHIVE_MARKERS.test(segments[segments.length - 1])) segments.pop();
+  return segments.length ? normalizeSliceId(segments.join('.')) : null;
 }
 
 /**

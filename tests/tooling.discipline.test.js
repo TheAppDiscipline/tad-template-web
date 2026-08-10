@@ -2324,6 +2324,90 @@ test('run --dry-run: prints the resolved plan and creates no lease/tag (temp rep
   fs.rmSync(repo, { recursive: true, force: true })
 })
 
+// A run leases ONE slice. buildBuilderPrompt assembled without it, which is the one door that does
+// not check identity, so the builder could be handed the generic packet or another slice's; and
+// the plumbing read EVERY packet on disk, re-applying the patch blocks of runs long finished.
+test('run: the prompt and the plumbing are scoped to the leased slice', () => {
+  const gitProbe = spawnSync('git', ['--version'], { encoding: 'utf8' })
+  if (gitProbe.status !== 0) return
+  const repo = makeRunFixtureRepo()
+  const packets = path.join(repo, '.discipline', 'packets')
+  fs.writeFileSync(path.join(repo, 'task_plan.md'), ['# task_plan.md', '', '## 4) Ready Slices', '',
+    '## Slice 1 - Feature', '#### Goal', 'x', '', '## Slice 2 - Other', '#### Goal', 'y', '', '## 5) Deferred / Later', '- none', ''].join('\n'), 'utf8')
+  fs.rmSync(path.join(packets, 'STEP_5_SLICE_PACKET.md'))
+  const slicePacket = (id, marker) => ['---', `slice: ${id}`, 'status: ready', '---', '', '# STEP_5_SLICE_PACKET', '', `SLICE: ${id}`, '',
+    '## Goal', `- ${marker}`, '## Scope', '- x', '## Contracts', '- x', '## Acceptance criteria', '- x', ''].join('\n')
+  fs.writeFileSync(path.join(packets, 'STEP_5_SLICE_PACKET_1.md'), slicePacket(1, 'ONLY_SLICE_ONE'), 'utf8')
+  fs.writeFileSync(path.join(packets, 'STEP_5_SLICE_PACKET_2.md'), slicePacket(2, 'ONLY_SLICE_TWO'), 'utf8')
+  // A completion packet left over from a run that finished long ago, carrying a patch of its own.
+  fs.writeFileSync(path.join(packets, 'SLICE_COMPLETION_PACKET_9.md'), ['# SLICE_COMPLETION_PACKET', '', 'SLICE: 9', '',
+    '## Outcome', '- done', '', '## Gates passed', '- GATE_STATE: passed', '', '## FINDINGS_APPEND_BLOCK', '',
+    'TARGET_FILE: findings.md', 'PATCH_MODE: append', 'ANCHOR: ## Decisions', '', '### CONTENT', '- STALE_PATCH_FROM_SLICE_9', ''].join('\n'), 'utf8')
+  spawnSync('git', ['add', '-A'], { cwd: repo, encoding: 'utf8' })
+  spawnSync('git', ['commit', '-q', '-m', 'two ready slices'], { cwd: repo, encoding: 'utf8' })
+
+  const res = spawnSync(process.execPath, [tsxCli, 'tools/discipline/run.ts', '--slice', '2', '--yes', '--no-open', '--project-dir', repo], {
+    cwd: repoRoot, env: { ...process.env, DISCIPLINE_FAKE_PROVIDER_CMD: fakeCli, FAKE_MODE: 'build', FAKE_BUILD_DIR: repo }, encoding: 'utf8',
+  })
+  const out = getOutput(res)
+  assert.equal(res.status, 0, out)
+
+  // The handoff the builder was given is slice 2's, written to slice 2's own file.
+  const pasteReady = fs.readdirSync(path.join(repo, '.discipline', 'paste-ready'))
+  assert.ok(pasteReady.includes('step-5-2-input.md'), `expected the slice handoff, found: ${pasteReady.join(', ')}`)
+  assert.ok(!pasteReady.includes('step-5-input.md'), 'the slice-less assembly is what handed the builder another slice')
+  const handoff = fs.readFileSync(path.join(repo, '.discipline', 'paste-ready', 'step-5-2-input.md'), 'utf8')
+  assert.match(handoff, /ONLY_SLICE_TWO/)
+  assert.doesNotMatch(handoff, /ONLY_SLICE_ONE/)
+
+  // The old packet's patch belongs to a run that already happened; this one does not re-apply it.
+  assert.doesNotMatch(fs.readFileSync(path.join(repo, 'findings.md'), 'utf8'), /STALE_PATCH_FROM_SLICE_9/)
+  // The fake builder closes "Slice 1", which is not the slice this run leased: nothing is recorded.
+  assert.match(out, /No SLICE_COMPLETION_PACKET for slice 2/)
+  assert.doesNotMatch(fs.readFileSync(path.join(repo, 'progress.md'), 'utf8'), /Slice 9/)
+  fs.rmSync(repo, { recursive: true, force: true })
+})
+
+// A packet is work only while its status is ready, the same rule the watcher's Step 5 selection
+// applies. Without it a run could implement a draft, or re-implement a slice already consumed,
+// because a file with the right name was still sitting in .discipline/packets/.
+test('run: refuses a slice packet that is not ready', () => {
+  const gitProbe = spawnSync('git', ['--version'], { encoding: 'utf8' })
+  if (gitProbe.status !== 0) return
+  for (const [status, expected] of [['draft', /"draft", not "ready"/], ['consumed', /"consumed", not "ready"/], [null, /\(none declared\), not "ready"/]]) {
+    const repo = makeRunFixtureRepo()
+    fs.writeFileSync(
+      path.join(repo, '.discipline', 'packets', 'STEP_5_SLICE_PACKET.md'),
+      ['# STEP_5_SLICE_PACKET', '', ...(status ? [`STATUS: ${status}`, ''] : []), '## Goal', 'x', '## Scope', '- x', '## Contracts', '- x', '## Acceptance criteria', '- x', ''].join('\n'),
+      'utf8',
+    )
+    spawnSync('git', ['add', '-A'], { cwd: repo, encoding: 'utf8' })
+    spawnSync('git', ['commit', '-q', '-m', `status ${status}`], { cwd: repo, encoding: 'utf8' })
+    const res = runTsx('tools/discipline/run.ts', ['--slice', '1', '--dry-run', '--project-dir', repo])
+    assert.equal(res.status, 2, getOutput(res))
+    assert.match(getOutput(res), expected)
+    fs.rmSync(repo, { recursive: true, force: true })
+  }
+})
+
+// A dry run exists to answer "what would this run do?". Swallowing the assembly failure answered
+// "0 prompt chars" and exited GREEN, which reads as a plan that is ready to go.
+test('run --dry-run: reports an assembly failure instead of printing an empty prompt', () => {
+  const gitProbe = spawnSync('git', ['--version'], { encoding: 'utf8' })
+  if (gitProbe.status !== 0) return
+  const repo = makeRunFixtureRepo()
+  // Make the handoff unwritable in the most portable way there is: a directory in its place.
+  // Whichever file the run tries to write, the question is whether it says so or hides it.
+  for (const name of ['step-5-input.md', 'step-5-1-input.md']) {
+    fs.mkdirSync(path.join(repo, '.discipline', 'paste-ready', name), { recursive: true })
+  }
+  const res = runTsx('tools/discipline/run.ts', ['--slice', '1', '--dry-run', '--project-dir', repo])
+  assert.equal(res.status, 2, getOutput(res))
+  assert.match(getOutput(res), /Could not assemble the paste-ready for slice 1/)
+  assert.match(getOutput(res), /the plan is not green/)
+  fs.rmSync(repo, { recursive: true, force: true })
+})
+
 test('run: refuses a dirty tree without --allow-dirty (exit 2)', () => {
   const gitProbe = spawnSync('git', ['--version'], { encoding: 'utf8' })
   if (gitProbe.status !== 0) return
@@ -3367,6 +3451,89 @@ test('slice identity: a packet for a slice the plan does not state is refused, n
   const validated = runTsx('tools/discipline/validate-discipline.ts', ['--project-dir', projectRoot])
   assert.notEqual(validated.status, 0)
   assert.match(getOutput(validated), /STEP_5_SLICE_PACKET_99\.md is for slice "99", which task_plan\.md does not describe/)
+
+  // An ARCHIVED packet is history, not an orphan. The validator kept its own copy of "which names
+  // are active" and read `_99.consumed` as an ordinary suffix, so archiving a packet for a slice
+  // that is gone left the project permanently red. It now asks slice-identity, like everyone else,
+  // and the id read from the filename drops the archive marker instead of contradicting the
+  // packet's own SLICE field ("filename says 99.consumed; SLICE field says 99").
+  fs.renameSync(
+    path.join(projectRoot, '.discipline', 'packets', 'STEP_5_SLICE_PACKET_99.md'),
+    path.join(projectRoot, '.discipline', 'packets', 'STEP_5_SLICE_PACKET_99.consumed.md'),
+  )
+  const archived = runTsx('tools/discipline/validate-discipline.ts', ['--project-dir', projectRoot])
+  assert.doesNotMatch(getOutput(archived), /which task_plan\.md does not describe/)
+  assert.equal(archived.status, 0, getOutput(archived))
+})
+
+// Step 4 writes the plan every later command reads, so the blocks it TEACHES have to be blocks
+// this template accepts. They were not: the anchor named `## Ready Slices`, a heading the template
+// does not have; the id sat in a `#` column while `Slice` held the name, which is not the column
+// the parser reads; and a slice promoted to `ready` got a table row but no section of its own, so
+// the first `assemble --step 5 --slice <id>` after Step 4 refused the very slice it had promoted.
+// This test reads the blocks OUT OF THE SKILL, so the doc cannot drift away from the tooling.
+test('step 4: the patch blocks the skill teaches apply to a fresh template, and the promoted slice assembles', () => {
+  const skill = fs.readFileSync(path.join(repoRoot, '.claude', 'skills', 'discipline-step4', 'SKILL.md'), 'utf8')
+  const blockFromSkill = (name) => {
+    const open = skill.indexOf('```markdown\n## ' + name)
+    assert.notEqual(open, -1, `${name}: fenced example missing from the Step 4 skill`)
+    const start = open + '```markdown\n'.length
+    const close = skill.indexOf('\n```', start)
+    assert.notEqual(close, -1, `${name}: unterminated fence`)
+    return `${skill.slice(start, close)}\n`
+  }
+
+  const projectRoot = createDisciplineProject()
+  const pending = path.join(projectRoot, '.discipline', 'patches', 'pending')
+  const table = blockFromSkill('TASK_PLAN_PATCH_BLOCK - Step 4 ready slices')
+    .replace('| 0 | <name> | S/M/L | none | ready |', '| 0 | Bootstrap & Backend Confirmation | S | none | done |')
+    .replace('| 1 | <name> | S/M/L | 0 | planned (awaiting its own STEP_5_SLICE_PACKET) |', '| 7 | Shopping list | M | 0 | ready |')
+    .replace('| 2 | <name> | S/M/L | 0 | planned (awaiting its own STEP_5_SLICE_PACKET) |', '| 8 | Sharing | M | 7 | planned |')
+    .replace('...\n', '')
+  const sections = blockFromSkill('TASK_PLAN_SLICES_APPEND_BLOCK - Step 4 new slice sections')
+    .replace('## Slice <id> - <name>', '## Slice 7 - Shopping list')
+    .replace(/<one sentence>/g, 'Add and tick items.')
+    .replace(/<\.\.\.>/g, 'x')
+  fs.writeFileSync(path.join(pending, '2026-08-09_TASK_PLAN_PATCH_step4.md'), table, 'utf8')
+  fs.writeFileSync(path.join(pending, '2026-08-09_TASK_PLAN_SLICES_step4.md'), sections, 'utf8')
+
+  const patched = runTsx('tools/discipline/apply-patch.ts', ['--project-dir', projectRoot])
+  assert.equal(patched.status, 0, getOutput(patched))
+  const plan = fs.readFileSync(path.join(projectRoot, 'task_plan.md'), 'utf8')
+  // The table landed under the real anchor, and the sections already in the file survived it.
+  assert.match(plan, /## 4\) Ready Slices/)
+  assert.match(plan, /\| 7 \| Shopping list \| M \| 0 \| ready \|/)
+  assert.match(plan, /## Slice 0 - Bootstrap & Backend Confirmation/, 'replace_section must not eat the sections that follow it')
+  assert.match(plan, /## Slice 7 - Shopping list/)
+
+  // The plan the pipeline reads: the table rows are visible, and their ids are ids.
+  const parsed = sliceIdentityEval(`emit({ rows: slice.parseReadySlicesTable(${JSON.stringify(plan)}), seven: slice.resolveSlice(${JSON.stringify(plan)}, '7') })`)
+  assert.deepEqual(parsed.rows.map((r) => r.id), ['0', '7', '8'], 'the id must sit in the column the parser reads')
+  assert.equal(parsed.seven.ok, true, parsed.seven.reason)
+
+  // And the promoted slice assembles: a plan Step 4 produced is a plan Step 5 can act on.
+  fs.writeFileSync(
+    path.join(projectRoot, '.discipline', 'packets', 'STEP_5_SLICE_PACKET_7.md'),
+    ['---', 'slice: 7', 'status: ready', '---', '', '# STEP_5_SLICE_PACKET', '', 'SLICE: 7 - Shopping list', '',
+      '## Goal', '- x', '## Scope', '- x', '## Contracts', '- x', '## Acceptance criteria', '- x', ''].join('\n'),
+    'utf8',
+  )
+  const assembled = runTsx('tools/discipline/assemble-paste-ready.ts', ['--step', '5', '--slice', '7', '--project-dir', projectRoot])
+  assert.equal(assembled.status, 0, getOutput(assembled))
+  assert.ok(fs.existsSync(path.join(projectRoot, '.discipline', 'paste-ready', 'step-5-7-input.md')))
+  const validated = runTsx('tools/discipline/validate-discipline.ts', ['--project-dir', projectRoot])
+  assert.equal(validated.status, 0, getOutput(validated))
+
+  // A row alone is not a slice: slice 8 is in the table with no section, so it does not assemble.
+  // That is why the skill has to emit a section for every slice it promotes.
+  fs.writeFileSync(
+    path.join(projectRoot, '.discipline', 'packets', 'STEP_5_SLICE_PACKET_8.md'),
+    ['---', 'slice: 8', 'status: ready', '---', '', '# STEP_5_SLICE_PACKET', '', 'SLICE: 8', '', '## Goal', '- x', ''].join('\n'),
+    'utf8',
+  )
+  const refused = runTsx('tools/discipline/assemble-paste-ready.ts', ['--step', '5', '--slice', '8', '--project-dir', projectRoot])
+  assert.notEqual(refused.status, 0, getOutput(refused))
+  assert.match(getOutput(refused), /not in task_plan\.md|does not state exactly once/)
 })
 
 // The legacy `[status]` marker in the heading is what run.ts reads to decide whether a slice can

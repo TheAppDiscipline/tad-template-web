@@ -8,7 +8,7 @@ import { DISCIPLINE_MD_ANCHORS, TASK_PLAN_ANCHORS, FINDINGS_ANCHORS, PROGRESS_AN
 import { ALL_PACKET_NAMES } from './lib/artifact-flow.js';
 import { parsePacketFile } from './lib/parse-packet.js';
 import { parsePacketMeta } from './lib/packet-meta.js';
-import { findSliceHeadings, parseReadySlicesTable, resolvePacketIdentity, resolveSlice, slicePacketFileName, type SliceHeading } from './lib/slice-identity.js';
+import { findSliceHeadings, isActiveSlicePacketName, parseReadySlicesTable, resolvePacketIdentity, resolveSlice, slicePacketFileName, type SliceHeading } from './lib/slice-identity.js';
 import { validateScorecard, type ScorecardMode } from './validate-scorecard.js';
 
 const args = minimist(process.argv.slice(2));
@@ -132,9 +132,11 @@ function checkSliceIdentity(root: string, issues: ValidationIssue[]) {
       continue;
     }
     // An ACTIVE slice packet whose slice the plan does not state exactly once is an orphan: the
-    // next assemble or run would act on a slice nobody planned. Archived packets (anything with
-    // extra name segments, like `.S12.consumed.md`) are history and are left alone.
-    const active = /^STEP_5_SLICE_PACKET(_[A-Za-z0-9._-]+)?\.md$/i.test(file);
+    // next assemble or run would act on a slice nobody planned. Archived packets are history and
+    // are left alone. Which names count as active is decided in ONE place, the same function the
+    // watcher and the assembler use: this file's own copy of the rule read `_13.consumed` as an
+    // ordinary suffix, so an archived packet was reported as an orphan.
+    const active = isActiveSlicePacketName(file);
     if (active && identity.id && fs.existsSync(path.join(root, 'task_plan.md'))) {
       const plan = fs.readFileSync(path.join(root, 'task_plan.md'), 'utf-8');
       const resolution = resolveSlice(plan, identity.id);

@@ -36,7 +36,7 @@ import { appendLedger, errorSignature } from './lib/ledger.js';
 import { assemblePasteReady } from './assemble-paste-ready.js';
 import { extractEmbeddedPatches } from './lib/parse-patch.js';
 import { applyPatches } from './apply-patch.js';
-import { locateSlicePacket, resolveSlice, slicePasteReadyFileName } from './lib/slice-identity.js';
+import { locateSlicePacket, normalizeSliceId, packetStatus, resolvePacketIdentity, resolveSlice, slicePasteReadyFileName } from './lib/slice-identity.js';
 import { updateProgress } from './update-progress.js';
 import { runGateReport, writeGateReport, type GateReport } from './gate-report.js';
 import { createCheckpoint } from './checkpoint.js';
@@ -168,9 +168,16 @@ const RUN_CONTRACT = [
   '',
 ].join('\n');
 
-/** Build the builder prompt: assembled step-5 paste-ready + the run contract. */
-export async function buildBuilderPrompt(root: string): Promise<string> {
-  const assembled = await assemblePasteReady(root, '5');
+/**
+ * Build the builder prompt: THIS slice's assembled step-5 paste-ready + the run contract.
+ *
+ * The slice id is not optional. The run validated `locateSlicePacket(root, slice)` and then
+ * assembled without a slice, which goes through the one door that does not check identity: the
+ * builder could be handed the generic packet, or another slice's, against this slice's plan entry
+ * and this slice's lease.
+ */
+export async function buildBuilderPrompt(root: string, sliceId: string): Promise<string> {
+  const assembled = await assemblePasteReady(root, '5', sliceId);
   return `${assembled}${RUN_CONTRACT}`;
 }
 
@@ -365,6 +372,16 @@ export async function runReconciler(root: string, opts: RunOptions): Promise<num
   for (const warning of located.warnings) disciplineWarn(warning);
   const slicePacket = located.path;
 
+  // A packet is work only while its status is `ready`, the same rule the watcher's Step 5
+  // selection applies. Without it a run could implement a draft, or re-implement a slice already
+  // consumed, purely because a file with the right name was still sitting in .discipline/packets/.
+  const packetState = packetStatus(fs.readFileSync(slicePacket, 'utf-8'));
+  if (packetState !== 'ready') {
+    disciplineWarn(`${path.basename(slicePacket)} has status ${packetState ? `"${packetState}"` : '(none declared)'}, not "ready". Refusing to run it.`);
+    disciplineWarn('Declare `status: ready` in the packet when it is the work to do; a draft, a consumed or a status-less packet is not.');
+    return RUN_EXIT.CONFIG;
+  }
+
   // (b) Level 0 and Level 1 are plumbing-only, but the slice identity still has to hold: an
   // assembled handoff that silently used the generic packet is exactly the failure this phase
   // removes, and it is worse at L0/L1 because a human pastes it without a second check.
@@ -414,7 +431,16 @@ export async function runReconciler(root: string, opts: RunOptions): Promise<num
 
   // (k) Dry-run: print the resolved plan and exit WITHOUT leasing/tagging/spawning.
   if (opts.dryRun) {
-    const promptPreview = await buildBuilderPrompt(root).catch(() => '');
+    // A dry run exists to answer "what would this run do?". Swallowing the assembly failure
+    // answered "0 prompt chars" and exited GREEN, which reads as a plan that is ready to go.
+    let promptPreview: string;
+    try {
+      promptPreview = await buildBuilderPrompt(root, opts.slice);
+    } catch (err) {
+      disciplineWarn(`Could not assemble the paste-ready for slice ${opts.slice}: ${err instanceof Error ? err.message : err}`);
+      disciplineWarn('The real run would fail here too, so the plan is not green. Fix the packet and re-run.');
+      return RUN_EXIT.CONFIG;
+    }
     printDryRunPlan(root, opts, autonomy, {
       builder: builderName,
       validator: validatorName,
@@ -450,8 +476,8 @@ export async function runReconciler(root: string, opts: RunOptions): Promise<num
     if (tagProc.status !== 0) disciplineWarn(`Could not create pre-run tag ${preTag}: ${(tagProc.stderr || '').trim()} (continuing).`);
     else disciplineInfo(`Pre-run tag: ${preTag} (rollback: git reset --hard ${preTag}).`);
 
-    // (e) Builder prompt.
-    const builderPrompt = await buildBuilderPrompt(root);
+    // (e) Builder prompt, for THIS slice.
+    const builderPrompt = await buildBuilderPrompt(root, opts.slice);
 
     // (f) Level 2 confirms before the spawn; level 3 proceeds.
     if (autonomy.level === 2 && !opts.yes) {
@@ -467,6 +493,7 @@ export async function runReconciler(root: string, opts: RunOptions): Promise<num
     // (f) Spawn the builder.
     safeLedger(root, { event: 'step_started', run_id: runId, step: 'builder', provider: builderName });
     disciplineInfo(`Builder ${builderName} running (this calls the real CLI and can incur cost)...`);
+    const packetsBeforeBuild = snapshotPackets(root);
     const buildOutcome = await runAdapter(builder, 'builder', builderPrompt, { timeoutMs, cwd: root });
     safeLedger(root, { event: 'step_finished', run_id: runId, step: 'builder', provider: builderName, ...ledgerStepFinished(buildOutcome) });
 
@@ -480,8 +507,8 @@ export async function runReconciler(root: string, opts: RunOptions): Promise<num
 
     let sessionId = buildOutcome.sessionId;
 
-    // (g) Plumbing: process any new packets exactly like watch does, under the writer lock.
-    await processPacketsUnderLock(root);
+    // (g) Plumbing: process the packets THIS spawn wrote, exactly like watch does, under the lock.
+    await processPacketsUnderLock(root, opts.slice, packetsBeforeBuild);
 
     // (h) Gate + repair loop.
     const repairState: RepairState = { attempts: 1, signatures: [], repairMax: autonomy.repairMax };
@@ -504,6 +531,7 @@ export async function runReconciler(root: string, opts: RunOptions): Promise<num
       repairState.attempts += 1;
       safeLedger(root, { event: 'step_started', run_id: runId, step: 'repair', attempt: repairState.attempts, provider: builderName, resumed: extraArgs.length > 0 });
       disciplineInfo(`Repair attempt ${repairState.attempts - 1}/${autonomy.repairMax} via ${builderName}${extraArgs.length ? ' (resumed session)' : ''}...`);
+      const packetsBeforeRepair = snapshotPackets(root);
       const repairOutcome = await runAdapter(builder, 'builder', repairPrompt, { timeoutMs, cwd: root, extraArgs });
       safeLedger(root, { event: 'step_finished', run_id: runId, step: 'repair', attempt: repairState.attempts, provider: builderName, ...ledgerStepFinished(repairOutcome) });
 
@@ -515,7 +543,7 @@ export async function runReconciler(root: string, opts: RunOptions): Promise<num
       }
       if (repairOutcome.sessionId) sessionId = repairOutcome.sessionId;
 
-      await processPacketsUnderLock(root);
+      await processPacketsUnderLock(root, opts.slice, packetsBeforeRepair);
       report = runGateAndLog(root, runId);
     }
 
@@ -572,19 +600,26 @@ function runGateAndLog(root: string, runId: string): GateReport {
  * without re-acquiring. Only runs updateProgress if progress.md still has its
  * fixed header (it errors loudly otherwise, which we tolerate as a warning).
  */
-async function processPacketsUnderLock(root: string): Promise<void> {
+async function processPacketsUnderLock(root: string, sliceId: string, before: Map<string, string>): Promise<void> {
   const packetsDir = path.join(root, '.discipline', 'packets');
   if (!fs.existsSync(packetsDir)) return;
-  const packetFiles = fs.readdirSync(packetsDir).filter((f) => f.endsWith('.md'));
+  // ONLY what this spawn wrote. Reading the whole directory re-applied the patch blocks of every
+  // historical packet on every tick and re-recorded whatever sat in the generic completion file,
+  // so a run for slice 14 could plumb slice 9's leftovers and log slice 9's closure.
+  const fresh = packetsWrittenSince(root, before);
+  if (fresh.length === 0) {
+    disciplineWarn('The builder wrote no packet under .discipline/packets/. Nothing plumbed: no patches applied, progress.md untouched.');
+    return;
+  }
   const pendingDir = path.join(root, '.discipline', 'patches', 'pending');
 
   acquireWriterLock(root, { tool: 'discipline:run' });
   try {
-    // Parse EVERY packet before staging a single pending file: extraction now throws on a
+    // Parse EVERY fresh packet before staging a single pending file: extraction throws on a
     // malformed block instead of silently dropping it, and staging as we parsed would leave the
     // earlier packets' blocks in pending/ when a later one failed. Same preflight the watcher runs.
     const staged: ParsedPatch[] = [];
-    for (const name of packetFiles) {
+    for (const name of fresh) {
       const full = path.join(packetsDir, name);
       try {
         staged.push(...extractEmbeddedPatches(fs.readFileSync(full, 'utf-8'), full));
@@ -602,16 +637,30 @@ async function processPacketsUnderLock(root: string): Promise<void> {
           'utf-8',
         );
       }
-      disciplineInfo(`Extracted ${staged.length} patch block(s) from packets; applying...`);
+      disciplineInfo(`Extracted ${staged.length} patch block(s) from this run's packets; applying...`);
       // applyPatches takes the (re-entrant) writer lock itself; we already hold it.
       await applyPatches(root);
     }
-    if (packetFiles.some((f) => f.includes('SLICE_COMPLETION_PACKET'))) {
-      disciplineInfo('SLICE_COMPLETION_PACKET present; updating progress.md...');
+
+    // The completion packet of THIS slice, among the ones this spawn produced, chosen by the
+    // identity it declares and not by its filename.
+    const mine: string[] = [];
+    for (const name of fresh) {
+      if (!name.includes('SLICE_COMPLETION_PACKET')) continue;
+      const identity = resolvePacketIdentity(fs.readFileSync(path.join(packetsDir, name), 'utf-8'), name);
+      if (!identity.ok) { disciplineWarn(`${name}: ${identity.message}`); continue; }
+      if (identity.id && normalizeSliceId(identity.id) === normalizeSliceId(sliceId)) mine.push(name);
+    }
+    if (mine.length === 0) {
+      disciplineWarn(`No SLICE_COMPLETION_PACKET for slice ${sliceId} in this run's packets; progress.md untouched.`);
+    } else if (mine.length > 1) {
+      disciplineWarn(`${mine.length} completion packets claim slice ${sliceId} (${mine.join(', ')}); refusing to pick one. progress.md untouched.`);
+    } else {
+      disciplineInfo(`SLICE_COMPLETION_PACKET for slice ${sliceId} (${mine[0]}); updating progress.md...`);
       // updateProgress refuses (throws) an incomplete packet rather than recording a false green.
       // Tolerate it as a warning (see this function's doc comment) so the run keeps going.
       try {
-        await updateProgress(root);
+        await updateProgress(root, path.join(packetsDir, mine[0]));
       } catch (err) {
         disciplineWarn(`Skipped progress.md update: ${err instanceof Error ? err.message : err}`);
       }
@@ -619,6 +668,33 @@ async function processPacketsUnderLock(root: string): Promise<void> {
   } finally {
     releaseWriterLock(root);
   }
+}
+
+/**
+ * A content fingerprint of `.discipline/packets/`, so "what this spawn wrote" is a fact rather
+ * than a guess. Content, not mtime: a rewritten packet with the same size and timestamp is still
+ * a rewritten packet, and a run must not plumb what it did not produce.
+ */
+function snapshotPackets(root: string): Map<string, string> {
+  const dir = path.join(root, '.discipline', 'packets');
+  const snapshot = new Map<string, string>();
+  if (!fs.existsSync(dir)) return snapshot;
+  for (const name of fs.readdirSync(dir).filter((f) => f.endsWith('.md'))) {
+    try {
+      snapshot.set(name, crypto.createHash('sha1').update(fs.readFileSync(path.join(dir, name))).digest('hex'));
+    } catch {
+      snapshot.set(name, 'unreadable');
+    }
+  }
+  return snapshot;
+}
+
+/** The packet files added or rewritten since `before`, in name order. */
+function packetsWrittenSince(root: string, before: Map<string, string>): string[] {
+  return [...snapshotPackets(root).entries()]
+    .filter(([name, digest]) => before.get(name) !== digest)
+    .map(([name]) => name)
+    .sort();
 }
 
 /**
