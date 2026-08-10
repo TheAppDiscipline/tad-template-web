@@ -20,10 +20,12 @@ import Ajv, { type ValidateFunction } from 'ajv';
 import { parsePacketMeta } from './packet-meta.js';
 import { normalizeSliceId } from './slice-identity.js';
 
-/** The surfaces a slice can touch. Fase 3 maps changed files to these; here they are validated. */
+/** The surfaces a slice can touch. `gate --changed` maps changed files to these; here they are validated. */
 export const AFFECTED_SURFACES = [
   'ui', 'authenticated-ui', 'backend', 'schema', 'permissions', 'deployment-artifact', 'ai', 'docs-only',
 ] as const;
+
+export type AffectedSurface = (typeof AFFECTED_SURFACES)[number];
 
 /** How a slice proves it could have failed. One of these, declared, not guessed from prose. */
 export const FALSIFIABILITY_METHODS = ['red-evidence', 'mutation', 'rationale'] as const;
@@ -295,6 +297,51 @@ export function readStep5Packet(content: string, fileName?: string): Step5Readin
 
   checkV2(content, body, severity, where, findings);
   return { format, status, enforced, findings };
+}
+
+/** What a packet DECLARES it touches, for the gate selector to check the change against. */
+export interface DeclaredSurfaces {
+  format: Step5Format;
+  /** The declared surfaces, or null when this packet declares none (legacy, or no v2 frontmatter). */
+  surfaces: AffectedSurface[] | null;
+  /** Declared values that are not surfaces. Any of these makes the whole declaration unusable. */
+  invalid: string[];
+  /** `required_gates`, verbatim. Extra gates the packet asks for on top of its surfaces. */
+  requiredGates: string[];
+}
+
+/**
+ * Read `affected_surfaces` / `required_gates` from a packet.
+ *
+ * A surface is what routes the gates a slice has to pass, so this returns `null`
+ * rather than `[]` when there is nothing to read: an empty list would say "this
+ * slice touches nothing", and the caller has to be able to tell that apart from
+ * "this packet never said". An unrecognized value invalidates the declaration
+ * instead of being dropped, because a typo'd surface is a gate nobody runs.
+ */
+export function declaredSurfaces(content: string): DeclaredSurfaces {
+  const format = step5Format(content).format;
+  if (format !== 'v2') return { format, surfaces: null, invalid: [], requiredGates: [] };
+
+  const { meta } = parsePacketMeta(content);
+  const raw = meta?.affected_surfaces;
+  const gatesRaw = meta?.required_gates;
+  const requiredGates = Array.isArray(gatesRaw)
+    ? gatesRaw.filter((g): g is string => typeof g === 'string' && g.trim() !== '').map((g) => g.trim())
+    : [];
+  if (!Array.isArray(raw)) return { format, surfaces: null, invalid: [], requiredGates };
+
+  const surfaces: AffectedSurface[] = [];
+  const invalid: string[] = [];
+  for (const entry of raw) {
+    const value = typeof entry === 'string' ? entry.trim() : String(entry);
+    if ((AFFECTED_SURFACES as readonly string[]).includes(value)) {
+      if (!surfaces.includes(value as AffectedSurface)) surfaces.push(value as AffectedSurface);
+    } else {
+      invalid.push(value);
+    }
+  }
+  return { format, surfaces, invalid, requiredGates };
 }
 
 /**

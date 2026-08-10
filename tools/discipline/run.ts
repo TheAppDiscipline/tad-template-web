@@ -40,6 +40,9 @@ import { locateSlicePacket, normalizeSliceId, packetStatus, resolvePacketIdentit
 import { readCompletion } from './lib/completion-packet.js';
 import { recordClosure } from './update-progress.js';
 import { runGateReport, writeGateReport, type GateReport } from './gate-report.js';
+import { runChangedGate, writeGateReportV2, printChangedGate, type GateReportV2 } from './gate-changed.js';
+import { GateConfigError } from './lib/gates-config.js';
+import { ChangedFilesError } from './lib/changed-files.js';
 import { createCheckpoint } from './checkpoint.js';
 import { diffToHtml } from './diff-report.js';
 import { loadAutonomy, enforceValidatorFamily, type AutonomyConfig, type ProviderName } from './lib/autonomy.js';
@@ -200,13 +203,32 @@ export async function buildBuilderPrompt(root: string, sliceId: string): Promise
   return `${assembled}${RUN_CONTRACT}`;
 }
 
+/** A gate result the repair loop can read, whichever schema produced it. */
+type GateReportLike = GateReport | GateReportV2;
+
 /** Build a repair prompt: the failed checks + first errors + fix-with-new-info instruction. */
-export function buildRepairPrompt(report: GateReport): string {
+export function buildRepairPrompt(report: GateReportLike): string {
   const failed = report.failed_checks.length ? report.failed_checks.map((c) => `- ${c}`).join('\n') : '- (none reported)';
   const errs = report.steps
     .filter((s) => s.exit !== 0 && s.firstError)
     .map((s) => `- [${s.cmd}] ${s.firstError}`)
     .join('\n');
+  // A refusal never ran a gate: the fix is the packet or the diff, not the code.
+  // Saying "the gate failed" here would send the builder looking for a bug there is none of.
+  const refusal = 'refusal' in report ? report.refusal : null;
+  if (refusal) {
+    return [
+      '## REPAIR TURN (the gate refused to run)',
+      '',
+      'No gate ran. The change and the slice packet do not agree about what this slice touches:',
+      '',
+      refusal,
+      '',
+      'Fix the disagreement itself: declare the missing surface in the packet (emit a patch block for it),',
+      'or take the files that imply it out of this slice. Do NOT change code to make the message go away.',
+      'Then emit updated patch blocks and an updated SLICE_COMPLETION_PACKET, and do NOT commit.',
+    ].join('\n');
+  }
   return [
     '## REPAIR TURN (the gate failed)',
     '',
@@ -494,6 +516,10 @@ export async function runReconciler(root: string, opts: RunOptions): Promise<num
     const tagProc = spawnSync('git', ['tag', preTag], { cwd: root, encoding: 'utf-8' });
     if (tagProc.status !== 0) disciplineWarn(`Could not create pre-run tag ${preTag}: ${(tagProc.stderr || '').trim()} (continuing).`);
     else disciplineInfo(`Pre-run tag: ${preTag} (rollback: git reset --hard ${preTag}).`);
+    // The gate measures the change against this tag, so a commit made mid-run is
+    // still part of what gets gated. Without the tag there is no base to measure
+    // from, and the gate falls back to the working tree alone.
+    const gateBase = tagProc.status === 0 ? preTag : null;
 
     // (e) Builder prompt, for THIS slice.
     const builderPrompt = await buildBuilderPrompt(root, opts.slice);
@@ -551,7 +577,7 @@ export async function runReconciler(root: string, opts: RunOptions): Promise<num
 
     // (h) Gate + repair loop.
     const repairState: RepairState = { attempts: 1, signatures: [], repairMax: autonomy.repairMax };
-    let report = runGateAndLog(root, runId);
+    let report = runGateAndLog(root, runId, opts.slice, gateBase);
 
     while (!report.passed) {
       const sig = report.error_signature ?? errorSignature(report.failed_checks[0] ?? 'gate', 'unknown');
@@ -589,7 +615,7 @@ export async function runReconciler(root: string, opts: RunOptions): Promise<num
       if (!repaired.ok) { releaseLease(); return incomplete(repaired.reason, true); }
       if (repaired.plan.completion) completionPath = repaired.plan.completion;
       await applyPlanUnderLock(root, repaired.plan.patches);
-      report = runGateAndLog(root, runId);
+      report = runGateAndLog(root, runId, opts.slice, gateBase);
     }
 
     disciplineInfo('Gate is GREEN.');
@@ -630,11 +656,37 @@ function resumeArgsFor(provider: ProviderName, sessionId: string | undefined): s
   return []; // gemini / cursor: fresh call with the repair prompt as context.
 }
 
-/** Run the gate report, write it, and append the gate_result ledger event. */
-function runGateAndLog(root: string, runId: string): GateReport {
-  disciplineInfo('Running the gate (deterministic arbiter)...');
-  const report = runGateReport(root);
-  writeGateReport(root, report);
+/**
+ * Run the gate, write its report, and append the gate_result ledger event.
+ *
+ * A headless run knows exactly what it changed and which slice it is closing, so
+ * it uses `gate --changed`: the gates its surfaces call for, plus whatever the
+ * packet's `required_gates` demands (the shipped Step 4 template asks for the
+ * full `gate`, so this is a superset of the old behavior, not a smaller one),
+ * plus the full gate whenever a changed file matches no rule.
+ *
+ * The point in a headless run is not speed. It is that a builder which touched a
+ * surface its packet never declared stops the run instead of closing the slice.
+ *
+ * A project without `.discipline/gates.json` (or with git unavailable) falls back
+ * to the full gate, loudly. Being unable to select a subset is a reason to run
+ * everything, never a reason to run less.
+ */
+function runGateAndLog(root: string, runId: string, slice: string, base: string | null): GateReportLike {
+  let report: GateReportLike;
+  try {
+    disciplineInfo('Running the gate for what changed (deterministic arbiter)...');
+    const changed = runChangedGate(root, { slice, base });
+    writeGateReportV2(root, changed);
+    printChangedGate(changed);
+    report = changed;
+  } catch (err) {
+    if (!(err instanceof GateConfigError || err instanceof ChangedFilesError)) throw err;
+    disciplineWarn(`Cannot scope the gate to what changed (${err.message}). Running the full gate instead.`);
+    const full = runGateReport(root);
+    writeGateReport(root, full);
+    report = full;
+  }
   safeLedger(root, {
     event: 'gate_result',
     run_id: runId,

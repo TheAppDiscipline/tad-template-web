@@ -7,6 +7,7 @@ import { disciplineError, disciplineInfo, disciplineWarn } from './lib/types.js'
 import { resolveProjectRoot } from './lib/discipline-config.js';
 import { acquireWriterLock, releaseWriterLock } from './lib/locks.js';
 import { appendLedger } from './lib/ledger.js';
+import { readGateReportFile } from './lib/gate-report-io.js';
 
 /**
  * Checkpoints: approval packets that turn a human decision into a git-auditable
@@ -75,25 +76,29 @@ function writeUnderWriterLock(root: string, filePath: string, content: string): 
   }
 }
 
-/** Read the latest gate report if present; tolerate malformed JSON. */
+/**
+ * Read the latest gate report, whichever schema wrote it.
+ *
+ * A checkpoint is what a human approves from, so a partial gate has to say it is
+ * partial: `gate --changed` runs the subset its surfaces called for, and
+ * "PASSED" on its own would read as the whole gate to the person signing off.
+ */
 function readGateSection(root: string): string {
-  const reportPath = path.join(root, '.discipline', 'gate-report.json');
-  if (!fs.existsSync(reportPath)) return 'No gate report (run `npm run discipline -- gate --json`).';
-  try {
-    const report = JSON.parse(fs.readFileSync(reportPath, 'utf-8')) as {
-      passed?: boolean;
-      failed_checks?: string[];
-      ts?: string;
-    };
-    const passed = report.passed === true ? 'PASSED' : 'FAILED';
-    const failed = Array.isArray(report.failed_checks) && report.failed_checks.length
-      ? report.failed_checks.map((c) => `  - ${c}`).join('\n')
-      : '  (none)';
-    const ts = report.ts ? ` at ${report.ts}` : '';
-    return `passed: ${passed}${ts}\nfailed_checks:\n${failed}`;
-  } catch {
-    return 'Gate report present but unreadable (malformed JSON).';
+  const read = readGateReportFile(root);
+  if (!read.ok) {
+    if (read.reason === 'missing') return 'No gate report (run `npm run discipline -- gate --json`).';
+    return `Gate report present but not usable: ${read.detail}`;
   }
+  const report = read.report;
+  const passed = report.passed ? 'PASSED' : 'FAILED';
+  const failed = report.failed_checks.length ? report.failed_checks.map((c) => `  - ${c}`).join('\n') : '  (none)';
+  const ts = report.ts ? ` at ${report.ts}` : '';
+  const scope =
+    report.mode === 'changed'
+      ? `\nscope: CHANGED FILES ONLY (${report.files?.length ?? 0} file(s); surfaces: ${report.surfaces?.length ? report.surfaces.join(', ') : 'none'}). ` +
+        'This is a subset of `npm run gate`.'
+      : '\nscope: full gate';
+  return `passed: ${passed}${ts}${scope}\nfailed_checks:\n${failed}`;
 }
 
 /** `git diff --stat HEAD` from the repo root; a clear note if git is unavailable. */

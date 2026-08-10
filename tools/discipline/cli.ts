@@ -83,6 +83,9 @@ function printHelp(): void {
       '  doctor           Project health diagnostics',
       '  status           Pipeline dashboard',
       '  gate --json      Runs the gate and writes .discipline/gate-report.json (machine-readable)',
+      '  gate --changed [--base <ref>] [--slice <id>]',
+      '                   Runs only the gates the change needs, from .discipline/gates.json. Refuses',
+      '                   when the change touches a surface the slice packet does not declare.',
       '  lease            Slice lease: `lease acquire|release|status <slice-id> [--force]`',
       '  checkpoint       Approval packet: `checkpoint create --slice <id> --kind pre-commit|scope|deploy`',
       '  approve|reject   Decide a checkpoint: `approve <packet-file-or-id>` / `reject <..> [--reason "..."]`',
@@ -197,6 +200,17 @@ function stripProviderAndLlm(args: string[]): string[] {
 // Remaining args pass through unchanged to the base script.
 // (the --with-llm commands already exited above; they never reach here.)
 const passthrough = argv.slice(1)
+
+// `discipline gate --changed` routes to the hybrid selector: it reads
+// .discipline/gates.json, works out which surfaces the change touches, checks
+// them against the slice packet's declaration, and runs that subset of the gate.
+// It always writes the machine-readable report, so --json alongside it is a no-op.
+if (cmd === 'gate' && passthrough.includes('--changed')) {
+  const forwarded = passthrough.filter((a) => a !== '--changed' && a !== '--json')
+  const changedArgs = ['run', 'discipline:gate:changed', ...(forwarded.length ? ['--', ...forwarded] : [])]
+  const changedResult = spawnSync('npm', changedArgs, { stdio: 'inherit', shell: true })
+  process.exit(changedResult.status ?? 1)
+}
 
 // `discipline gate --json` routes to the machine-readable gate report
 // (writes .discipline/gate-report.json), instead of the plain human gate.

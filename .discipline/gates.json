@@ -1,0 +1,74 @@
+{
+  "schema": "discipline.gates.v1",
+  "lane": "WEB",
+  "_readme": [
+    "Which gates cover which files, for `discipline gate --changed`. `npm run gate` is unchanged and",
+    "always correct; this is the map that lets a change run a subset of it without losing coverage.",
+    "Edit it when your project grows a directory this map does not know: an unmapped file is not",
+    "ignored, it makes the FULL gate run, so the cost of an out-of-date map is time, never a missed check.",
+    "Scripts are npm script names and must exist in package.json. Every surface needs an entry, even an",
+    "empty one, because a surface nobody mentions is a gate nobody runs."
+  ],
+  "base": ["discipline:provider:check"],
+  "surfaces": {
+    "ui": ["lint", "typecheck", "test", "check-tokens"],
+    "authenticated-ui": ["lint", "typecheck", "test", "check-tokens", "check-secrets", "check-queries", "check-rls"],
+    "backend": ["lint", "typecheck", "test", "check-secrets", "check-rls", "check-cors", "check-https", "check-queries", "check-fk-indexes"],
+    "schema": ["test", "migration:lint", "check-fk-indexes", "check-rls", "check-firebase"],
+    "permissions": ["test", "check-rls", "check-firebase", "check-secrets"],
+    "deployment-artifact": ["lint", "typecheck", "test", "check-secrets", "check-https", "check-bundle"],
+    "ai": ["lint", "typecheck", "test", "ai:eval"],
+    "docs-only": ["discipline:validate", "test"]
+  },
+  "rules": [
+    {
+      "surface": "ui",
+      "prefixes": [
+        "src/App", "src/main", "src/ErrorBoundary", "src/index.css", "src/app-shell",
+        "src/components/", "src/pages/", "src/screens/", "src/styles/", "src/hooks/", "public/", "index.html"
+      ],
+      "extensions": [".css"]
+    },
+    {
+      "surface": "authenticated-ui",
+      "prefixes": ["src/auth/", "src/lib/auth/", "src/pages/account/", "src/components/auth/"],
+      "extensions": []
+    },
+    {
+      "surface": "backend",
+      "prefixes": ["src/lib/backend/", "api/", "server/", "functions/", "supabase/functions/"],
+      "extensions": []
+    },
+    {
+      "surface": "schema",
+      "prefixes": ["supabase/migrations/", "supabase/migrations_templates/", "src/lib/backend/database.types.ts", "database.types.ts"],
+      "extensions": [".sql"]
+    },
+    {
+      "surface": "permissions",
+      "prefixes": ["firebase/firestore.rules", "firebase/storage.rules", "firebase/firestore.indexes.json", "supabase/policies/"],
+      "extensions": [".rules"]
+    },
+    {
+      "surface": "deployment-artifact",
+      "prefixes": [".github/workflows/", "vercel.json", "netlify.toml", "Dockerfile", "vite.config", "firebase.json", ".firebaserc"],
+      "extensions": []
+    },
+    {
+      "surface": "ai",
+      "prefixes": ["evals/", "prompts/", "src/lib/ai/", "tools/llm_"],
+      "extensions": []
+    },
+    {
+      "surface": "docs-only",
+      "prefixes": [],
+      "extensions": [".md"]
+    }
+  ],
+  "exclude": [
+    ".discipline/packets/", ".discipline/patches/", ".discipline/paste-ready/", ".discipline/prompts/", ".discipline/locks/",
+    ".discipline/ledger/", ".discipline/review/", ".discipline/backups/", ".discipline/gate-report.json", ".discipline/STOP",
+    "node_modules/", "dist/", "build/", "coverage/", "test-results/", "playwright-report/", ".vscode/", ".idea/"
+  ],
+  "unmapped": "gate"
+}

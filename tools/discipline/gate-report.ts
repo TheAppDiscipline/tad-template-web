@@ -69,7 +69,7 @@ export function resolveGateSteps(root: string): string[] {
 }
 
 /** Pick the first output line that looks like an error/failure, if any. */
-function firstErrorLine(stdout: string, stderr: string): string | null {
+export function firstErrorLine(stdout: string, stderr: string): string | null {
   const haystack = `${stderr}\n${stdout}`;
   const lines = haystack.split(/\r?\n/);
   const errorish = /error|fail(ed|ure)?|not found|cannot|exception|✖|×/i;

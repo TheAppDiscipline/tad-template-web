@@ -36,6 +36,18 @@ const REASON =
   'Run `npm run discipline -- gate --json` (writes .discipline/gate-report.json) and fix any failures before ending. ' +
   'Repair Budget: after 2 attempts with the same error signature and no material change, stop and escalate instead of looping.';
 
+const REASON_UNCOVERED =
+  'Stop blocked: the gate report is green, but it was scoped to changed files that no longer cover this session. ' +
+  'Files edited since (or outside) that run were never gated. Re-run `npm run discipline -- gate --changed` (or `gate --json` for the full gate).';
+
+/**
+ * Gate report schemas this hook can read. Duplicated from
+ * tools/discipline/lib/gate-report-io.ts on purpose: hooks are plain Node with no
+ * build step and no imports from the TS tooling. A schema that is not on this
+ * list is treated as no report at all, never as a pass.
+ */
+const KNOWN_GATE_REPORT_SCHEMAS = ['discipline.gate_report.v1', 'discipline.gate_report.v2'];
+
 /**
  * Parse `git status --porcelain` output into the tracked files that are
  * modified or added (staged or unstaged). Untracked-only entries ("?? path")
@@ -83,6 +95,14 @@ export function decideCore({ stopHookActive, modifiedFiles, gateReport, newestMo
   if (typeof gateReport.mtimeMs === 'number' && gateReport.mtimeMs < (newestModifiedMtimeMs ?? 0)) {
     return { block: true, reason: REASON };
   }
+  // A v2 report says which files it was scoped to. A green report that never saw
+  // a file the session edited is green about something else: mtimes only catch
+  // that when the clocks agree, and the file list is the thing that was measured.
+  if (Array.isArray(gateReport.files)) {
+    const covered = new Set(gateReport.files);
+    const uncovered = modifiedFiles.filter((f) => !covered.has(String(f).replace(/\\/g, '/')));
+    if (uncovered.length) return { block: true, reason: `${REASON_UNCOVERED} Not covered: ${uncovered.slice(0, 5).join(', ')}` };
+  }
   return { block: false, reason: '' };
 }
 
@@ -95,15 +115,20 @@ function readGateReport(root) {
   } catch {
     return { exists: false, mtimeMs: 0, passed: false };
   }
-  let passed = false;
+  let parsed;
   try {
-    const parsed = JSON.parse(fs.readFileSync(reportPath, 'utf-8'));
-    passed = parsed?.passed === true;
+    parsed = JSON.parse(fs.readFileSync(reportPath, 'utf-8'));
   } catch {
     // Malformed JSON: treat as missing (do not trust it as green).
     return { exists: false, mtimeMs: 0, passed: false };
   }
-  return { exists: true, mtimeMs: stat.mtimeMs, passed };
+  // An unknown schema is not read as a pass: its `passed` may not mean what this
+  // hook assumes it means. Treat it as no report, which blocks.
+  if (!KNOWN_GATE_REPORT_SCHEMAS.includes(parsed?.schema)) {
+    return { exists: false, mtimeMs: 0, passed: false };
+  }
+  const files = Array.isArray(parsed?.files) ? parsed.files.filter((f) => typeof f === 'string') : null;
+  return { exists: true, mtimeMs: stat.mtimeMs, passed: parsed?.passed === true, files };
 }
 
 /** Newest mtime (ms) among the given files under root; missing files are skipped. */

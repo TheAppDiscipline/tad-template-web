@@ -54,6 +54,7 @@ npm run discipline:progress   # update progress.md from SLICE_COMPLETION_PACKET
 npm run discipline:status     # show pipeline dashboard
 npm run discipline:validate   # check pipeline integrity and packet completeness
 npm run discipline:migrate-packets  # legacy Step 5 packets -> the v2 contract (dry run; --write applies it)
+npm run discipline:gate:changed     # run only the gates the change needs (see Hybrid Gates); npm run gate is unchanged
 npm run discipline:watch      # auto-run the plumbing on new packets
 ```
 
@@ -66,7 +67,7 @@ Local, file-based coordination and observability for the pipeline. No daemon, no
 - **Writer lock** (`.discipline/locks/writer.lock`): `apply-patch` and `watch` hold it while mutating `discipline.md` / `task_plan.md` / `findings.md` / `progress.md`, so only one writer touches those files at a time. If a live owner holds it, the command fails with a clear message; a lock older than 3x its TTL is treated as stale and taken over.
 - **Slice lease** (`.discipline/locks/slice-<id>.lock`): enforces One Writer Per Slice across processes. `npm run discipline:lease -- acquire|release|status <slice-id> [--force]`. Acquire is atomic; release only removes a lease this process owns (or with `--force`).
 - **Kill switch** (`.discipline/STOP`): create this file to pause the watcher. It skips each queued packet with a warning (the packet stays in place) without killing the process. Delete the file to resume.
-- **Machine-readable gate** (`npm run discipline:gate:report`, or `discipline gate --json`): re-runs the gate's own steps (parsed from the `gate` script) and writes `.discipline/gate-report.json` (`schema: discipline.gate_report.v1`) with per-step exit codes, durations, `failed_checks`, and an `error_signature`. Exit code is 0 iff every step passed. Plain `npm run gate` is unchanged.
+- **Machine-readable gate** (`npm run discipline:gate:report`, or `discipline gate --json`): re-runs the gate's own steps (parsed from the `gate` script) and writes `.discipline/gate-report.json` (`schema: discipline.gate_report.v1`) with per-step exit codes, durations, `failed_checks`, and an `error_signature`. Exit code is 0 iff every step passed. Plain `npm run gate` is unchanged. `discipline gate --changed` writes the same file under `schema: discipline.gate_report.v2`, adding the files and surfaces the run was scoped to; see Hybrid Gates below.
 - **Ledger** (`.discipline/ledger/YYYY-MM.jsonl`): append-only JSONL of pipeline events (`patch_applied`, `gate_result`). `error_signature` normalizes away paths, line numbers, and timestamps, which makes the Repair Budget rule (two identical signatures with no material change -> stop) computable.
 - **Diff review** (`npm run discipline:review [-- --staged] [--open]`): renders `git diff` to one self-contained, fully HTML-escaped file under `.discipline/review/<timestamp>.html` for slice review. An empty diff writes nothing.
 - **Providers preflight** (`npm run discipline:doctor:providers`, or `discipline:doctor --providers`): advisory checks for Node/git, the agent CLIs (claude/codex/gemini/cursor-agent), OneDrive placement, long-path risk, and Windows helpers. Informational only; it never fails the exit code by itself. Add `--json` to dump the findings.
@@ -278,6 +279,56 @@ INCOMPLETE` and names what it could not put back, because a false "nothing was l
 than the loss, it is what stops anybody from going to look. The migrated packet keeps `status: ready` only
 when it already meets v2; otherwise it lands as `draft`, which is honest about the sections Step 4
 still has to write. No surface is invented for you: a guessed surface is a gate the slice skips.
+
+## Hybrid Gates (`gate --changed`)
+
+`npm run gate` is unchanged, and it is still the answer that is always right: everything, every time.
+`gate --changed` runs a **subset** of it, chosen from what the change actually touched, and it is the
+only thing in the pipeline allowed to run less than the whole gate.
+
+```bash
+npm run discipline -- gate --changed                      # what the working tree touched
+npm run discipline -- gate --changed -- --base main       # ...plus everything committed since main
+npm run discipline -- gate --changed -- --slice S13       # ...checked against that slice's packet
+```
+
+**The change is read from git, from all four places it hides:** committed against `--base`, staged,
+unstaged, and untracked. Any git failure is fatal, because "we could not tell what changed" and
+"nothing changed" produce the same empty list, and one of them is a green that verified nothing.
+
+**`.discipline/gates.json` is the map** from paths to surfaces to gates. It is project config, meant
+to be edited: when your project grows a directory the map does not know, that directory's files are
+`unmapped`, and unmapped means **the full gate runs**. An out-of-date map costs time, never coverage.
+The map is refused outright (nothing runs) when it is unreadable, when it names a script package.json
+does not define, or when it says nothing about one of the surfaces, because a surface nobody mentions
+is a gate nobody runs.
+
+**The packet is checked against the change.** With `--slice`, the surfaces the change implies are
+compared to the `affected_surfaces` the Step 5 packet declares:
+
+- A surface the change touches and the packet does **not** declare **refuses the run before any gate
+  starts**, naming the surface and the files that imply it. That is not a red test, it is a
+  disagreement about what the slice is: fix the packet or take those files out of the slice.
+- A surface the packet declares and the change does **not** touch is fine, and its gates run anyway.
+  Over-declaring costs time; under-declaring costs coverage.
+- `required_gates` is added on top, so a packet asking for `gate` gets the whole gate.
+- A legacy packet declares no surfaces, so there is nothing to check against; the gates then come
+  from the changed files alone, and the command says so.
+
+**The report is `discipline.gate_report.v2`**, written to the same `.discipline/gate-report.json` v1
+uses, with the files, the surfaces, the commands, their durations, the failures and an error
+signature. Every reader (the Stop hook, checkpoints, the runner) reads v1 and v2 and **refuses any
+other schema**: an unknown report is not read as green. Two consequences worth knowing:
+
+- A checkpoint built from a v2 report says `scope: CHANGED FILES ONLY`, because a human approving
+  from it would otherwise read "PASSED" as the whole gate.
+- The Stop hook blocks a session whose edited files the report never saw, not just a stale one.
+
+**Headless runs (L2/L3) use it**, with the pre-run tag as `--base` and the slice as `--slice`. The
+point there is not speed: the shipped Step 4 template asks for `required_gates: gate`, so the run is
+a superset of the old behavior. The point is that a builder which touched a surface its packet never
+declared stops the run instead of closing the slice. A project without `.discipline/gates.json` falls
+back to the full gate, loudly.
 
 ## Anchor Rules
 

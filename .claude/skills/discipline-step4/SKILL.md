@@ -462,6 +462,11 @@ way to satisfy it, so `RATIONALE: n/a` is refused and a real sentence is not.
 pass, so an omitted surface is a gate the slice never runs. Declaring one extra is harmless; leaving
 one out is the failure mode this field exists to prevent.
 
+This list is checked, not trusted: `discipline gate --changed --slice <id>` compares the surfaces
+the diff implies against it and **refuses to run any gate at all** when the diff touches one that is
+missing here. The fix is to declare it (or to take those files out of the slice), never to widen the
+diff quietly.
+
 Save to: `.discipline/packets/STEP_5_SLICE_PACKET_<slice>.md`, where `<slice>` is the slice id in
 lowercase (`S13` -> `STEP_5_SLICE_PACKET_13.md`, `S13.2` -> `STEP_5_SLICE_PACKET_13.2.md`).
 Report: `STEP_5_SLICE_PACKET_<slice>.md generated for Slice <N>: <name>`
