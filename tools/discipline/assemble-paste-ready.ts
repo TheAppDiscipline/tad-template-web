@@ -33,9 +33,11 @@ function optionalPacketsForStep5(slicePacket: string, configuredPackets: string[
 
 export async function assemblePasteReady(root: string, stepId: string, sliceId?: string): Promise<string> {
   const config = STEP_ASSEMBLY_MAP[stepId];
-  if (!config) disciplineError(`Step "${stepId}" is not valid. Valid steps: ${VALID_STEPS.join(', ')}`);
+  // Throw, never exit: watch.ts and run.ts import this, and a process.exit here kills their tick
+  // mid-way, past the point where they could report what failed. The CLI entrypoint exits.
+  if (!config) throw new Error(`Step "${stepId}" is not valid. Valid steps: ${VALID_STEPS.join(', ')}`);
   if (sliceId !== undefined && stepId !== '5') {
-    disciplineError(`--slice only applies to Step 5 (got --step ${stepId}). Every other step has one handoff, not one per slice.`);
+    throw new Error(`--slice only applies to Step 5 (got --step ${stepId}). Every other step has one handoff, not one per slice.`);
   }
 
   const packetsDir = path.join(root, '.discipline', 'packets');
@@ -55,7 +57,7 @@ export async function assemblePasteReady(root: string, stepId: string, sliceId?:
     const taskPlanPath = path.join(root, 'task_plan.md');
     const taskPlan = fs.existsSync(taskPlanPath) ? fs.readFileSync(taskPlanPath, 'utf-8') : undefined;
     const located = locateSlicePacket(root, sliceId, taskPlan);
-    if (!located.ok) disciplineError(located.message);
+    if (!located.ok) throw new Error(located.message);
     for (const warning of (located as { warnings: string[] }).warnings) disciplineWarn(warning);
     slicePacketPath = (located as { path: string }).path;
     outputFile = slicePasteReadyFileName(sliceId);
@@ -78,7 +80,7 @@ ${content}`);
       sections.push(`### ${p.replace('.md', '')}\n\n${content}`);
     }
   }
-  if (missing.length > 0) disciplineError(`Missing required packets for Step ${stepId}:\n  ${missing.join('\n  ')}`);
+  if (missing.length > 0) throw new Error(`Missing required packets for Step ${stepId}:\n  ${missing.join('\n  ')}`);
 
   const optionalPackets = stepId === '5'
     ? optionalPacketsForStep5(requiredPacketContents.get('STEP_5_SLICE_PACKET.md') || '', config.optionalPackets)

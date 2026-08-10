@@ -56,6 +56,12 @@ export function isNone(text: string): boolean {
  * the slice, and they are stripped here so neither engine can see a declaration the other cannot.
  * Passing an already-stripped body is safe: there is nothing left to strip.
  */
+/**
+ * A heading that names the packet itself, e.g. `## SLICE_COMPLETION_PACKET` or
+ * `# SLICE_COMPLETION_PACKET - S13`. Anything else is a section of the body.
+ */
+const PACKET_TITLE_RE = /^#{1,3}[ \t]+[A-Z][A-Z0-9_]{3,}(?:[ \t]*[-–—:][ \t]*.*)?$/;
+
 export function completionBody(fileContent: string): string {
   const normalized = fileContent.replace(/^\uFEFF/, '');
   const lines = normalized.split('\n');
@@ -70,12 +76,10 @@ export function completionBody(fileContent: string): string {
   // 2. Blank lines before the title.
   while (start < lines.length && lines[start].trim() === '') start++;
 
-  // 3. The packet's OWN title: AT MOST ONE heading line. Stripping more deletes the FIRST SECTION's
-  //    heading and orphans its bullets, which is how a `### Gates passed` carrying
-  //    `GATE_STATE: failed` became invisible while a later `### Gates` read green and the slice was
-  //    consumed anyway. The mirror is just as bad: an honest packet whose first section is
-  //    `### Outcome` was refused as having no outcome at all.
-  if (start < lines.length && /^#{1,3}\s+\S/.test(lines[start].trim())) start++;
+  // 3. The packet's OWN title, and only that: a heading is stripped ONLY when it names the
+  //    packet itself. Stripping "the first heading" deleted `### Gates passed` or `### Outcome` in a
+  //    frontmatter-only packet (no title at all), which hid every declaration inside it.
+  if (start < lines.length && PACKET_TITLE_RE.test(lines[start].trim())) start++;
 
   // 4. The header fields parse-packet.ts treats as metadata, and the blanks around them. A heading
   //    ends this loop: from the first section on, everything belongs to the body.
@@ -87,10 +91,20 @@ export function completionBody(fileContent: string): string {
   return lines.slice(start).join('\n').trim();
 }
 
+/**
+ * The ONE text every declaration is read from: the packet body with fenced blocks blanked out.
+ * Sections used to be searched in a fence-free copy while the inline fields were searched in the
+ * raw body, so a fenced example carrying `OUTCOME: done` and `GATES: GATE_STATE: passed` closed a
+ * slice with no operative declaration anywhere in the packet.
+ */
+export function declarationBody(fileContent: string): string {
+  return stripFences(completionBody(fileContent));
+}
+
 /** Raw text of EVERY "## Name" / "### Name" section (case-insensitive), in file order. */
 export function sectionTexts(body: string, name: string): string[] {
   const re = new RegExp('^#{2,3}[ \\t]+' + escapeRe(name) + '[ \\t]*$([\\s\\S]*?)(?=^#{2,3}[ \\t]|$(?![\\s\\S]))', 'gim');
-  return [...stripFences(body).matchAll(re)].map((match) => match[1].trim()).filter((text) => text !== '');
+  return [...body.matchAll(re)].map((match) => match[1].trim()).filter((text) => text !== '');
 }
 
 /**
@@ -176,7 +190,7 @@ function normalizeOutcome(raw: string): string | null {
  * explanatory bullet is not read as a second, contradictory outcome.
  */
 export function outcomeDeclarations(fileContent: string): Declaration[] {
-  const body = completionBody(fileContent);
+  const body = declarationBody(fileContent);
   const found: Declaration[] = [];
   for (const raw of inlineFields(body, 'OUTCOME')) {
     const value = normalizeOutcome(raw);
@@ -234,7 +248,7 @@ const GATE_STATE_EXACT = /^gate[_\s-]?state\s*[:=]\s*(passed|failed|unverified)\
  * not a precedence question.
  */
 export function gateDeclarations(fileContent: string): { declarations: Declaration[]; locations: number; evidence: string[] } {
-  const body = completionBody(fileContent);
+  const body = declarationBody(fileContent);
   const declarations: Declaration[] = [];
   const evidence: string[] = [];
   let locations = 0;

@@ -1,4 +1,4 @@
-import { type ParsedPatch, type PatchMode, VALID_PATCH_MODES, disciplineError } from './types.js';
+import { type ParsedPatch, type PatchMode, VALID_PATCH_MODES } from './types.js';
 
 export function parsePatchFile(filePath: string, fileContent: string): ParsedPatch {
   const lines = fileContent.split('\n');
@@ -20,12 +20,14 @@ export function parsePatchFile(filePath: string, fileContent: string): ParsedPat
     if (line === '### CONTENT' || line === '## CONTENT') { contentStartIdx = i + 1; break; }
   }
 
-  if (!name) disciplineError(`Patch without a name (heading) in: ${filePath}`);
-  if (!targetFile) disciplineError(`TARGET_FILE missing in patch: ${filePath}`);
-  if (!patchMode) disciplineError(`PATCH_MODE missing in patch: ${filePath}`);
-  if (!VALID_PATCH_MODES.includes(patchMode)) disciplineError(`Invalid PATCH_MODE "${patchMode}" en ${filePath}. Valid: ${VALID_PATCH_MODES.join(', ')}`);
-  if (!anchor) disciplineError(`ANCHOR missing in patch: ${filePath}`);
-  if (contentStartIdx === -1) disciplineError(`Marcador "### CONTENT" no encontrado en: ${filePath}`);
+  // Throw, never exit: this parser runs inside the watcher tick and inside applyPatches, and a
+  // process.exit here kills the watcher on one malformed packet instead of rejecting that packet.
+  if (!name) throw new Error(`Patch without a name (heading) in: ${filePath}`);
+  if (!targetFile) throw new Error(`TARGET_FILE missing in patch: ${filePath}`);
+  if (!patchMode) throw new Error(`PATCH_MODE missing in patch: ${filePath}`);
+  if (!VALID_PATCH_MODES.includes(patchMode)) throw new Error(`Invalid PATCH_MODE "${patchMode}" in ${filePath}. Valid: ${VALID_PATCH_MODES.join(', ')}`);
+  if (!anchor) throw new Error(`ANCHOR missing in patch: ${filePath}`);
+  if (contentStartIdx === -1) throw new Error(`Marker "### CONTENT" not found in: ${filePath}`);
 
   const content = lines.slice(contentStartIdx).join('\n').trim();
   return { name, targetFile, patchMode, anchor, content, sourcePath: filePath };

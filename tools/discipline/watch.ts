@@ -11,7 +11,7 @@ import { copyToClipboard as writeTextToClipboard } from './lib/clipboard.js';
 import { extractEmbeddedPatches } from './lib/parse-patch.js';
 import { applyPatches } from './apply-patch.js';
 import { isSliceConsumed, markSliceConsumed, resolveConsumptionTarget, resolvePacketIdentity, selectStep5Packets, slicePasteReadyFileName } from './lib/slice-identity.js';
-import { updateProgress, completionGateState } from './update-progress.js';
+import { updateProgress, completionGateState, hasCompletionPacket } from './update-progress.js';
 import { assemblePasteReady } from './assemble-paste-ready.js';
 import { logRun } from './log-run.js';
 import { STEP_ASSEMBLY_MAP } from './lib/artifact-flow.js';
@@ -82,6 +82,15 @@ function openTool(stepId: StepId) {
   }
 }
 
+/** Record a tick in the run-log without letting a logging failure stop the watcher. */
+async function safeLog(root: string, fileName: string, notes: string[], outputPacket: string) {
+  try {
+    await logRun(root, { step: 'watch', tool: 'discipline:watch', inputPacket: fileName, outputPacket, notes: notes.join(', ') });
+  } catch (err) {
+    disciplineWarn(`  Could not auto-log run: ${err instanceof Error ? err.message : err}`);
+  }
+}
+
 export async function handlePacket(root: string, filePath: string) {
   const fileName = path.basename(filePath);
   // Set when a packet's own declarations contradict each other: nothing advances on top of that.
@@ -94,9 +103,46 @@ export async function handlePacket(root: string, filePath: string) {
   disciplineInfo(`[${new Date().toTimeString().slice(0, 8)}] New packet: ${fileName}`);
 
   const content = fs.readFileSync(filePath, 'utf-8');
-  const patches = extractEmbeddedPatches(content, filePath);
   const logNotes: string[] = [];
   let assembledOK = false;
+
+  // PREFLIGHT, before a single byte is written. The packet's embedded patches used to be
+  // materialised into pending/ and applied before identity was ever resolved, so a packet that was
+  // about to be rejected had already changed the four state files, and the rejection message
+  // ("Nothing written") was false. Parsing can also throw on a malformed patch block: that is a
+  // rejection of this packet, not a reason to kill the watcher.
+  let patches: ReturnType<typeof extractEmbeddedPatches> = [];
+  try {
+    patches = extractEmbeddedPatches(content, filePath);
+  } catch (err) {
+    disciplineWarn(`  Malformed patch block: ${err instanceof Error ? err.message : err}`);
+    disciplineWarn('  Nothing written: this packet is rejected whole. The watcher keeps running.');
+    await safeLog(root, fileName, ['patch-parse-failed'], '-');
+    return;
+  }
+
+  if (fileName.includes('SLICE_COMPLETION_PACKET')) {
+    // A completion packet must prove what it closes before it is allowed to change anything.
+    const identity = resolvePacketIdentity(content, fileName);
+    const problem = !identity.ok
+      ? identity.message
+      : !identity.id
+        ? `${fileName} does not say which slice it closes. Add a SLICE: line, or a "## Slice" section, naming exactly one slice.`
+        : null;
+    if (problem) {
+      disciplineWarn(`  ${problem}`);
+      disciplineWarn('  Nothing written: progress.md, the packets, the patches and the handoffs are untouched.');
+      await safeLog(root, fileName, ['completion-identity-conflict'], '-');
+      return;
+    }
+    const target = resolveConsumptionTarget(root, identity.ok && identity.id ? identity.id : '');
+    if (!target.ok) {
+      disciplineWarn(`  Cannot record the closure of slice ${identity.ok ? identity.id : ''}: ${target.reason}.`);
+      disciplineWarn('  Nothing written: progress.md, the packets, the patches and the handoffs are untouched.');
+      await safeLog(root, fileName, ['consumption-target-refused'], '-');
+      return;
+    }
+  }
 
   // Hold the writer lock around both mutations (patch application and progress
   // update) so a single packet's state changes are atomic against any other
@@ -122,67 +168,44 @@ export async function handlePacket(root: string, filePath: string) {
     }
 
     if (fileName.includes('SLICE_COMPLETION_PACKET')) {
-      // Everything that could refuse this closure is checked BEFORE anything is written. progress.md
-      // is a state file: recording a slice as closed and only then discovering that its packet is
-      // missing, duplicated or unwritable leaves the repo saying two different things at once.
-      const closedIdentity = resolvePacketIdentity(fs.readFileSync(filePath, 'utf-8'), fileName);
-      const identityProblem = !closedIdentity.ok
-        ? closedIdentity.message
-        : !closedIdentity.id
-          ? `${fileName} does not say which slice it closes. Add a SLICE: line, or a "## Slice" section, naming exactly one slice.`
-          : null;
+      // The preflight above already proved the identity and the consumption target of THIS file.
+      const closedSlice = resolvePacketIdentity(content, fileName).id ?? '';
 
-      if (identityProblem) {
-        disciplineWarn(`  ${identityProblem}`);
-        disciplineWarn('  Nothing written: progress.md, the packets and the handoffs are untouched. Fix the packet and re-drop it.');
-        logNotes.push('completion-identity-conflict');
+      disciplineInfo('  Updating progress...');
+      // The EXACT file that was validated, not the canonical filename: a suffixed completion packet
+      // used to be validated while progress.md recorded whatever sat in SLICE_COMPLETION_PACKET.md.
+      // updateProgress refuses a packet with no outcome or no gate, and that refusal is the whole
+      // signal: what the progress engine will not record, the consumption engine may not act on.
+      let progressRecorded = true;
+      try {
+        const res = await updateProgress(root, filePath);
+        logNotes.push(res.gate === 'passed' ? 'progress-updated' : `progress-updated,gate-${res.gate}`);
+      } catch (err) {
+        disciplineWarn(`  Refused progress.md update: ${err instanceof Error ? err.message : err}`);
+        disciplineWarn('  Nothing consumed and nothing assembled: a completion packet the progress engine refuses cannot close a slice.');
+        logNotes.push('progress-refused');
+        progressRecorded = false;
         identityBlocked = true;
-      } else {
-        const closedSlice = closedIdentity.ok && closedIdentity.id ? closedIdentity.id : '';
-        const target = resolveConsumptionTarget(root, closedSlice);
-        if (!target.ok) {
-          disciplineWarn(`  Cannot record the closure of slice ${closedSlice}: ${target.reason}.`);
-          disciplineWarn('  Nothing written: progress.md, the packets and the handoffs are untouched.');
-          logNotes.push('consumption-target-refused');
-          identityBlocked = true;
-        } else {
-          disciplineInfo('  Updating progress...');
-          // updateProgress refuses a packet with no outcome or no gate. That refusal is the whole
-          // signal: a completion the progress engine would not record is not a completion the
-          // consumption engine may act on either, so it blocks here instead of falling through.
-          let progressRecorded = true;
-          try {
-            const res = await updateProgress(root);
-            logNotes.push(res.gate === 'passed' ? 'progress-updated' : `progress-updated,gate-${res.gate}`);
-          } catch (err) {
-            disciplineWarn(`  Refused progress.md update: ${err instanceof Error ? err.message : err}`);
-            disciplineWarn('  Nothing consumed and nothing assembled: a completion packet the progress engine refuses cannot close a slice.');
-            logNotes.push('progress-refused');
-            progressRecorded = false;
+      }
+
+      if (progressRecorded && closedSlice) {
+        // Consumption is recorded only when THIS slice's completion packet carries a green gate,
+        // and it is recorded in place: the packet keeps its name and its content, it just stops
+        // being the next thing to implement. Renaming or moving it is what used to lose it.
+        const verdict = isSliceConsumed(root, closedSlice);
+        if (verdict.consumed) {
+          const marked = markSliceConsumed(root, closedSlice);
+          if (!marked.ok) {
+            disciplineWarn(`  Could not record consumption: ${marked.reason}.`);
+            logNotes.push('consumption-failed');
             identityBlocked = true;
-          }
-
-          if (progressRecorded) {
-
-          // Consumption is recorded only when THIS slice's completion packet carries a green gate,
-          // and it is recorded in place: the packet keeps its name and its content, it just stops
-          // being the next thing to implement. Renaming or moving it is what used to lose it.
-          const verdict = isSliceConsumed(root, closedSlice);
-          if (verdict.consumed) {
-            const marked = markSliceConsumed(root, closedSlice);
-            if (!marked.ok) {
-              disciplineWarn(`  Could not record consumption: ${marked.reason}.`);
-              logNotes.push('consumption-failed');
-              identityBlocked = true;
-            } else {
-              disciplineInfo(`  Slice ${closedSlice} consumed: ${path.basename(marked.path)} marked status: consumed.`);
-              logNotes.push(`consumed=${closedSlice}`);
-            }
           } else {
-            disciplineWarn(`  Slice ${closedSlice} not marked consumed: ${verdict.reason}.`);
-            logNotes.push(`not-consumed=${closedSlice}`);
+            disciplineInfo(`  Slice ${closedSlice} consumed: ${path.basename(marked.path)} marked status: consumed.`);
+            logNotes.push(`consumed=${closedSlice}`);
           }
-          }
+        } else {
+          disciplineWarn(`  Slice ${closedSlice} not marked consumed: ${verdict.reason}.`);
+          logNotes.push(`not-consumed=${closedSlice}`);
         }
       }
     }
@@ -195,10 +218,9 @@ export async function handlePacket(root: string, filePath: string) {
     // not only 4-reentry: detectNext gives deploy/feedback/hardening packets higher priority than
     // SLICE_COMPLETION_PACKET, so guarding only 4-reentry let a later high-priority packet bypass
     // a stale failed or unverified completion.
-    const completionPath = path.join(root, '.discipline', 'packets', 'SLICE_COMPLETION_PACKET.md');
     if (identityBlocked) {
       logNotes.push('advance-blocked');
-    } else if (fs.existsSync(completionPath) && completionGateState(root) !== 'passed') {
+    } else if (hasCompletionPacket(root) && completionGateState(root) !== 'passed') {
       disciplineWarn('  Completion gate is not green; not assembling or opening the next handoff. Declare "GATE_STATE: passed" and re-drop the packet.');
       logNotes.push('advance-blocked');
     } else {

@@ -17,11 +17,17 @@ const projectRoot = resolveProjectRoot(args['project-dir']);
 // only 'passed' is a green, and watch advances the pipeline only on 'passed'.
 export type { GateState };
 
-export async function updateProgress(root: string): Promise<{ gate: GateState }> {
+/**
+ * Record a completion packet in progress.md. The caller passes the EXACT packet it validated:
+ * defaulting to the canonical filename let the watcher validate one file and record another.
+ */
+export async function updateProgress(root: string, completionPacketPath?: string): Promise<{ gate: GateState }> {
   const progressPath = path.join(root, 'progress.md');
-  const packetPath = path.join(root, '.discipline', 'packets', 'SLICE_COMPLETION_PACKET.md');
-  if (!fs.existsSync(progressPath)) disciplineError('progress.md not found. Run discipline:hydrate first.');
-  if (!fs.existsSync(packetPath)) disciplineError('SLICE_COMPLETION_PACKET.md not found in .discipline/packets/');
+  // The caller passes the packet it validated; the canonical name is only the fallback.
+  const packetPath = completionPacketPath ?? path.join(root, '.discipline', 'packets', 'SLICE_COMPLETION_PACKET.md');
+  // Throw, never exit: run.ts and watch.ts import this, and exiting kills their tick.
+  if (!fs.existsSync(progressPath)) throw new Error('progress.md not found. Run discipline:hydrate first.');
+  if (!fs.existsSync(packetPath)) throw new Error(`Completion packet not found: ${packetPath}`);
 
   const fileContent = fs.readFileSync(packetPath, 'utf-8');
   const packet = parsePacketFile(packetPath, fileContent);
@@ -115,18 +121,43 @@ function extractSliceNumber(body: string): number {
 
 
 
-// Re-derive the current SLICE_COMPLETION_PACKET's gate state from disk. The watcher calls this on
-// EVERY event (not a per-event boolean) so a stale non-green completion left in .discipline/packets/
-// cannot be advanced past by a later, unrelated packet event.
+/** Every completion packet on disk, under any name. */
+function completionPacketFiles(root: string): string[] {
+  const dir = path.join(root, '.discipline', 'packets');
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir)
+    .filter((name) => /SLICE_COMPLETION_PACKET/i.test(name) && name.endsWith('.md'))
+    .map((name) => path.join(dir, name));
+}
+
+/** True when the project has at least one completion packet, whatever it is called. */
+export function hasCompletionPacket(root: string): boolean {
+  return completionPacketFiles(root).length > 0;
+}
+
+// Re-derive the completion gate state from disk. The watcher calls this on EVERY event (not a
+// per-event boolean) so a stale non-green completion left in .discipline/packets/ cannot be
+// advanced past by a later, unrelated packet event. It reads EVERY completion packet, not just the
+// canonical filename: guarding one name let a completion saved as SLICE_COMPLETION_PACKET_S13.md
+// carry a red gate while the watcher advanced straight past it.
 export function completionGateState(root: string): GateState {
-  const packetPath = path.join(root, '.discipline', 'packets', 'SLICE_COMPLETION_PACKET.md');
-  if (!fs.existsSync(packetPath)) return 'unverified';
-  try {
-    const gate = completionGate(fs.readFileSync(packetPath, 'utf-8'));
-    return gate ? gate.state : 'unverified';
-  } catch {
-    return 'unverified';
+  const files = completionPacketFiles(root);
+  if (files.length === 0) return 'unverified';
+
+  let worst: GateState = 'passed';
+  for (const packetPath of files) {
+    let state: GateState = 'unverified';
+    try {
+      const gate = completionGate(fs.readFileSync(packetPath, 'utf-8'));
+      state = gate ? gate.state : 'unverified';
+    } catch {
+      state = 'unverified';
+    }
+    // Fail closed: one non-green completion holds the pipeline, whatever the others say.
+    if (state === 'failed') return 'failed';
+    if (state === 'unverified') worst = 'unverified';
   }
+  return worst;
 }
 
 // Human-readable gate label for the progress log.
