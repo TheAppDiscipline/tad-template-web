@@ -57,10 +57,13 @@ export function isNone(text: string): boolean {
  * Passing an already-stripped body is safe: there is nothing left to strip.
  */
 /**
- * A heading that names the packet itself, e.g. `## SLICE_COMPLETION_PACKET` or
- * `# SLICE_COMPLETION_PACKET - S13`. Anything else is a section of the body.
+ * A heading that names the packet itself, e.g. `## SLICE_COMPLETION_PACKET`,
+ * `# SLICE_COMPLETION_PACKET_S13` or `# SLICE_COMPLETION_PACKET - S13`. Anything else is a section
+ * of the body. The name has to END in `_PACKET` (plus an optional id suffix): "an uppercase
+ * heading" was too loose, and it ate the `### GATES` or `### OUTCOME` that opens a packet whose
+ * identity lives in frontmatter, hiding the declaration inside it.
  */
-const PACKET_TITLE_RE = /^#{1,3}[ \t]+[A-Z][A-Z0-9_]{3,}(?:[ \t]*[-–—:][ \t]*.*)?$/;
+const PACKET_TITLE_RE = /^#{1,3}[ \t]+[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*_PACKET(?:_[A-Za-z0-9.-]+)?(?:[ \t]*[-–—:][ \t]*.*)?$/;
 
 export function completionBody(fileContent: string): string {
   const normalized = fileContent.replace(/^\uFEFF/, '');
@@ -296,6 +299,37 @@ export function completionGate(fileContent: string): { state: GateState; raw: st
   if (declarations.length !== 1) return { state: 'unverified', raw };
   const match = declarations[0].value.match(GATE_STATE_EXACT);
   return { state: match ? (match[1].toLowerCase() as GateState) : 'unverified', raw };
+}
+
+export type CompletionReading =
+  | { ok: true; outcome: string; gate: { state: GateState; raw: string } }
+  | { ok: false; reason: string };
+
+/**
+ * The ONE set of refusals a completion packet has to survive before anything is written for it.
+ *
+ * The progress engine used to own these checks alone, and it runs LAST: the watcher had already
+ * materialised and applied the packet's embedded patches by the time the packet was refused for
+ * having no outcome, so a rejected packet still rewrote the four state files and the rejection
+ * message ("Nothing written") was false. The watcher now runs this in its preflight and the
+ * progress engine runs the very same function, so the two cannot drift into disagreeing about
+ * what a recordable packet is.
+ */
+export function readCompletion(fileContent: string): CompletionReading {
+  const outcomeReading = readOutcome(fileContent);
+  if (!outcomeReading.ok) {
+    return { ok: false, reason: `SLICE_COMPLETION_PACKET states ${outcomeReading.reason}. Refusing to record a slice whose outcome the packet does not agree on.` };
+  }
+  // Fail-closed: an unstated outcome or gate is refused, never defaulted to an optimistic
+  // shipped/yes, because that default is itself a false green.
+  if (!outcomeReading.outcome) {
+    return { ok: false, reason: 'SLICE_COMPLETION_PACKET has no "### Outcome" (done | partial | blocked). Refusing to record a slice with an unknown outcome.' };
+  }
+  const gate = completionGate(fileContent);
+  if (!gate) {
+    return { ok: false, reason: 'SLICE_COMPLETION_PACKET has no "### Gates passed" section. Refusing to record a slice with an unknown gate result.' };
+  }
+  return { ok: true, outcome: outcomeReading.outcome, gate };
 }
 
 /** Kept for callers that already hold the items of a single gate section. */

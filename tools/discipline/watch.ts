@@ -12,6 +12,7 @@ import { extractEmbeddedPatches } from './lib/parse-patch.js';
 import { applyPatches } from './apply-patch.js';
 import { isSliceConsumed, markSliceConsumed, resolveConsumptionTarget, resolvePacketIdentity, selectStep5Packets, slicePasteReadyFileName } from './lib/slice-identity.js';
 import { updateProgress, completionGateState, hasCompletionPacket } from './update-progress.js';
+import { readCompletion } from './lib/completion-packet.js';
 import { assemblePasteReady } from './assemble-paste-ready.js';
 import { logRun } from './log-run.js';
 import { STEP_ASSEMBLY_MAP } from './lib/artifact-flow.js';
@@ -140,6 +141,16 @@ export async function handlePacket(root: string, filePath: string) {
       disciplineWarn(`  Cannot record the closure of slice ${identity.ok ? identity.id : ''}: ${target.reason}.`);
       disciplineWarn('  Nothing written: progress.md, the packets, the patches and the handoffs are untouched.');
       await safeLog(root, fileName, ['consumption-target-refused'], '-');
+      return;
+    }
+    // The SAME refusals the progress engine makes, run here, before the patches. Leaving them to
+    // updateProgress meant a packet with a valid identity, a ready target and a well-formed patch
+    // applied that patch and was refused afterwards, so the rejection left the state files rewritten.
+    const reading = readCompletion(content);
+    if (!reading.ok) {
+      disciplineWarn(`  ${reading.reason}`);
+      disciplineWarn('  Nothing written: progress.md, the packets, the patches and the handoffs are untouched.');
+      await safeLog(root, fileName, ['completion-not-recordable'], '-');
       return;
     }
   }

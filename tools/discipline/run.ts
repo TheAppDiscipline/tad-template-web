@@ -29,7 +29,7 @@ import * as readline from 'node:readline';
 import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import minimist from 'minimist';
-import { disciplineInfo, disciplineWarn } from './lib/types.js';
+import { disciplineInfo, disciplineWarn, type ParsedPatch } from './lib/types.js';
 import { resolveProjectRoot } from './lib/discipline-config.js';
 import { acquireSliceLease, releaseSliceLease, sliceLeaseStatus, acquireWriterLock, releaseWriterLock, isStopped } from './lib/locks.js';
 import { appendLedger, errorSignature } from './lib/ledger.js';
@@ -580,26 +580,29 @@ async function processPacketsUnderLock(root: string): Promise<void> {
 
   acquireWriterLock(root, { tool: 'discipline:run' });
   try {
-    // Extract embedded patch blocks from every packet into pending, then apply.
-    let extracted = 0;
+    // Parse EVERY packet before staging a single pending file: extraction now throws on a
+    // malformed block instead of silently dropping it, and staging as we parsed would leave the
+    // earlier packets' blocks in pending/ when a later one failed. Same preflight the watcher runs.
+    const staged: ParsedPatch[] = [];
     for (const name of packetFiles) {
       const full = path.join(packetsDir, name);
-      const content = fs.readFileSync(full, 'utf-8');
-      const patches = extractEmbeddedPatches(content, full);
-      if (patches.length === 0) continue;
+      try {
+        staged.push(...extractEmbeddedPatches(fs.readFileSync(full, 'utf-8'), full));
+      } catch (err) {
+        throw new Error(`Malformed patch block in ${name}: ${err instanceof Error ? err.message : err}. Nothing was staged or applied; fix the block and re-run.`);
+      }
+    }
+    if (staged.length > 0) {
       if (!fs.existsSync(pendingDir)) fs.mkdirSync(pendingDir, { recursive: true });
-      for (const patch of patches) {
+      for (const patch of staged) {
         const patchFile = path.join(pendingDir, `${new Date().toISOString().slice(0, 10)}_${patch.name}.md`);
         fs.writeFileSync(
           patchFile,
           `## ${patch.name}\n\nTARGET_FILE: ${patch.targetFile}\nPATCH_MODE: ${patch.patchMode}\nANCHOR: ${patch.anchor}\n\n### CONTENT\n${patch.content}`,
           'utf-8',
         );
-        extracted++;
       }
-    }
-    if (extracted > 0) {
-      disciplineInfo(`Extracted ${extracted} patch block(s) from packets; applying...`);
+      disciplineInfo(`Extracted ${staged.length} patch block(s) from packets; applying...`);
       // applyPatches takes the (re-entrant) writer lock itself; we already hold it.
       await applyPatches(root);
     }

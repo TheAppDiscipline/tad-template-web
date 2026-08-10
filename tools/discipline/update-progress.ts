@@ -6,7 +6,7 @@ import { disciplineError, disciplineInfo } from './lib/types.js';
 import { resolveProjectRoot } from './lib/discipline-config.js';
 import { parsePacketFile } from './lib/parse-packet.js';
 import {
-  cleanBullet, completionGate, escapeRe, firstMeaningful, inlineField, readOutcome,
+  cleanBullet, completionGate, escapeRe, firstMeaningful, inlineField, readCompletion,
   collectBullets, isNone, meaningfulItems, sectionItems, type GateState,
 } from './lib/completion-packet.js';
 
@@ -35,10 +35,13 @@ export async function updateProgress(root: string, completionPacketPath?: string
 
   const sliceNumber = packet.slice || extractSliceNumber(body);
   const sliceName = extractSliceName(body) || `Slice ${sliceNumber}`;
-  const outcomeReading = readOutcome(fileContent);
-  if (!outcomeReading.ok) throw new Error(`SLICE_COMPLETION_PACKET states ${outcomeReading.reason}. Refusing to record a slice whose outcome the packet does not agree on.`);
-  const outcome = outcomeReading.outcome;
-  const gate = completionGate(fileContent);
+  // The same refusals the watcher's preflight ran BEFORE it wrote anything, from the same
+  // function: what the progress engine will not record, nothing else may act on either. Throw (not
+  // disciplineError, which process.exit()s) so watch/run tolerate it and keep the process alive;
+  // the CLI path turns the throw into a clear non-zero exit.
+  const reading = readCompletion(fileContent);
+  if (!reading.ok) throw new Error(reading.reason);
+  const { outcome, gate } = reading;
   const scopeDelivered = joinItems(sectionItems(body, 'Scope delivered'));
   const openIssues = meaningfulItems(sectionItems(body, 'Open issues'));
   const nextRec = firstMeaningful(
@@ -46,12 +49,6 @@ export async function updateProgress(root: string, completionPacketPath?: string
     sectionItems(body, 'Next recommendation'),
   );
 
-  // Fail-closed: refuse to record a completion whose outcome or gate result is not stated,
-  // instead of defaulting to an optimistic shipped/yes (that default is itself a false green).
-  // Throw (not disciplineError, which process.exit()s) so watch/run tolerate it as a warning and
-  // keep the process alive; the CLI path turns the throw into a clear non-zero exit.
-  if (!outcome) throw new Error('SLICE_COMPLETION_PACKET has no "### Outcome" (done | partial | blocked). Refusing to record a slice with an unknown outcome.');
-  if (!gate) throw new Error('SLICE_COMPLETION_PACKET has no "### Gates passed" section. Refusing to record a slice with an unknown gate result.');
   const gatesPassed = gateLabel(gate);
 
   // Preserve the file's existing newline style: reading the template on Windows yields CRLF,

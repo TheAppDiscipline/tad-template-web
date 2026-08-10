@@ -33,22 +33,23 @@ export function parsePatchFile(filePath: string, fileContent: string): ParsedPat
   return { name, targetFile, patchMode, anchor, content, sourcePath: filePath };
 }
 
+/**
+ * The patch blocks a packet carries. A bare `## NAME_PATCH_BLOCK` / `## NAME_APPEND_BLOCK` heading
+ * is an OPERATIVE marker: it is the packet asking for a state file to be rewritten.
+ *
+ * A block the parser cannot read therefore THROWS. Skipping it made the packet behave as if it had
+ * never carried that block: the operator saw a normal, successful tick and a state file that was
+ * silently never patched, and the watcher's own rejection path was unreachable because the error
+ * never left this function. The caller rejects the whole packet instead, naming the block.
+ */
 export function extractEmbeddedPatches(packetContent: string, packetPath: string): ParsedPatch[] {
   const lines = packetContent.split('\n');
-  const patches: ParsedPatch[] = [];
   const patchPattern = /^#{1,3}\s+\w+_(PATCH_BLOCK|APPEND_BLOCK)$/;
-  let blockStart = -1;
-
+  const starts: number[] = [];
   for (let i = 0; i < lines.length; i++) {
-    if (patchPattern.test(lines[i].trim())) {
-      if (blockStart !== -1) {
-        try { patches.push(parsePatchFile(packetPath, lines.slice(blockStart, i).join('\n'))); } catch { /* skip malformed embedded patch */ }
-      }
-      blockStart = i;
-    }
+    if (patchPattern.test(lines[i].trim())) starts.push(i);
   }
-  if (blockStart !== -1) {
-    try { patches.push(parsePatchFile(packetPath, lines.slice(blockStart).join('\n'))); } catch { /* skip malformed embedded patch */ }
-  }
-  return patches;
+  return starts.map((start, index) =>
+    parsePatchFile(packetPath, lines.slice(start, starts[index + 1] ?? lines.length).join('\n')),
+  );
 }

@@ -2914,8 +2914,10 @@ test('discipline:watch does not assemble the next handoff when the completion pa
   ].join('\n'), 'utf8')
   const result = spawnSync(process.execPath, [tsxCli, tester], { cwd: repoRoot, env: process.env, encoding: 'utf8', timeout: 30000 })
   assert.equal(result.status, 0, getOutput(result))
-  assert.match(getOutput(result), /Refused progress.md update/)
-  assert.match(getOutput(result), /not assembling or opening the next handoff/)
+  // Refused in the preflight now, so the tick ends there: no patches, no progress, and the
+  // assembly branch is never reached at all (which is what the empty paste-ready dir below proves).
+  assert.match(getOutput(result), /has no "### Outcome"/)
+  assert.match(getOutput(result), /Nothing written/)
   const pasteReadyDir = path.join(projectRoot, '.discipline', 'paste-ready')
   const files = fs.existsSync(pasteReadyDir) ? fs.readdirSync(pasteReadyDir) : []
   assert.equal(files.length, 0, `no handoff may be assembled on refusal, found: ${files.join(', ')}`)
@@ -3725,8 +3727,10 @@ test('discipline:watch stops when the progress engine refuses the completion pac
     'STEP_4_EXECUTION_PACKET.md': '## STEP_4_EXECUTION_PACKET\n\nSTATUS: validated\n\nbody\n',
   })
   const output = getOutput(runHandlePacket(projectRoot))
-  assert.match(output, /Refused progress.md update/)
-  assert.match(output, /Nothing consumed and nothing assembled/)
+  // The refusal is now stated in the preflight, before anything is written, and the progress engine
+  // reuses the very same check: the two cannot drift into disagreeing about what is recordable.
+  assert.match(output, /has no "### Outcome"/)
+  assert.match(output, /Nothing written/)
   assert.doesNotMatch(fs.readFileSync(path.join(projectRoot, '.discipline', 'packets', 'STEP_5_SLICE_PACKET_13.md'), 'utf8'), /status: consumed/)
   const pasteReady = path.join(projectRoot, '.discipline', 'paste-ready')
   assert.deepEqual(fs.existsSync(pasteReady) ? fs.readdirSync(pasteReady).filter((f) => f.endsWith('.md')) : [], [])
@@ -3931,13 +3935,20 @@ test('slice identity: archived packets are history, and one broken packet blocks
 test('completion packet: a packet with no title keeps its first section, and fenced fields are examples', () => {
   const FM = ['---', 'slice: 13', '---', ''].join('\n')
   const cases = {
+    // "Any uppercase heading" was still too loose: an all-caps SECTION name was eaten as a title,
+    // so the failing gate and the blocking outcome that opened the packet were both invisible and
+    // the packet read as a clean green. A title has to NAME A PACKET.
+    hiddenGate: FM + ['### GATES', '- GATE_STATE: failed', '', '### Outcome', '- done', '', '### Gates', '- GATE_STATE: passed', ''].join('\n'),
+    hiddenOutcome: FM + ['### OUTCOME', '- blocked', '', '### Outcome', '- done', '', '### Gates passed', '- GATE_STATE: passed', ''].join('\n'),
+    onlyUppercaseSection: FM + ['### GATES', '- GATE_STATE: failed', ''].join('\n'),
     noTitleContradiction: FM + ['### Gates passed', '- GATE_STATE: failed', '', '### Outcome', '- done', '', '### Gates', '- GATE_STATE: passed', ''].join('\n'),
     noTitleHonest: FM + ['### Outcome', '- done', '', '### Gates passed', '- GATE_STATE: passed', ''].join('\n'),
     // Inline fields were read from the raw body while sections were read from a fence-free copy, so
     // a fenced example could close a slice with no operative declaration anywhere in the packet.
-    fencedFields: FM + ['## SLICE_COMPLETION_PACKET', '', '### Notes', '\`\`\`', 'OUTCOME: done', 'GATES: GATE_STATE: passed', '\`\`\`', ''].join('\n'),
+    fencedFields: FM + ['## SLICE_COMPLETION_PACKET', '', '### Notes', '```', 'OUTCOME: done', 'GATES: GATE_STATE: passed', '```', ''].join('\n'),
     titled: FM + ['## SLICE_COMPLETION_PACKET', '', '### Outcome', '- done', '', '### Gates passed', '- GATE_STATE: passed', ''].join('\n'),
     titledWithSuffix: FM + ['# SLICE_COMPLETION_PACKET - S13', '', '### Outcome', '- done', '', '### Gates passed', '- GATE_STATE: passed', ''].join('\n'),
+    titledWithIdSuffix: FM + ['# SLICE_COMPLETION_PACKET_S13', '', '### Outcome', '- done', '', '### Gates passed', '- GATE_STATE: passed', ''].join('\n'),
   }
   const out = sliceIdentityEval(`
     const packet = await import('${pathToImport(path.join(repoRoot, 'tools', 'discipline', 'lib', 'completion-packet.ts'))}')
@@ -3948,70 +3959,109 @@ test('completion packet: a packet with no title keeps its first section, and fen
     }
     emit(Object.fromEntries(Object.entries(${JSON.stringify(cases)}).map(([k, v]) => [k, read(v)])))
   `)
+  // Two gate declarations that disagree are unverified, not the surviving green one.
+  assert.deepEqual(out.hiddenGate, { gate: 'unverified', outcome: 'done' })
+  assert.deepEqual(out.hiddenOutcome, { gate: 'passed', outcome: 'CONFLICT' })
+  assert.deepEqual(out.onlyUppercaseSection, { gate: 'failed', outcome: null })
   assert.deepEqual(out.noTitleContradiction, { gate: 'unverified', outcome: 'done' })
   assert.deepEqual(out.noTitleHonest, { gate: 'passed', outcome: 'done' })
   // A fenced example declares nothing: no gate location, no outcome.
   assert.deepEqual(out.fencedFields, { gate: null, outcome: null })
+  // A real title is still stripped, so the packet's own name is never a declaration.
   assert.deepEqual(out.titled, { gate: 'passed', outcome: 'done' })
   assert.deepEqual(out.titledWithSuffix, { gate: 'passed', outcome: 'done' })
+  assert.deepEqual(out.titledWithIdSuffix, { gate: 'passed', outcome: 'done' })
 })
 
 // "Nothing written" has to be true when it is printed. The watcher used to materialise and apply a
 // packet's embedded patches before it ever resolved identity, so a packet on its way to rejection
 // had already rewritten the four state files.
-test('discipline:watch writes nothing before the packet is validated, and survives a malformed one', () => {
+test('discipline:watch writes nothing for a packet it is about to reject, on identity or on semantics', () => {
   const patchBlock = ['## FINDINGS_APPEND_BLOCK', '', 'TARGET_FILE: findings.md', 'PATCH_MODE: append', 'ANCHOR: ## Decisions', '',
     '### CONTENT', '- PATCH_FROM_A_REJECTED_PACKET'].join('\n')
-  const projectRoot = createDisciplineProject({
-    'STEP_5_SLICE_PACKET_13.md': ['---', 'slice: 13', 'status: ready', '---', '', '# STEP_5_SLICE_PACKET', '', 'SLICE: 13', '', '## Goal', '- x', ''].join('\n'),
+  const readyPacket = ['---', 'slice: 13', 'status: ready', '---', '', '# STEP_5_SLICE_PACKET', '', 'SLICE: 13', '', '## Goal', '- x', ''].join('\n')
+  const before = new Map()
+  const snapshot = (root) => {
+    before.set(root, ['findings.md', 'progress.md', 'task_plan.md', 'discipline.md']
+      .map((f) => fs.readFileSync(path.join(root, f), 'utf8')))
+    return root
+  }
+  const untouched = (root, note) => {
+    const now = ['findings.md', 'progress.md', 'task_plan.md', 'discipline.md']
+      .map((f) => fs.readFileSync(path.join(root, f), 'utf8'))
+    assert.deepEqual(now, before.get(root), note)
+    const pending = path.join(root, '.discipline', 'patches', 'pending')
+    assert.deepEqual(fs.existsSync(pending) ? fs.readdirSync(pending) : [], [], 'nor materialised into pending/')
+  }
+
+  // 1. Rejected on identity, with a well-formed patch attached.
+  const contradictory = snapshot(createDisciplineProject({
+    'STEP_5_SLICE_PACKET_13.md': readyPacket,
     'SLICE_COMPLETION_PACKET.md': ['## SLICE_COMPLETION_PACKET', '', '## Slice', '- Slice 13', '', '## S14 - the heading says another slice', '',
       '### Outcome', '- done', '', '### Gates passed', '- GATE_STATE: passed', '', patchBlock].join('\n'),
-  })
-  const findingsBefore = fs.readFileSync(path.join(projectRoot, 'findings.md'), 'utf8')
-  const progressBefore = fs.readFileSync(path.join(projectRoot, 'progress.md'), 'utf8')
+  }))
+  const identityOut = getOutput(runHandlePacket(contradictory))
+  assert.match(identityOut, /Contradictory slice declarations/)
+  assert.match(identityOut, /Nothing written/)
+  untouched(contradictory, 'the embedded patch must not have been applied')
 
-  const output = getOutput(runHandlePacket(projectRoot))
-  assert.match(output, /Contradictory slice declarations/)
-  assert.match(output, /Nothing written/)
-  assert.equal(fs.readFileSync(path.join(projectRoot, 'findings.md'), 'utf8'), findingsBefore, 'the embedded patch must not have been applied')
-  assert.equal(fs.readFileSync(path.join(projectRoot, 'progress.md'), 'utf8'), progressBefore)
-  assert.deepEqual(fs.readdirSync(path.join(projectRoot, '.discipline', 'patches', 'pending')), [], 'nor materialised into pending/')
+  // 2. Rejected on SEMANTICS, with a well-formed patch attached: identity resolves, the target is
+  // ready, the patch parses. Only the outcome is missing, and that check used to run inside
+  // updateProgress, AFTER applyPatches had already rewritten findings.md.
+  const noOutcome = snapshot(createDisciplineProject({
+    'STEP_5_SLICE_PACKET_13.md': readyPacket,
+    'SLICE_COMPLETION_PACKET.md': ['## SLICE_COMPLETION_PACKET', '', 'SLICE: 13', '',
+      '### Gates passed', '- GATE_STATE: passed', '', patchBlock].join('\n'),
+  }))
+  const semanticOut = getOutput(runHandlePacket(noOutcome))
+  assert.match(semanticOut, /has no "### Outcome"/)
+  assert.match(semanticOut, /Nothing written/)
+  untouched(noOutcome, 'a packet refused for its outcome must not have applied its patch first')
+})
 
-  // A rejected packet does not kill the watcher: it must still process the next event. Before
-  // parse-patch threw instead of calling disciplineError (process.exit), one malformed patch block
-  // took the whole watcher down with it.
-  const rejected = createDisciplineProject({
+// Extraction used to swallow the parse error of an embedded patch block, so the block was silently
+// dropped and the packet sailed on as if it had never carried one. The watcher's own rejection path
+// was unreachable, and the state file the block targeted was simply never written.
+test('discipline:watch rejects a packet whose patch block is malformed, and keeps running', () => {
+  const before = new Map()
+  const snapshot = (root) => {
+    before.set(root, ['findings.md', 'progress.md', 'task_plan.md', 'discipline.md']
+      .map((f) => fs.readFileSync(path.join(root, f), 'utf8')))
+    return root
+  }
+  const untouched = (root, note) => {
+    const now = ['findings.md', 'progress.md', 'task_plan.md', 'discipline.md']
+      .map((f) => fs.readFileSync(path.join(root, f), 'utf8'))
+    assert.deepEqual(now, before.get(root), note)
+    const pending = path.join(root, '.discipline', 'patches', 'pending')
+    assert.deepEqual(fs.existsSync(pending) ? fs.readdirSync(pending) : [], [], 'nor materialised into pending/')
+  }
+  const malformed = snapshot(createDisciplineProject({
     'STEP_4_EXECUTION_PACKET.md': '## STEP_4_EXECUTION_PACKET\n\nSTATUS: validated\n\n### Slices\n- Slice 13\n',
     'SLICE_COMPLETION_PACKET.md': ['## SLICE_COMPLETION_PACKET', '', 'SLICE: 13', '', '### Outcome', '- done', '',
-      '### Gates passed', '- GATE_STATE: passed', ''].join('\n'),
-  })
-  const script = path.join(rejected, 'two-events.mjs')
+      '### Gates passed', '- GATE_STATE: passed', '', '## FINDINGS_APPEND_BLOCK', '', 'TARGET_FILE: findings.md', '',
+      '### CONTENT', '- no mode, no anchor'].join('\n'),
+  }))
+  const script = path.join(malformed, 'two-events.mjs')
   fs.writeFileSync(
     script,
     `import { handlePacket } from '${pathToImport(path.join(repoRoot, 'tools', 'discipline', 'watch.ts'))}'
-import { parsePatchFile } from '${pathToImport(path.join(repoRoot, 'tools', 'discipline', 'lib', 'parse-patch.ts'))}'
-const packets = ${JSON.stringify(path.join(rejected, '.discipline', 'packets'))}
-await handlePacket(${JSON.stringify(rejected)}, packets + '/SLICE_COMPLETION_PACKET.md')
+const packets = ${JSON.stringify(path.join(malformed, '.discipline', 'packets'))}
+await handlePacket(${JSON.stringify(malformed)}, packets + '/SLICE_COMPLETION_PACKET.md')
 console.log('FIRST EVENT SURVIVED')
-await handlePacket(${JSON.stringify(rejected)}, packets + '/STEP_4_EXECUTION_PACKET.md')
+await handlePacket(${JSON.stringify(malformed)}, packets + '/STEP_4_EXECUTION_PACKET.md')
 console.log('SECOND EVENT PROCESSED')
-try {
-  parsePatchFile('bad.md', '## Block\\n\\nTARGET_FILE: findings.md\\n\\n### CONTENT\\n- x\\n')
-  console.log('PARSER DID NOT THROW')
-} catch (err) {
-  console.log('PARSER THREW: ' + err.message.slice(0, 40))
-}
 `,
     'utf8',
   )
   const twoEvents = getOutput(runTsx(script))
-  // No STEP_5_SLICE_PACKET to record the closure in, so the packet is refused: a rejection.
-  assert.match(twoEvents, /Cannot record the closure of slice 13/)
+  assert.match(twoEvents, /Malformed patch block: PATCH_MODE missing/)
   assert.match(twoEvents, /Nothing written/)
+  untouched(malformed, 'a malformed block rejects the packet whole')
+  // And the rejection does not kill the watcher: disciplineError (process.exit) inside the parser
+  // used to take the whole process down with the packet.
   assert.match(twoEvents, /FIRST EVENT SURVIVED/)
   assert.match(twoEvents, /SECOND EVENT PROCESSED/, 'the watcher must keep running after rejecting a packet')
-  // And a malformed patch block is reported by throwing, so a caller can catch it.
-  assert.match(twoEvents, /PARSER THREW: PATCH_MODE missing/)
 })
 
 // The engines must read the file the watcher validated, and the advance guard must see every
