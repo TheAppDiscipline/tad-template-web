@@ -3852,3 +3852,76 @@ test('slice identity: both engines read the same document scope', () => {
   assert.equal(out.consumption.consumed, false)
   assert.match(out.consumption.reason, /states no outcome/)
 })
+
+// Found by an adversarial audit of this contract, each one reproduced end to end before the fix.
+// The common shape: a declaration that is present in the file but invisible to the reader, or a
+// decoration that made the reader see a declaration nobody wrote.
+test('completion packet: no declaration hides behind a heading, a marker or an emphasis', () => {
+  const FM = ['---', 'slice: 13', 'status: ready', '---', '', '## SLICE_COMPLETION_PACKET', ''].join('\n')
+  const cases = {
+    // The packet's own title was not the only heading being stripped: every leading heading was,
+    // so the FIRST section vanished and its declarations stopped counting as contradictions.
+    firstSectionHidden: FM + ['### Gates passed', '- GATE_STATE: failed', '', '### Outcome', '- done', '', '### Gates', '- GATE_STATE: passed', ''].join('\n'),
+    // The mirror of that defect: an honest packet whose first section is the outcome.
+    honest: FM + ['### Outcome', '- done', '', '### Gates passed', '- GATE_STATE: passed', ''].join('\n'),
+    // The bullet parser folds a marker-less line into the previous bullet, so this GATE_STATE was
+    // absorbed into the green one and disappeared.
+    bulletless: FM + ['### Outcome', '- done', '', '### Gates passed', '- GATE_STATE: passed', 'GATE_STATE: failed', ''].join('\n'),
+    // Emphasis and a "+" marker are decoration, not a different kind of statement.
+    emphasised: FM + ['### Outcome', '- done', '', '### Gates passed', '- GATE_STATE: passed', '- **GATE_STATE: failed**', ''].join('\n'),
+    plusMarker: FM + ['### Outcome', '- done', '', '### Gates passed', '- GATE_STATE: passed', '+ GATE_STATE: failed', ''].join('\n'),
+    // A packet quoting its own template is showing an example, not declaring a second gate.
+    fencedExample: FM + ['### Outcome', '- done', '', '### Gates passed', '- GATE_STATE: passed', '', '### Notes', '\`\`\`', '### Gates passed', '- GATE_STATE: failed', '\`\`\`', ''].join('\n'),
+    // Prose that happens to start with the field name is prose. Without the colon requirement it
+    // became an outcome declaration and turned an honest packet into a contradiction.
+    prose: FM + ['### Outcome', '- done', '', '### Gates passed', '- GATE_STATE: passed', '', '### Notes', 'Outcome was reviewed with the operator', ''].join('\n'),
+  }
+
+  const out = sliceIdentityEval(`
+    const packet = await import('${pathToImport(path.join(repoRoot, 'tools', 'discipline', 'lib', 'completion-packet.ts'))}')
+    const read = (body) => {
+      const gate = packet.completionGate(body)
+      const outcome = packet.readOutcome(body)
+      return { gate: gate ? gate.state : null, outcome: outcome.ok ? outcome.outcome : 'CONFLICT' }
+    }
+    emit(Object.fromEntries(Object.entries(${JSON.stringify(cases)}).map(([key, body]) => [key, read(body)])))
+  `)
+
+  // Two gate declarations that disagree: unverified, whichever section carries them.
+  assert.deepEqual(out.firstSectionHidden, { gate: 'unverified', outcome: 'done' })
+  assert.deepEqual(out.bulletless, { gate: 'unverified', outcome: 'done' })
+  assert.deepEqual(out.emphasised, { gate: 'unverified', outcome: 'done' })
+  assert.deepEqual(out.plusMarker, { gate: 'unverified', outcome: 'done' })
+  // And the readings that must stay green, so the fix does not trade a false green for a false red.
+  assert.deepEqual(out.honest, { gate: 'passed', outcome: 'done' })
+  assert.deepEqual(out.fencedExample, { gate: 'passed', outcome: 'done' })
+  assert.deepEqual(out.prose, { gate: 'passed', outcome: 'done' })
+})
+
+test('slice identity: archived packets are history, and one broken packet blocks only its own slice', () => {
+  const packet = ['---', 'slice: 13', 'status: ready', '---', '', '# STEP_5_SLICE_PACKET', '', 'SLICE: 13', ''].join('\n')
+  const archived = createDisciplineProject({
+    'STEP_5_SLICE_PACKET_13.md': packet,
+    'STEP_5_SLICE_PACKET_13.consumed.md': packet,
+    'STEP_5_SLICE_PACKET_13.2.md': packet.replace('slice: 13', 'slice: 13.2').replace('SLICE: 13', 'SLICE: 13.2'),
+  })
+  const foreignConflict = createDisciplineProject({
+    'SLICE_COMPLETION_PACKET.md': ['## SLICE_COMPLETION_PACKET', '', 'SLICE: 13', '', '### Outcome', '- done', '',
+      '### Gates passed', '- GATE_STATE: passed', ''].join('\n'),
+    'SLICE_COMPLETION_PACKET_99.md': ['---', 'slice: 99', '---', '', '## SLICE_COMPLETION_PACKET', '', 'SLICE: 98', ''].join('\n'),
+  })
+
+  const out = sliceIdentityEval(`
+    emit({
+      active: slice.activeSlicePackets(${JSON.stringify(archived)}).map((p) => p.fileName).sort(),
+      selection: slice.selectStep5Packets(${JSON.stringify(archived)}),
+      consumed: slice.isSliceConsumed(${JSON.stringify(foreignConflict)}, '13'),
+    })
+  `)
+  // A .consumed.md name is an archive; a composite id keeps its dot and stays active.
+  assert.deepEqual(out.active, ['STEP_5_SLICE_PACKET_13.2.md', 'STEP_5_SLICE_PACKET_13.md'])
+  // Counting the archive as active gave slice 13 two packets and deadlocked every selection.
+  assert.equal(out.selection.ok, true, out.selection.reason)
+  // A packet that contradicts itself about slice 99/98 has nothing to do with slice 13.
+  assert.equal(out.consumed.consumed, true)
+})

@@ -37,7 +37,12 @@ export interface Declaration {
 }
 
 export function escapeRe(s: string): string { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
-export function cleanBullet(s: string): string { return s.replace(/^\s*[-*]\s+/, '').replace(/\s+/g, ' ').trim(); }
+export function cleanBullet(s: string): string { return s.replace(/^\s*[-*+]\s+/, '').replace(/\s+/g, ' ').trim(); }
+
+/** Drop markdown emphasis so `**GATE_STATE: failed**` is the declaration it plainly is. */
+export function stripEmphasis(text: string): string {
+  return text.replace(/\*\*/g, '').replace(/__/g, '').replace(/^[*_]+|[*_]+$/g, '').trim();
+}
 
 /** A value that carries no information: empty, "none", "n/a", any punctuation/case. */
 export function isNone(text: string): boolean {
@@ -55,15 +60,28 @@ export function completionBody(fileContent: string): string {
   const normalized = fileContent.replace(/^\uFEFF/, '');
   const lines = normalized.split('\n');
   let start = 0;
+
+  // 1. A leading YAML frontmatter block.
   if (lines[0]?.trim() === '---') {
     const close = lines.findIndex((line, index) => index > 0 && line.trim() === '---');
     if (close !== -1) start = close + 1;
   }
-  // Skip the packet's own title and the header fields parse-packet.ts treats as metadata.
+
+  // 2. Blank lines before the title.
+  while (start < lines.length && lines[start].trim() === '') start++;
+
+  // 3. The packet's OWN title: AT MOST ONE heading line. Stripping more deletes the FIRST SECTION's
+  //    heading and orphans its bullets, which is how a `### Gates passed` carrying
+  //    `GATE_STATE: failed` became invisible while a later `### Gates` read green and the slice was
+  //    consumed anyway. The mirror is just as bad: an honest packet whose first section is
+  //    `### Outcome` was refused as having no outcome at all.
+  if (start < lines.length && /^#{1,3}\s+\S/.test(lines[start].trim())) start++;
+
+  // 4. The header fields parse-packet.ts treats as metadata, and the blanks around them. A heading
+  //    ends this loop: from the first section on, everything belongs to the body.
   while (start < lines.length) {
     const line = lines[start].trim();
-    if (line === '' || /^#{1,3}\s+\S/.test(line) === false && /^(STATUS|SOURCE_STEP):/i.test(line)) { start++; continue; }
-    if (/^#{1,3}\s+\S/.test(line) && start === lines.findIndex((l, i) => i >= start && l.trim() !== '')) { start++; continue; }
+    if (line === '' || /^(STATUS|SOURCE_STEP):/i.test(line)) { start++; continue; }
     break;
   }
   return lines.slice(start).join('\n').trim();
@@ -71,8 +89,24 @@ export function completionBody(fileContent: string): string {
 
 /** Raw text of EVERY "## Name" / "### Name" section (case-insensitive), in file order. */
 export function sectionTexts(body: string, name: string): string[] {
-  const re = new RegExp(`#{2,3}[ \\t]+${escapeRe(name)}[ \\t]*\\r?\\n([\\s\\S]*?)(?=\\r?\\n#{2,3}[ \\t]|$)`, 'gi');
-  return [...body.matchAll(re)].map((match) => match[1].trim()).filter((text) => text !== '');
+  const re = new RegExp('^#{2,3}[ \\t]+' + escapeRe(name) + '[ \\t]*$([\\s\\S]*?)(?=^#{2,3}[ \\t]|$(?![\\s\\S]))', 'gim');
+  return [...stripFences(body).matchAll(re)].map((match) => match[1].trim()).filter((text) => text !== '');
+}
+
+/**
+ * Blank out fenced code blocks, keeping the line count. A packet often quotes the template it was
+ * written from, and a quoted `### Gates passed` with a quoted GATE_STATE is an example, not a
+ * second declaration: counting it turned an honest green packet into an unverified one.
+ */
+export function stripFences(body: string): string {
+  let inFence = false;
+  return body
+    .split('\n')
+    .map((line) => {
+      if (/^[ \t]*(```|~~~)/.test(line)) { inFence = !inFence; return ''; }
+      return inFence ? '' : line;
+    })
+    .join('\n');
 }
 
 /** Raw text under the first matching heading, kept for callers that only need one. */
@@ -108,7 +142,7 @@ export function sectionItems(body: string, name: string): string[] {
 
 /** Legacy inline "KEY: value" fields (pre-skill packet shape); EVERY occurrence, in file order. */
 export function inlineFields(body: string, name: string): string[] {
-  const re = new RegExp(`^[-*]?[ \\t]*${escapeRe(name)}[:\\s]+(.+)$`, 'gim');
+  const re = new RegExp('^[-*+]?[ \\t]*' + escapeRe(name) + '[ \\t]*:[ \\t]*(.+)$', 'gim');
   return [...body.matchAll(re)].map((match) => match[1].trim()).filter(Boolean);
 }
 
@@ -128,7 +162,7 @@ export function firstMeaningful(inline: string | null, items: string[]): string 
 
 /** Normalize an outcome to the shared vocabulary, or keep the first clause so it can be named. */
 function normalizeOutcome(raw: string): string | null {
-  const text = cleanBullet(raw).toLowerCase();
+  const text = stripEmphasis(cleanBullet(raw)).toLowerCase();
   if (!text || isNone(text)) return null;
   const known = [...TERMINAL_OUTCOMES, ...OPEN_OUTCOMES].find((k) => text.startsWith(k));
   if (known) return known;
@@ -206,7 +240,7 @@ export function gateDeclarations(fileContent: string): { declarations: Declarati
   let locations = 0;
 
   const consider = (where: string, item: string) => {
-    const line = cleanBullet(item);
+    const line = stripEmphasis(cleanBullet(item));
     if (!line || isNone(line)) return;
     evidence.push(line);
     if (GATE_STATE_PREFIX.test(line)) declarations.push({ where, raw: line, value: line });
@@ -219,7 +253,9 @@ export function gateDeclarations(fileContent: string): { declarations: Declarati
   for (const [name, texts] of [['### Gates passed', sectionTexts(body, 'Gates passed')], ['### Gates', sectionTexts(body, 'Gates')]] as const) {
     for (const text of texts) {
       locations++;
-      for (const item of collectBullets(text.split('\n'))) consider(name, item);
+      // Every LINE of the section, not every bullet: a GATE_STATE written without a marker is
+      // folded into the previous bullet by the bullet parser, which used to hide it completely.
+      for (const line of text.split('\n')) consider(name, line);
     }
   }
   return { declarations, locations, evidence };

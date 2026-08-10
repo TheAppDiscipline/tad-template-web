@@ -418,6 +418,24 @@ export function locateSlicePacket(root: string, sliceId: string, taskPlan?: stri
   return { ok: true, path: generic, sliceId: wanted, legacy: true, warnings };
 }
 
+/** Name segments that mark a packet as history rather than work in progress. */
+const ARCHIVE_MARKERS = /^(consumed|superseded|archived|parked|draft|old|bak|backup)$/i;
+
+/**
+ * Is this the filename of an ACTIVE Step 5 packet? Composite slice ids carry dots
+ * (`STEP_5_SLICE_PACKET_13.2.md`), so the suffix cannot simply forbid them; an archive marker as
+ * the last dot-segment (`_13.consumed.md`) is what separates history from work. Counting an
+ * archive as active gave its slice two "active" packets and deadlocked every Step 5 selection.
+ */
+export function isActiveSlicePacketName(fileName: string): boolean {
+  const match = fileName.match(/^STEP_5_SLICE_PACKET(?:_(.+))?\.md$/i);
+  if (!match) return false;
+  const suffix = match[1];
+  if (!suffix) return true;
+  const segments = suffix.split('.');
+  return !ARCHIVE_MARKERS.test(segments[segments.length - 1]);
+}
+
 /** What a packet says about itself, beyond which slice it is for. */
 export interface ActiveSlicePacket {
   path: string;
@@ -456,7 +474,7 @@ export function activeSlicePackets(root: string): ActiveSlicePacket[] {
   const found: ActiveSlicePacket[] = [];
   for (const file of fs.readdirSync(dir)) {
     // Archived packets carry extra name segments (`.S12.consumed.md`); they are history, not work.
-    if (!/^STEP_5_SLICE_PACKET(_[A-Za-z0-9._-]+)?\.md$/i.test(file)) continue;
+    if (!isActiveSlicePacketName(file)) continue;
     const full = path.join(dir, file);
     const content = fs.readFileSync(full, 'utf-8');
     const identity = resolvePacketIdentity(content, file);
@@ -624,7 +642,12 @@ export function isSliceConsumed(root: string, sliceId: string): { consumed: bool
   for (const file of fs.readdirSync(dir).filter((f) => /SLICE_COMPLETION_PACKET/i.test(f) && f.endsWith('.md'))) {
     const content = fs.readFileSync(path.join(dir, file), 'utf-8');
     const identity = resolvePacketIdentity(content, file);
-    if (!identity.ok) return { consumed: false, reason: `${file}: ${identity.message}` };
+    if (!identity.ok) {
+      // A packet that names two slices blocks the slices it names, not the whole project: another
+      // slice's closure has nothing to do with this file's contradiction.
+      if (!identity.declarations.some((declaration) => declaration.id === wanted)) continue;
+      return { consumed: false, reason: `${file}: ${identity.message}` };
+    }
     if (identity.id !== wanted) continue;
     // The SAME reader the progress engine uses, not a second regex: two conflicting GATE_STATE
     // declarations are 'unverified' there, and taking the first match here made the same packet
