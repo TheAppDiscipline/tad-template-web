@@ -272,7 +272,10 @@ next to a `.sha256` of its bytes, the suffixed packet is created, and nothing is
 so running it twice does what running it once did. **Each packet migrates as a transaction**: every
 output path is checked before any of them is created, each is created exclusively, a failure removes
 what that attempt made, and the original is deleted last. So a collision leaves nothing behind to
-block the retry. The migrated packet keeps `status: ready` only
+block the retry. The removal of the original is itself undone when it fails after the effect: the
+bytes are in memory the whole time, and when even the restore fails the command says `ROLLBACK
+INCOMPLETE` and names what it could not put back, because a false "nothing was left behind" is worse
+than the loss, it is what stops anybody from going to look. The migrated packet keeps `status: ready` only
 when it already meets v2; otherwise it lands as `draft`, which is honest about the sections Step 4
 still has to write. No surface is invented for you: a guessed surface is a gate the slice skips.
 

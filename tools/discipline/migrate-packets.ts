@@ -40,6 +40,8 @@ export interface MigrationPlan {
   status?: 'ready' | 'draft';
   /** Why `ready` was not kept, or why the packet was refused or skipped. */
   reason?: string;
+  /** Set when an apply failed: whether the previous state was fully restored. */
+  rollback?: 'complete' | 'incomplete';
 }
 
 export interface MigrationResult {
@@ -47,6 +49,8 @@ export interface MigrationResult {
   /** True when every packet either migrated or was already fine. */
   ok: boolean;
 }
+
+export type MigrationOutcome = { ok: true } | { ok: false; reason: string; rollback?: 'complete' | 'incomplete' };
 
 const V2_VERSION = '2.0.0';
 
@@ -186,7 +190,7 @@ const DEFAULT_OPS: MigrationOps = {
  * them is created, each is created exclusively so a race loses instead of overwriting, and a
  * failure removes what this call made. The source is deleted last, when everything else is on disk.
  */
-export function applyMigration(root: string, plan: MigrationPlan, stamp: string, ops: MigrationOps = DEFAULT_OPS): { ok: boolean; reason?: string } {
+export function applyMigration(root: string, plan: MigrationPlan, stamp: string, ops: MigrationOps = DEFAULT_OPS): MigrationOutcome {
   if (plan.action !== 'migrate' || !plan.slice || !plan.target || !plan.status) {
     return { ok: false, reason: 'nothing to apply' };
   }
@@ -217,16 +221,46 @@ export function applyMigration(root: string, plan: MigrationPlan, stamp: string,
   // as "is the file there".
   const outputs = [backup, backupHash, ...(inPlace ? [] : [target])];
   const legacyDirExisted = fs.existsSync(legacyDir);
-  const rollback = () => {
+  const relative = (file: string) => path.relative(root, file).replace(/\\/g, '/');
+
+  /**
+   * Undo everything this call created, and make sure the ORIGINAL is back.
+   *
+   * Removing the outputs is only half of it. The last step of the migration deletes the source, and
+   * a delete that succeeds and then throws left the packet gone while the rollback removed the
+   * backup that held its only other copy: the migration failed, deleted every copy, and reported
+   * "Nothing was left behind". The bytes are in memory the whole time, so put them back, and when
+   * that cannot be done SAY SO rather than claiming a clean rollback.
+   */
+  const rollback = (): { complete: boolean; problems: string[] } => {
+    const problems: string[] = [];
     for (const file of [...outputs].reverse()) {
-      try { if (fs.existsSync(file)) ops.remove(file); } catch { /* report the original failure, not the cleanup */ }
+      try { if (fs.existsSync(file)) ops.remove(file); } catch (err) { problems.push(`could not remove ${relative(file)}: ${err instanceof Error ? err.message : err}`); }
     }
-    // An in-place rewrite has no file to delete: it has bytes to put back.
-    if (inPlace) { try { ops.write(target, original, false); } catch { /* same */ } }
+    // The source, byte for byte. It is missing when the failure WAS its removal, and it holds the
+    // migrated bytes when the rewrite was in place; both are "not as we found it".
+    let intact = false;
+    try { intact = fs.existsSync(source) && fs.readFileSync(source).equals(original); } catch { intact = false; }
+    if (!intact) {
+      try {
+        ops.write(source, original, false);
+      } catch (err) {
+        problems.push(`could not restore ${plan.file}: ${err instanceof Error ? err.message : err}`);
+      }
+    }
     if (!legacyDirExisted && fs.existsSync(legacyDir) && fs.readdirSync(legacyDir).length === 0) {
-      try { fs.rmdirSync(legacyDir); } catch { /* same */ }
+      try { fs.rmdirSync(legacyDir); } catch { /* an empty directory left behind is not data loss */ }
     }
+    return { complete: problems.length === 0, problems };
   };
+
+  const failed = (what: string, undone: { complete: boolean; problems: string[] }): { ok: false; reason: string; rollback: 'complete' | 'incomplete' } => ({
+    ok: false,
+    rollback: undone.complete ? 'complete' : 'incomplete',
+    reason: undone.complete
+      ? `${what}. Nothing was left behind; run this again once the cause is fixed.`
+      : `${what}. ROLLBACK INCOMPLETE: ${undone.problems.join('; ')}. Do not re-run until you have checked ${relative(source)} and ${relative(backup)} by hand.`,
+  });
 
   try {
     fs.mkdirSync(legacyDir, { recursive: true });
@@ -234,11 +268,7 @@ export function applyMigration(root: string, plan: MigrationPlan, stamp: string,
     ops.write(backupHash, digest, true);
     ops.write(target, migrated, !inPlace);
   } catch (err) {
-    rollback();
-    return {
-      ok: false,
-      reason: `${err instanceof Error ? err.message : err}. Nothing was left behind; run this again once the cause is fixed.`,
-    };
+    return failed(`${err instanceof Error ? err.message : err}`, rollback());
   }
 
   // 3. The old file goes LAST, and only when it moved to a new name. Its content is in legacy/.
@@ -246,8 +276,7 @@ export function applyMigration(root: string, plan: MigrationPlan, stamp: string,
     try {
       ops.remove(source);
     } catch (err) {
-      rollback();
-      return { ok: false, reason: `could not remove ${plan.file} after migrating it: ${err instanceof Error ? err.message : err}. Nothing was left behind.` };
+      return failed(`could not remove ${plan.file} after migrating it: ${err instanceof Error ? err.message : err}`, rollback());
     }
   }
   return { ok: true };
@@ -261,7 +290,7 @@ export function migratePackets(root: string, options: { write: boolean; stamp: s
   for (const plan of planned.plans) {
     if (plan.action !== 'migrate') { plans.push(plan); continue; }
     const applied = applyMigration(root, plan, options.stamp, ops);
-    plans.push(applied.ok ? plan : { ...plan, action: 'refuse', reason: applied.reason });
+    plans.push(applied.ok ? plan : { ...plan, action: 'refuse', reason: applied.reason, rollback: applied.rollback });
   }
   return { plans, ok: plans.every((plan) => plan.action !== 'refuse') };
 }

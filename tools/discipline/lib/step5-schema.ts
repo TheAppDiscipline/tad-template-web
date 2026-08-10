@@ -85,6 +85,7 @@ function bodyOf(content: string): string {
 export function plainDeclaration(raw: string): string {
   return raw
     .trim()
+    .replace(/^(>\s*)+/, '')                   // blockquote markers: a quoted `none` is still none
     .replace(/^[-*+]\s+/, '')                 // one list marker
     .replace(/`/g, '')                         // code ticks, anywhere
     .replace(/\*\*/g, '').replace(/__/g, '')   // strong
@@ -125,15 +126,18 @@ function declaresNotApplicable(lines: string[]): boolean {
  * `APPLIES: no` with a rationale says so on the record. Anything else counts: a table row is an
  * answer, and so is a one-line sentence.
  */
+function isSubstantiveLine(raw: string): boolean {
+  // A quote is still somebody's words, so the marker comes off before anything is judged.
+  const line = raw.trim().replace(/^(>\s*)+/, '').trim();
+  if (line === '') return false;
+  if (/^#{1,6}\s/.test(line)) return false;          // a sub-heading is more structure
+  if (/^\|[\s:|-]+\|$/.test(line)) return false;      // a table separator row
+  if (/^(-{3,}|_{3,}|\*{3,})$/.test(line)) return false; // a horizontal rule
+  return !isEvasive(line);
+}
+
 function hasSubstance(lines: string[]): boolean {
-  return lines.some((raw) => {
-    const line = raw.trim();
-    if (line === '') return false;
-    if (/^#{1,6}\s/.test(line)) return false;          // a sub-heading is more structure
-    if (/^\|[\s:|-]+\|$/.test(line)) return false;      // a table separator row
-    if (/^(-{3,}|_{3,}|\*{3,})$/.test(line)) return false; // a horizontal rule
-    return !isEvasive(line);
-  });
+  return lines.some(isSubstantiveLine);
 }
 
 /** The lines of a `## Name` section, up to the next heading of the same or a higher level. */
@@ -444,11 +448,12 @@ function checkFalsifiability(body: string, severity: SchemaFinding['severity'], 
     findings.push({ severity, message: `${where}"Falsifiability" METHOD is "${methods[0]}"`, detail: `Valid: ${FALSIFIABILITY_METHODS.join(', ')}` });
     return;
   }
-  // isEvasive, not isPlaceholder: "METHOD: red-evidence" followed by "- none" is a packet
-  // declaring that it proved nothing, which is the one thing this section exists to rule out.
+  // The SAME substance test the sections use, not a looser one. "METHOD: red-evidence" followed by
+  // `### Evidence`, a `---` rule or `> none` is a section that typed some structure: a heading is
+  // not a failing run, and a horizontal rule has never falsified anything.
   const evidence = lines
     .filter((line) => !/^METHOD\s*:/i.test(plainDeclaration(line)))
-    .filter((line) => !isEvasive(line));
+    .filter(isSubstantiveLine);
   if (evidence.length === 0) {
     findings.push({
       severity,
