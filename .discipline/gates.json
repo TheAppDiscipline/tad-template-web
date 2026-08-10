@@ -7,12 +7,17 @@
     "Edit it when your project grows a directory this map does not know: an unmapped file is not",
     "ignored, it makes the FULL gate run, so the cost of an out-of-date map is time, never a missed check.",
     "Scripts are npm script names and must exist in package.json. Every surface needs an entry, even an",
-    "empty one, because a surface nobody mentions is a gate nobody runs."
+    "empty one, because a surface nobody mentions is a gate nobody runs.",
+    "A surface MAY name a gate that `npm run gate` does not run (gate:visual, check-bundle, test:rls).",
+    "That is the point: `npm run gate` cannot demand browser verification of every project, and this",
+    "map only demands it of a change that touched the UI. It needs the browsers installed",
+    "(npm run e2e:install); a project that does not verify UI in a browser takes gate:visual out of",
+    "this file, deliberately, instead of finding out it never ran."
   ],
   "base": ["discipline:provider:check"],
   "surfaces": {
-    "ui": ["lint", "typecheck", "test", "check-tokens"],
-    "authenticated-ui": ["lint", "typecheck", "test", "check-tokens", "check-secrets", "check-queries", "check-rls"],
+    "ui": ["lint", "typecheck", "test", "check-tokens", "gate:visual"],
+    "authenticated-ui": ["lint", "typecheck", "test", "check-tokens", "check-secrets", "check-queries", "check-rls", "gate:visual", "test:rls", "test:storage:privacy"],
     "backend": ["lint", "typecheck", "test", "check-secrets", "check-rls", "check-cors", "check-https", "check-queries", "check-fk-indexes"],
     "schema": ["test", "migration:lint", "check-fk-indexes", "check-rls", "check-firebase"],
     "permissions": ["test", "check-rls", "check-firebase", "check-secrets"],
@@ -51,7 +56,10 @@
     },
     {
       "surface": "deployment-artifact",
-      "prefixes": [".github/workflows/", "vercel.json", "netlify.toml", "Dockerfile", "vite.config", "firebase.json", ".firebaserc"],
+      "prefixes": [
+        ".github/workflows/", "vercel.json", "netlify.toml", "Dockerfile", "vite.config", "firebase.json", ".firebaserc",
+        "api/", "server/", "functions/", "supabase/functions/"
+      ],
       "extensions": []
     },
     {

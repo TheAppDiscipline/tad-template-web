@@ -3,10 +3,16 @@
  * Stop gate (Claude Code Stop hook).
  *
  * Purpose: the session should not end with edited code and a non-green gate.
- * When the agent tries to stop, if the git working tree has modified/added
- * tracked files and the gate report is missing, stale, or failing, this hook
- * BLOCKS the stop with a reason telling the agent to run the machine-readable
- * gate and fix the failures (respecting the Repair Budget). Otherwise it allows.
+ * When the agent tries to stop, if the git working tree has changed files and the
+ * gate report is missing, stale, or failing, this hook BLOCKS the stop with a
+ * reason telling the agent to run the machine-readable gate and fix the failures
+ * (respecting the Repair Budget). Otherwise it allows.
+ *
+ * Untracked files count. They did not use to: a session that only created new
+ * files was not "edited code". `gate --changed` made that wrong, because a new
+ * file is exactly what its report can be missing, and a new source file is the
+ * most likely thing a session leaves behind unverified. `git status --porcelain`
+ * already respects .gitignore, so build output and local scratch never appear.
  *
  * Protocol (Claude Code Stop):
  *   - stdin: the hook JSON payload, including `stop_hook_active`.
@@ -49,13 +55,23 @@ const REASON_UNCOVERED =
 const KNOWN_GATE_REPORT_SCHEMAS = ['discipline.gate_report.v1', 'discipline.gate_report.v2'];
 
 /**
- * Parse `git status --porcelain` output into the tracked files that are
- * modified or added (staged or unstaged). Untracked-only entries ("?? path")
- * are ignored: a session that only created new untracked files is not "edited
- * code" for the purpose of the gate.
+ * Parse `git status --porcelain` output into the files this session changed:
+ * modified, added, and **untracked** ("?? path"). Ignored entries ("!! path")
+ * are the only ones dropped, because git was told to ignore them.
+ *
+ * Untracked files are included on purpose. A brand-new source file is code the
+ * gate has to have seen, and it is the case a scoped report is most likely to be
+ * missing. Under the old rule a session could create `src/new-component.tsx`
+ * after the gate and end cleanly.
+ *
+ * `.discipline/` is dropped: it is pipeline state written BY the pipeline, and
+ * the gate report cannot appear in its own file list, so counting it would block
+ * every session forever.
  *
  * Porcelain v1 format: 2 status chars, a space, then the path (rename shows
- * "orig -> new"; we take the destination).
+ * "orig -> new"; we take the destination). Callers must pass `-uall`, or git
+ * collapses a new directory into a single `?? src/` entry that no file list can
+ * ever match.
  */
 export function parsePorcelainModified(porcelain) {
   const files = [];
@@ -63,11 +79,11 @@ export function parsePorcelainModified(porcelain) {
     if (!rawLine.trim()) continue;
     const x = rawLine[0];
     const y = rawLine[1];
-    if (x === '?' && y === '?') continue; // untracked
-    if (x === '!' && y === '!') continue; // ignored
+    if (x === '!' && y === '!') continue; // ignored by git's own rules
     let rest = rawLine.slice(3).trim();
     const arrow = rest.indexOf(' -> ');
     if (arrow !== -1) rest = rest.slice(arrow + 4).trim();
+    if (rest.replace(/\\/g, '/').startsWith('.discipline/')) continue; // pipeline state, not edited code
     // Porcelain may quote paths with special chars; strip surrounding quotes.
     if (rest.startsWith('"') && rest.endsWith('"')) rest = rest.slice(1, -1);
     if (rest) files.push(rest);
@@ -154,7 +170,10 @@ export function decide(payload, root) {
     const stopHookActive = payload?.stop_hook_active === true;
     if (stopHookActive) return { block: false, reason: '' };
 
-    const proc = spawnSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf-8' });
+    // `-uall` lists every untracked FILE. Without it git collapses a new directory
+    // into one `?? src/` entry, which no report's file list can ever match, and the
+    // coverage check below would block every session that created a folder.
+    const proc = spawnSync('git', ['status', '--porcelain', '-uall'], { cwd: root, encoding: 'utf-8' });
     if (proc.status !== 0 || typeof proc.stdout !== 'string') {
       return { block: false, reason: '' }; // git missing/failed -> allow
     }

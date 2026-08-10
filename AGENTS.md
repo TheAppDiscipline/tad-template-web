@@ -303,6 +303,15 @@ The map is refused outright (nothing runs) when it is unreadable, when it names 
 does not define, or when it says nothing about one of the surfaces, because a surface nobody mentions
 is a gate nobody runs.
 
+**A surface may demand a gate `npm run gate` does not run**, and the shipped map does: `ui` demands
+`gate:visual`, `authenticated-ui` adds the authenticated checks, and an `api/` route is both
+`backend` and `deployment-artifact`, so it runs the artifact checks too. That is the whole point of
+a surface. `npm run gate` cannot demand browser or device verification of every project, and this map
+demands it only of a change that touched the UI, which is why those gates need their prerequisites
+installed (`npm run e2e:install`, or the device tooling for the mobile lane). **A project that does
+not verify UI that way takes `gate:visual` out of this file**, deliberately and in a diff somebody
+can read, instead of finding out later that nothing ever ran it.
+
 **The packet is checked against the change.** With `--slice`, the surfaces the change implies are
 compared to the `affected_surfaces` the Step 5 packet declares:
 
@@ -323,12 +332,19 @@ other schema**: an unknown report is not read as green. Two consequences worth k
 - A checkpoint built from a v2 report says `scope: CHANGED FILES ONLY`, because a human approving
   from it would otherwise read "PASSED" as the whole gate.
 - The Stop hook blocks a session whose edited files the report never saw, not just a stale one.
+  Untracked files count as edited: a source file created after the gate is exactly what a scoped
+  report is missing. Only git-ignored paths and `.discipline/` state are left out.
 
 **Headless runs (L2/L3) use it**, with the pre-run tag as `--base` and the slice as `--slice`. The
 point there is not speed: the shipped Step 4 template asks for `required_gates: gate`, so the run is
 a superset of the old behavior. The point is that a builder which touched a surface its packet never
-declared stops the run instead of closing the slice. A project without `.discipline/gates.json` falls
-back to the full gate, loudly.
+declared stops the run instead of closing the slice.
+
+**There is no fallback to the full gate.** A missing map, an unreadable one or a git that cannot
+answer ends the run at **exit 5 (incomplete)**, with the patches applied and the slice NOT closed.
+Running everything instead would look safer and is not: the comparison between what the packet
+declared and what the diff touched is the guarantee the run closes its slice on, and a full gate
+cannot make it. Restore the map or the repository, then re-run.
 
 ## Anchor Rules
 

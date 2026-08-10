@@ -1808,8 +1808,9 @@ test('pre-tool-guard: allows plain ls and a src/ edit silently', async () => {
 test('stop-gate: allows when clean; allows when stop_hook_active; blocks dirty+failed; allows dirty+fresh-pass', async () => {
   const { decideCore, parsePorcelainModified } = await importHook('stop-gate.mjs')
 
-  // Untracked-only porcelain is not "edited code".
-  assert.deepEqual(parsePorcelainModified('?? new.txt\n M src/a.ts\n'), ['src/a.ts'])
+  // An untracked file IS edited code. It used to be dropped, and a file created after the gate
+  // could then end the session unverified. Only git-ignored entries are dropped now.
+  assert.deepEqual(parsePorcelainModified('?? new.txt\n M src/a.ts\n!! dist/x.js\n'), ['new.txt', 'src/a.ts'])
 
   // Clean tree -> allow.
   assert.equal(decideCore({ stopHookActive: false, modifiedFiles: [], gateReport: null, newestModifiedMtimeMs: 0 }).block, false)
@@ -2303,6 +2304,26 @@ function makeRunFixtureRepo(overrides = {}) {
     JSON.stringify({ name: 'e2e', private: true, version: '1.0.0', type: 'module', scripts: { gate: 'node -e "process.exit(0)"' } }, null, 2),
     'utf8',
   )
+  // The runner scopes its gate to what changed, and refuses to close a slice when it cannot. This
+  // map is the minimum that says "everything runs the whole gate", which is what this fixture used
+  // to get for free. `withGatesMap: false` reproduces a project that never wrote one.
+  if (overrides.withGatesMap !== false) {
+    fs.writeFileSync(
+      path.join(repo, '.discipline', 'gates.json'),
+      JSON.stringify({
+        schema: 'discipline.gates.v1',
+        base: [],
+        surfaces: {
+          ui: ['gate'], 'authenticated-ui': ['gate'], backend: ['gate'], schema: ['gate'],
+          permissions: ['gate'], 'deployment-artifact': ['gate'], ai: ['gate'], 'docs-only': ['gate'],
+        },
+        rules: [{ surface: 'docs-only', prefixes: [], extensions: ['.md'] }],
+        exclude: [],
+        unmapped: 'gate',
+      }, null, 2),
+      'utf8',
+    )
+  }
   git(['add', '-A'])
   git(['commit', '-q', '-m', 'baseline'])
   return repo
@@ -5692,4 +5713,103 @@ test('gate --changed: this project\'s map covers every step of its own full gate
   )
   assert.deepEqual(self.inference.excluded, [], '.discipline/gates.json must not be excluded from the gates it selects')
   assert.deepEqual(self.inference.unmapped, ['.discipline/gates.json'], 'changing the map must run the full gate')
+})
+
+// A map that only ever selects gates `npm run gate` already runs is a map that does nothing. These
+// are the two buyer paths the surfaces exist for, checked against THIS lane's real map:
+// `src/components/Button.tsx` inferred `ui` and selected no visual verification at all, and
+// `api/items.ts` inferred only `backend`, so nothing checked the deployable artifact and a packet
+// declaring neither surface could not be caught.
+test('gate --changed: the buyer paths route to the gates this lane actually needs', () => {
+  const gates = JSON.parse(fs.readFileSync(path.join(repoRoot, '.discipline', 'gates.json'), 'utf8'))
+  const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'))
+  const out = runTsxModule(
+    [
+      `const __out = {}`,
+      `const config = parseGatesConfig(${JSON.stringify(JSON.stringify(gates))}, null)`,
+      `for (const [name, file] of Object.entries({ ui: 'src/components/Button.tsx', api: 'api/items.ts' })) {`,
+      `  const inference = inferSurfaces(config, [file])`,
+      `  __out[name] = { surfaces: inference.surfaces, unmapped: inference.unmapped, scripts: gatesForSurfaces(config, inference.surfaces) }`,
+      `}`,
+    ],
+    { '{ parseGatesConfig, inferSurfaces, gatesForSurfaces }': 'tools/discipline/lib/gates-config.ts' },
+  )
+
+  // A component is UI, and UI is verified as UI: `npm run gate` cannot demand that of every
+  // project, which is exactly why the surface has to.
+  assert.deepEqual(out.ui.surfaces, ['ui'])
+  assert.deepEqual(out.ui.unmapped, [])
+  assert.ok(out.ui.scripts.includes('gate:visual'), `a UI change must run the visual verification: ${out.ui.scripts.join(', ')}`)
+
+  // An API route is the backend AND the thing that gets deployed. Inferring only `backend` left the
+  // artifact unchecked and made an undeclared `deployment-artifact` impossible to catch.
+  assert.deepEqual(out.api.surfaces, ['backend', 'deployment-artifact'])
+  assert.deepEqual(out.api.unmapped, [])
+  for (const script of gates.surfaces['deployment-artifact']) {
+    assert.ok(out.api.scripts.includes(script), `an API change must run ${script}`)
+  }
+
+  // Every gate either of them selects has to be a script that exists, or it is a check nobody runs.
+  for (const script of [...out.ui.scripts, ...out.api.scripts]) {
+    assert.ok(pkg.scripts[script], `.discipline/gates.json selects "${script}", which package.json does not define`)
+  }
+})
+
+// The runner used to fall back to the full gate when the map or git failed. Running everything
+// looks safer and is not: the comparison between what the packet declared and what the diff touched
+// is the guarantee the run closes its slice on, and a full gate cannot make it. A run that could
+// not tell what changed must not close a slice.
+test('run: a gate that cannot be scoped ends INCOMPLETE, it does not fall back to the full gate', () => {
+  const gitProbe = spawnSync('git', ['--version'], { encoding: 'utf8' })
+  if (gitProbe.status !== 0) return
+  const repo = makeRunFixtureRepo({ withGatesMap: false })
+  const before = fs.readFileSync(path.join(repo, 'progress.md'), 'utf8')
+
+  const res = spawnSync(process.execPath, [tsxCli, 'tools/discipline/run.ts', '--slice', '1', '--yes', '--no-open', '--project-dir', repo], {
+    cwd: repoRoot,
+    env: { ...process.env, DISCIPLINE_FAKE_PROVIDER_CMD: fakeCli, FAKE_MODE: 'build', FAKE_BUILD_DIR: repo },
+    encoding: 'utf8',
+  })
+  const out = getOutput(res)
+
+  assert.equal(res.status, 5, out)
+  assert.match(out, /the gate could not be scoped to what changed/)
+  assert.match(out, /gates\.json not found/)
+  assert.doesNotMatch(out, /Gate is GREEN/)
+  assert.equal(fs.readFileSync(path.join(repo, 'progress.md'), 'utf8'), before, 'the slice must not be closed')
+
+  // And no report is left behind claiming a pass: nothing was measured.
+  const reportPath = path.join(repo, '.discipline', 'gate-report.json')
+  if (fs.existsSync(reportPath)) {
+    assert.notEqual(JSON.parse(fs.readFileSync(reportPath, 'utf8')).passed, true, 'a gate that never ran cannot report a pass')
+  }
+  fs.rmSync(repo, { recursive: true, force: true })
+})
+
+// Untracked files used to be dropped as "not edited code". With a report scoped to changed files
+// that became a hole: create `src/new-component.tsx` after the gate, and the green report that
+// never saw it still ended the session.
+test('stop-gate: a new untracked file the report never saw blocks the stop', async () => {
+  const { decide, parsePorcelainModified } = await importHook('stop-gate.mjs')
+  assert.deepEqual(parsePorcelainModified('?? src/new-component.tsx\n'), ['src/new-component.tsx'])
+  // Pipeline state is not edited code, and the gate report can never appear in its own file list:
+  // counting it would block every session forever.
+  assert.deepEqual(parsePorcelainModified('?? .discipline/gate-report.json\n M src/a.ts\n'), ['src/a.ts'])
+
+  const root = createGateProject({})
+  const reportPath = path.join(root, '.discipline', 'gate-report.json')
+  const writeReport = (files) =>
+    fs.writeFileSync(reportPath, JSON.stringify({ schema: 'discipline.gate_report.v2', passed: true, failed_checks: [], files }), 'utf8')
+
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true })
+  fs.writeFileSync(path.join(root, 'src', 'new-component.tsx'), 'export const New = () => null\n', 'utf8')
+  writeReport(['progress.md'])
+
+  const blocked = decide({ stop_hook_active: false }, root)
+  assert.equal(blocked.block, true, 'a file created after the gate is not covered by it')
+  assert.match(blocked.reason, /Not covered: src\/new-component\.tsx/)
+
+  // Covering that same file ends the session, so the rule is about coverage and not about newness.
+  writeReport(['progress.md', 'src/new-component.tsx'])
+  assert.equal(decide({ stop_hook_active: false }, root).block, false)
 })

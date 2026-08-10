@@ -39,7 +39,7 @@ import { applyPatches } from './apply-patch.js';
 import { locateSlicePacket, normalizeSliceId, packetStatus, resolvePacketIdentity, resolveSlice, slicePasteReadyFileName } from './lib/slice-identity.js';
 import { readCompletion } from './lib/completion-packet.js';
 import { recordClosure } from './update-progress.js';
-import { runGateReport, writeGateReport, type GateReport } from './gate-report.js';
+import { type GateReport } from './gate-report.js';
 import { runChangedGate, writeGateReportV2, printChangedGate, type GateReportV2 } from './gate-changed.js';
 import { GateConfigError } from './lib/gates-config.js';
 import { ChangedFilesError } from './lib/changed-files.js';
@@ -559,7 +559,7 @@ export async function runReconciler(root: string, opts: RunOptions): Promise<num
     const incomplete = (reason: string, wrote: boolean, alreadyFinished = false) => {
       disciplineWarn(`This run cannot close slice ${opts.slice}: ${reason}`);
       disciplineWarn(wrote
-        ? 'The gate ran and the patches were applied; the closure was not recorded. Review the diff, fix the completion packet and re-run.'
+        ? 'The patches were applied and the closure was not recorded. Review the diff, fix what this message names, and re-run.'
         : 'Nothing written: no patch applied, progress.md and the packets untouched.');
       disciplineWarn('The RUN CONTRACT asks the builder for exactly one SLICE_COMPLETION_PACKET for this slice, with an outcome and an explicit GATE_STATE.');
       if (!alreadyFinished) safeLedger(root, { event: 'run_finished', run_id: runId, slice: opts.slice, outcome: 'incomplete' });
@@ -576,8 +576,25 @@ export async function runReconciler(root: string, opts: RunOptions): Promise<num
     await applyPlanUnderLock(root, built.plan.patches);
 
     // (h) Gate + repair loop.
+    //
+    // A gate that could not be scoped is not a gate that failed, and it is not a
+    // reason to run everything either: the run would then close its slice having
+    // never checked the diff against the packet. It ends INCOMPLETE instead.
+    const gateOrStop = ():
+      | { ok: true; report: GateReportLike }
+      | { ok: false; reason: string } => {
+      try {
+        return { ok: true, report: runGateAndLog(root, runId, opts.slice, gateBase) };
+      } catch (err) {
+        if (!(err instanceof GateConfigError || err instanceof ChangedFilesError)) throw err;
+        return { ok: false, reason: `the gate could not be scoped to what changed: ${err.message}` };
+      }
+    };
+
     const repairState: RepairState = { attempts: 1, signatures: [], repairMax: autonomy.repairMax };
-    let report = runGateAndLog(root, runId, opts.slice, gateBase);
+    const firstGate = gateOrStop();
+    if (!firstGate.ok) { releaseLease(); return incomplete(firstGate.reason, true); }
+    let report = firstGate.report;
 
     while (!report.passed) {
       const sig = report.error_signature ?? errorSignature(report.failed_checks[0] ?? 'gate', 'unknown');
@@ -615,7 +632,9 @@ export async function runReconciler(root: string, opts: RunOptions): Promise<num
       if (!repaired.ok) { releaseLease(); return incomplete(repaired.reason, true); }
       if (repaired.plan.completion) completionPath = repaired.plan.completion;
       await applyPlanUnderLock(root, repaired.plan.patches);
-      report = runGateAndLog(root, runId, opts.slice, gateBase);
+      const repairedGate = gateOrStop();
+      if (!repairedGate.ok) { releaseLease(); return incomplete(repairedGate.reason, true); }
+      report = repairedGate.report;
     }
 
     disciplineInfo('Gate is GREEN.');
@@ -668,25 +687,18 @@ function resumeArgsFor(provider: ProviderName, sessionId: string | undefined): s
  * The point in a headless run is not speed. It is that a builder which touched a
  * surface its packet never declared stops the run instead of closing the slice.
  *
- * A project without `.discipline/gates.json` (or with git unavailable) falls back
- * to the full gate, loudly. Being unable to select a subset is a reason to run
- * everything, never a reason to run less.
+ * There is no fallback to the full gate. Running everything would look safer and
+ * is not: the comparison between what the packet declared and what the diff
+ * touched is the guarantee this run closes its slice on, and a full gate cannot
+ * make it. A missing map or an unreadable git are a run that cannot close, so
+ * this THROWS and the caller ends INCOMPLETE. The operator's fix is to restore
+ * the map or the repository, then re-run.
  */
 function runGateAndLog(root: string, runId: string, slice: string, base: string | null): GateReportLike {
-  let report: GateReportLike;
-  try {
-    disciplineInfo('Running the gate for what changed (deterministic arbiter)...');
-    const changed = runChangedGate(root, { slice, base });
-    writeGateReportV2(root, changed);
-    printChangedGate(changed);
-    report = changed;
-  } catch (err) {
-    if (!(err instanceof GateConfigError || err instanceof ChangedFilesError)) throw err;
-    disciplineWarn(`Cannot scope the gate to what changed (${err.message}). Running the full gate instead.`);
-    const full = runGateReport(root);
-    writeGateReport(root, full);
-    report = full;
-  }
+  disciplineInfo('Running the gate for what changed (deterministic arbiter)...');
+  const report: GateReportLike = runChangedGate(root, { slice, base });
+  writeGateReportV2(root, report);
+  printChangedGate(report);
   safeLedger(root, {
     event: 'gate_result',
     run_id: runId,
