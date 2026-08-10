@@ -48,8 +48,8 @@ export interface SchemaFinding {
 }
 
 export interface Step5Reading {
-  /** `v2` when the frontmatter declares the v2 contract; `legacy` for everything else. */
-  format: 'v2' | 'legacy';
+  /** Which contract the packet is held to; see `step5Format`. */
+  format: Step5Format;
   /** The declared status, lowercased, or null when the packet declares none. */
   status: string | null;
   /** True when this packet is held to the v2 contract as errors (v2 AND ready). */
@@ -93,6 +93,27 @@ function isEvasive(text: string): boolean {
   return ['n/a', 'na', 'none', 'no', 'nothing'].includes(bare);
 }
 
+/** True when a section explicitly says it does not apply. Its RATIONALE is checked separately. */
+function declaresNotApplicable(lines: string[]): boolean {
+  return lines.some((line) => /^[-*]?\s*APPLIES\s*:\s*no\b/i.test(line));
+}
+
+/**
+ * Does this section actually say anything? A heading, a blank line and a table separator are
+ * structure, not content, and a `TBD` bullet is a promise. Anything else counts: a table row is an
+ * answer, and so is a one-line sentence.
+ */
+function hasSubstance(lines: string[]): boolean {
+  return lines.some((raw) => {
+    const line = raw.trim();
+    if (line === '') return false;
+    if (/^#{1,6}\s/.test(line)) return false;          // a sub-heading is more structure
+    if (/^\|[\s:|-]+\|$/.test(line)) return false;      // a table separator row
+    if (/^(-{3,}|_{3,}|\*{3,})$/.test(line)) return false; // a horizontal rule
+    return !isPlaceholder(line.replace(/^[-*+]\s*/, ''));
+  });
+}
+
 /** The lines of a `## Name` section, up to the next heading of the same or a higher level. */
 export function sectionLines(body: string, name: string): string[] | null {
   const lines = body.split('\n');
@@ -131,11 +152,40 @@ export function parseTable(lines: string[]): ParsedTable | null {
   return null;
 }
 
-/** Does this packet declare the v2 contract? Anything else, including no frontmatter, is legacy. */
-export function isStep5V2(content: string): boolean {
+/**
+ * Which contract this packet is held to. THREE outcomes, not two:
+ *
+ *  - `legacy`: no frontmatter, or frontmatter that does not declare the Step 5 schema, or declares
+ *    it at version 1. Advisory: it predates this contract and nothing it omits is a lie.
+ *  - `v2`: declares the Step 5 schema at version 2. The current contract.
+ *  - `unsupported`: declares the Step 5 schema with a version this tooling cannot read (missing,
+ *    malformed, or from the future). REFUSED, never quietly demoted to legacy. Falling back would
+ *    take a packet that explicitly opted into a versioned contract and validate it against none,
+ *    which is the exact shape of the false green the version field exists to prevent: `version: 3`
+ *    with `status: ready` sailed through as "legacy, 0 errors".
+ */
+export type Step5Format = 'v2' | 'legacy' | 'unsupported';
+
+export function step5Format(content: string): { format: Step5Format; version: string | null; reason?: string } {
   const { meta } = parsePacketMeta(content);
-  if (!meta) return false;
-  return meta.schema === 'discipline.packet.step5' && /^2(\D|$)/.test(String(meta.version ?? ''));
+  if (!meta || meta.schema !== 'discipline.packet.step5') return { format: 'legacy', version: null };
+
+  const raw = meta.version === undefined || meta.version === null ? '' : String(meta.version).trim();
+  if (raw === '') {
+    return { format: 'unsupported', version: null, reason: 'declares schema discipline.packet.step5 with no version' };
+  }
+  if (/^1(\.|$)/.test(raw)) return { format: 'legacy', version: raw };
+  if (/^2(\.|$)/.test(raw)) return { format: 'v2', version: raw };
+  return {
+    format: 'unsupported',
+    version: raw,
+    reason: `declares schema discipline.packet.step5 version "${raw}", which this tooling cannot read (it knows 1.x and 2.x)`,
+  };
+}
+
+/** Does this packet declare the v2 contract? */
+export function isStep5V2(content: string): boolean {
+  return step5Format(content).format === 'v2';
 }
 
 /**
@@ -147,7 +197,8 @@ export function isStep5V2(content: string): boolean {
  */
 export function readStep5Packet(content: string, fileName?: string): Step5Reading {
   const { meta, errors: metaErrors } = parsePacketMeta(content);
-  const format: 'v2' | 'legacy' = isStep5V2(content) ? 'v2' : 'legacy';
+  const classified = step5Format(content);
+  const format = classified.format;
   const status = typeof meta?.status === 'string' ? meta.status.trim().toLowerCase() : null;
   const enforced = format === 'v2' && status === 'ready';
   const findings: SchemaFinding[] = [];
@@ -156,7 +207,18 @@ export function readStep5Packet(content: string, fileName?: string): Step5Readin
   const where = fileName ? `${path.basename(fileName)}: ` : '';
 
   for (const problem of metaErrors) {
-    findings.push({ severity: format === 'v2' ? severity : 'warning', message: `${where}frontmatter ${problem}` });
+    findings.push({ severity: format === 'legacy' ? 'warning' : severity, message: `${where}frontmatter ${problem}` });
+  }
+
+  if (format === 'unsupported') {
+    // An error whatever the status says: a version this tooling cannot read means it cannot check
+    // the packet at all, and "cannot check it" has to read as a refusal, not as a pass.
+    findings.push({
+      severity: 'error',
+      message: `${where}${classified.reason}`,
+      detail: 'Set version: 2.0.0 and meet the v2 contract, or drop the schema line to keep the packet legacy. A version nobody can read is not a contract.',
+    });
+    return { format, status, enforced: true, findings };
   }
 
   if (format === 'legacy') {
@@ -206,8 +268,22 @@ function checkV2(content: string, body: string, severity: SchemaFinding['severit
   }
 
   for (const section of [...CORE_SECTIONS, ...V2_SECTIONS]) {
-    if (sectionLines(body, section) === null) {
+    const lines = sectionLines(body, section);
+    if (lines === null) {
       findings.push({ severity, message: `${where}v2 packet is missing the "${section}" section` });
+      continue;
+    }
+    // A heading is not an answer. Checking only that the heading EXISTS meant a packet with twelve
+    // empty sections read as a complete v2 spec, which is the contract satisfied by typing its
+    // table of contents. `APPLIES: no` is the one way a section is allowed to hold no content, and
+    // it brings its own rationale check below.
+    if (declaresNotApplicable(lines)) continue;
+    if (!hasSubstance(lines)) {
+      findings.push({
+        severity,
+        message: `${where}"${section}" is empty`,
+        detail: 'Write what it says, or declare `- APPLIES: no` with a `- RATIONALE:` somebody can check.',
+      });
     }
   }
 

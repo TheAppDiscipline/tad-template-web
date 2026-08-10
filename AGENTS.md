@@ -193,11 +193,19 @@ recorded in place by the watcher when the completion packet carries a green gate
 The `STEP_5_SLICE_PACKET` is the document an implementer builds from, so it carries a versioned
 contract of its own, defined once in `tools/discipline/lib/step5-schema.ts`.
 
-**v1 stays advisory. v2 fails closed.** A packet written before this contract keeps working and only
-warns: thousands of them exist and none of them lied about anything. A packet that DECLARES v2 and
-says `status: ready` is about to be handed to a builder, so an unmet requirement is an error and
-`npm run discipline:assemble` refuses it. The same packet as `status: draft` reports the same
-problems as warnings, because a draft is what Step 4 is still filling in.
+**Three outcomes, not two.** No frontmatter, or frontmatter that does not declare the Step 5 schema,
+or declares it at version 1: **legacy**, advisory. Thousands of those exist and none of them lied
+about anything. Version 2: the **current contract**. Anything else (no version, a malformed one, a
+version from the future): **refused**, never quietly demoted to legacy. Falling back would take a
+packet that explicitly opted into a versioned contract and validate it against none, which is the
+shape of the false green the version field exists to prevent.
+
+**v2 fails closed once it says `ready`.** A ready packet is about to be handed to a builder, so an
+unmet requirement is an error and `npm run discipline:assemble` refuses it. The same packet as
+`status: draft` reports the same problems as warnings, because a draft is what Step 4 is still
+filling in. A draft still does not become a handoff: a paste-ready IS the implementation input, so
+assembling one for a packet that is not `ready` needs `--allow-draft`, and says loudly that the
+result is for inspection.
 
 Frontmatter (all required in v2):
 
@@ -235,6 +243,10 @@ Required sections: `Goal`, `Scope`, `Contracts`, `Provider Impact`, `AI Impact`,
   check. Without that rule, declaring a section irrelevant is the fastest way to satisfy it.
 - An unfilled cell (`TBD`, `<placeholder>`, empty) is refused. `Committed effects: none` is a fine
   answer: `none` is an answer, it just has to be true.
+- **A heading is not an answer.** Every required section has to say something: a blank section, one
+  holding only sub-headings, or one holding `TBD` is refused. Otherwise the contract is satisfied by
+  typing its own table of contents. `- APPLIES: no` with a `RATIONALE:` is the one way a required
+  section may hold no prose.
 
 **Migrating existing packets** is a decision the operator takes between slices, with the pipeline idle:
 

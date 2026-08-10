@@ -446,6 +446,15 @@ acceptance criterion whose negative control says `none`: a check that passes pro
 you can say what would have made it fail. Two criteria may not share an ID, because an ID is how a
 failure is referred to later. `Committed effects: none` is a fine answer, it just has to be true.
 
+**Fill the sections too: a heading is not an answer.** Every required section is checked for
+content, so an empty one, or one holding only sub-headings, is refused exactly like an empty cell.
+Emit `status: draft` while you are still writing them and nothing is blocked; `ready` is the claim
+that an implementer can build from this.
+
+**Keep `version: 2.0.0`.** A version the tooling cannot read (missing, malformed, or from a future
+it does not know) is refused outright rather than treated as a legacy packet: a packet that opted
+into a versioned contract is never validated against no contract at all.
+
 **`APPLIES: no` needs a reason somebody can check.** Declaring a section irrelevant is the fastest
 way to satisfy it, so `RATIONALE: n/a` is refused and a real sentence is not.
 

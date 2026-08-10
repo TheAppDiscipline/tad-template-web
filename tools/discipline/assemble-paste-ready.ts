@@ -7,7 +7,7 @@ import { disciplineError, disciplineInfo, disciplineWarn } from './lib/types.js'
 import { resolveProjectRoot } from './lib/discipline-config.js';
 import { copyToClipboard } from './lib/clipboard.js';
 import { STEP_ASSEMBLY_MAP, VALID_STEPS } from './lib/artifact-flow.js';
-import { locateSlicePacket, normalizeSliceId, slicePasteReadyFileName } from './lib/slice-identity.js';
+import { locateSlicePacket, normalizeSliceId, packetStatus, slicePasteReadyFileName } from './lib/slice-identity.js';
 import { readStep5Packet } from './lib/step5-schema.js';
 
 const args = minimist(process.argv.slice(2));
@@ -15,6 +15,7 @@ const projectRoot = resolveProjectRoot(args['project-dir']);
 const step = args.step?.toString();
 const slice = args.slice !== undefined ? String(args.slice) : undefined;
 const useClipboard = args.clipboard === true;
+const allowDraft = args['allow-draft'] === true;
 const openUrl = args.open === true;
 
 function optionalPacketsForStep5(slicePacket: string, configuredPackets: string[]): string[] {
@@ -32,7 +33,7 @@ function optionalPacketsForStep5(slicePacket: string, configuredPackets: string[
   return configuredPackets.filter(packet => requested.has(packet.replace(/\.md$/, '')));
 }
 
-export async function assemblePasteReady(root: string, stepId: string, sliceId?: string): Promise<string> {
+export async function assemblePasteReady(root: string, stepId: string, sliceId?: string, options: { allowDraft?: boolean } = {}): Promise<string> {
   const config = STEP_ASSEMBLY_MAP[stepId];
   // Throw, never exit: watch.ts and run.ts import this, and a process.exit here kills their tick
   // mid-way, past the point where they could report what failed. The CLI entrypoint exits.
@@ -64,14 +65,31 @@ export async function assemblePasteReady(root: string, stepId: string, sliceId?:
     outputFile = slicePasteReadyFileName(sliceId);
 
     // Every Step 5 handoff is assembled here: the watcher, `discipline run` at every level and the
-    // manual command all come through this one door, so this is where a packet that declared the v2
-    // contract and then failed it stops. A legacy packet only warns; it never promised this much.
-    const reading = readStep5Packet(fs.readFileSync(slicePacketPath, 'utf-8'), slicePacketPath);
+    // manual command all come through this one door, so this is where a packet nobody should build
+    // from stops. A legacy packet only warns; it never promised this much.
+    const slicePacketContent = fs.readFileSync(slicePacketPath, 'utf-8');
+
+    // A paste-ready IS the implementation handoff. The runner refuses a packet that is not `ready`
+    // and the watcher only selects ready ones, so the manual command was the one path that handed
+    // an implementer a draft: a spec Step 4 has not finished, with its defects reported as warnings
+    // precisely because it never claimed to be done. `--allow-draft` is for reading it, not building.
+    const declaredStatus = packetStatus(slicePacketContent);
+    if (declaredStatus && declaredStatus !== 'ready' && !options.allowDraft) {
+      throw new Error(
+        `${path.basename(slicePacketPath)} has status "${declaredStatus}", not "ready": a paste-ready is the handoff an implementer builds from. `
+        + 'Finish the packet and set status: ready, or pass --allow-draft to assemble it for inspection only.',
+      );
+    }
+
+    const reading = readStep5Packet(slicePacketContent, slicePacketPath);
     const blocking = reading.findings.filter((finding) => finding.severity === 'error');
     for (const finding of reading.findings.filter((f) => f.severity === 'warning')) disciplineWarn(`  ${finding.message}`);
+    if (declaredStatus && declaredStatus !== 'ready' && options.allowDraft) {
+      disciplineWarn(`  --allow-draft: assembling a packet whose status is "${declaredStatus}". This handoff is for inspection; do not implement from it.`);
+    }
     if (blocking.length > 0) {
       throw new Error(
-        `${path.basename(slicePacketPath)} declares the v2 contract with status: ready and does not meet it. `
+        `${path.basename(slicePacketPath)} does not meet the contract it declares. `
         + `Fix the packet (or set status: draft while you finish it):\n  - ${blocking.map((f) => (f.detail ? `${f.message} (${f.detail})` : f.message)).join('\n  - ')}`,
       );
     }
@@ -130,7 +148,7 @@ ${content}`);
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
   if (!step) disciplineError(`Missing --step. Usage: discipline:assemble --step <${VALID_STEPS.join('|')}>`);
-  assemblePasteReady(projectRoot, step!, slice).then(assembled => {
+  assemblePasteReady(projectRoot, step!, slice, { allowDraft }).then(assembled => {
     if (useClipboard) {
       try {
         copyToClipboard(assembled);

@@ -24,8 +24,8 @@ import minimist from 'minimist';
 import { disciplineError, disciplineInfo, disciplineWarn } from './lib/types.js';
 import { resolveProjectRoot } from './lib/discipline-config.js';
 import { parsePacketMeta } from './lib/packet-meta.js';
-import { resolvePacketIdentity, sliceFileToken, slicePacketFileName } from './lib/slice-identity.js';
-import { evaluateAsV2, isStep5V2 } from './lib/step5-schema.js';
+import { isActiveSlicePacketName, resolvePacketIdentity, sliceFileToken, slicePacketFileName } from './lib/slice-identity.js';
+import { evaluateAsV2, step5Format } from './lib/step5-schema.js';
 
 export type MigrationAction = 'migrate' | 'skip' | 'refuse';
 
@@ -50,12 +50,15 @@ export interface MigrationResult {
 
 const V2_VERSION = '2.0.0';
 
-/** Which files this command considers: active Step 5 packets that are not already v2. */
+/**
+ * Which files this command considers: ACTIVE Step 5 packets, decided by the one function that owns
+ * that question. Matching the name pattern alone swept up `_13.consumed.md`, `_13.superseded.md`
+ * and `_13.archived.md`, so a migration could turn a packet Fase 1 had closed into a fresh active
+ * `STEP_5_SLICE_PACKET_13.md`: history, reopened by a format change.
+ */
 function candidates(packetsDir: string): string[] {
   if (!fs.existsSync(packetsDir)) return [];
-  return fs.readdirSync(packetsDir)
-    .filter((name) => /^STEP_5_SLICE_PACKET(_.+)?\.md$/i.test(name))
-    .sort();
+  return fs.readdirSync(packetsDir).filter(isActiveSlicePacketName).sort();
 }
 
 /**
@@ -115,8 +118,15 @@ export function planMigration(root: string, stamp: string): MigrationResult {
     const full = path.join(packetsDir, file);
     const content = fs.readFileSync(full, 'utf-8');
 
-    if (isStep5V2(content)) {
+    const classified = step5Format(content);
+    if (classified.format === 'v2') {
       plans.push({ file, action: 'skip', reason: 'already v2' });
+      continue;
+    }
+    // A version this tooling cannot read is not something to rewrite: replacing that frontmatter
+    // with 2.0.0 would be the migration declaring a contract the packet never met.
+    if (classified.format === 'unsupported') {
+      plans.push({ file, action: 'refuse', reason: `${classified.reason}; fix the version by hand, then run this again` });
       continue;
     }
 

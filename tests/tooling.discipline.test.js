@@ -4643,15 +4643,23 @@ test('step 5 schema: assemble refuses a broken v2 ready packet and still serves 
   fs.writeFileSync(path.join(broken, 'task_plan.md'), plan, 'utf8')
   const refused = runTsx('tools/discipline/assemble-paste-ready.ts', ['--step', '5', '--slice', '13', '--project-dir', broken])
   assert.notEqual(refused.status, 0, getOutput(refused))
-  assert.match(getOutput(refused), /declares the v2 contract with status: ready and does not meet it/)
+  assert.match(getOutput(refused), /does not meet the contract it declares/)
   assert.match(getOutput(refused), /"Falsifiability" declares no METHOD/)
   const pasteReady = path.join(broken, '.discipline', 'paste-ready')
   assert.deepEqual(fs.existsSync(pasteReady) ? fs.readdirSync(pasteReady).filter((f) => f.endsWith('.md')) : [], [])
 
-  // The same packet as a draft is not refused: it just is not `ready` yet.
+  // A draft is not refused for its CONTENT (its defects are warnings), but a paste-ready is the
+  // handoff an implementer builds from, so it is refused for its STATUS. --allow-draft is for
+  // reading it. The runner and the watcher already refused drafts; this was the last door open.
   const drafted = createDisciplineProject({ 'STEP_5_SLICE_PACKET_13.md': V2_PACKET.replace('- METHOD: red-evidence\n', '').replace('status: ready', 'status: draft') })
   fs.writeFileSync(path.join(drafted, 'task_plan.md'), plan, 'utf8')
-  assert.equal(runTsx('tools/discipline/assemble-paste-ready.ts', ['--step', '5', '--slice', '13', '--project-dir', drafted]).status, 0)
+  const draftRefused = runTsx('tools/discipline/assemble-paste-ready.ts', ['--step', '5', '--slice', '13', '--project-dir', drafted])
+  assert.notEqual(draftRefused.status, 0, getOutput(draftRefused))
+  assert.match(getOutput(draftRefused), /has status "draft", not "ready"/)
+  assert.deepEqual(fs.readdirSync(path.join(drafted, '.discipline', 'paste-ready')).filter((f) => f.endsWith('.md')), [])
+  const inspected = runTsx('tools/discipline/assemble-paste-ready.ts', ['--step', '5', '--slice', '13', '--allow-draft', '--project-dir', drafted])
+  assert.equal(inspected.status, 0, getOutput(inspected))
+  assert.match(getOutput(inspected), /do not implement from it/)
 
   // And a legacy packet keeps working, with a warning. That is what "v1 advisory" has to mean.
   const legacy = createDisciplineProject({ 'STEP_5_SLICE_PACKET_13.md': V2_BODY })
@@ -4693,6 +4701,107 @@ test('step 5 schema: discipline:validate checks the packet under its canonical s
   const warned = runTsx('tools/discipline/validate-discipline.ts', ['--project-dir', legacy])
   assert.equal(warned.status, 0, getOutput(warned))
   assert.match(getOutput(warned), /legacy Step 5 packet/)
+})
+
+// Three outcomes, not two. A packet that declares the versioned contract at a version this tooling
+// cannot read is REFUSED, never quietly demoted to legacy: falling back would validate an explicit
+// opt-in against no contract at all. `version: 3.0.0` with `status: ready` read as "legacy, 0 errors".
+test('step 5 schema: an unreadable version is refused, it does not fall back to legacy', () => {
+  const out = step5SchemaEval({
+    future: V2_PACKET.replace('version: 2.0.0', 'version: 3.0.0'),
+    futureDraft: V2_PACKET.replace('version: 2.0.0', 'version: 3.0.0').replace('status: ready', 'status: draft'),
+    malformed: V2_PACKET.replace('version: 2.0.0', 'version: banana'),
+    missing: V2_PACKET.replace('version: 2.0.0\n', ''),
+    v1: V2_PACKET.replace('version: 2.0.0', 'version: 1.4.0'),
+    v2Minor: V2_PACKET.replace('version: 2.0.0', 'version: 2.1'),
+  })
+
+  for (const name of ['future', 'futureDraft', 'malformed', 'missing']) {
+    assert.equal(out[name].format, 'unsupported', `${name}: ${JSON.stringify(out[name])}`)
+    assert.ok(out[name].errors.length > 0, `${name} must be refused, not demoted`)
+  }
+  assert.match(out.future.errors.join('; '), /version "3\.0\.0", which this tooling cannot read/)
+  // A draft is not a way around it: the tooling still cannot read the packet.
+  assert.ok(out.futureDraft.errors.length > 0)
+  assert.match(out.missing.errors.join('; '), /with no version/)
+  // v1 is a version this tooling KNOWS, and it stays advisory.
+  assert.equal(out.v1.format, 'legacy')
+  assert.deepEqual(out.v1.errors, [])
+  assert.equal(out.v2Minor.format, 'v2')
+})
+
+// A heading is not an answer. Checking only that the heading exists meant a packet with twelve empty
+// sections read as a complete v2 spec: the contract satisfied by typing its own table of contents.
+test('step 5 schema: an empty required section is not a filled one', () => {
+  const empty = (section) => new RegExp(`## ${section}\\n[^#]*`, 'm')
+  let hollow = V2_PACKET
+  for (const [section, keep] of [
+    ['Goal', '## Goal\n\n'], ['Scope', '## Scope\n\n'], ['Contracts', '## Contracts\n\n'],
+    ['Files to touch', '## Files to touch\n\n'], ['Deployment Compatibility', '## Deployment Compatibility\n\n'],
+    ['Manual Verification', '## Manual Verification\n\n'], ['Estimate', '## Estimate\n'],
+  ]) hollow = hollow.replace(empty(section), keep)
+
+  const out = step5SchemaEval({
+    hollow,
+    headingsOnly: V2_PACKET.replace(/## Scope\n[^#]*/m, '## Scope\n### IN\n### OUT\n\n'),
+    placeholder: V2_PACKET.replace('- Add the shopping list screen.', '- TBD'),
+    // The one legitimate way a required section holds no prose.
+    declaredNotApplicable: V2_PACKET.replace(/## Deployment Compatibility\n[^#]*/m, '## Deployment Compatibility\n- APPLIES: no\n- RATIONALE: the slice ships no artifact and needs no migration.\n\n'),
+  })
+
+  const hollowErrors = out.hollow.errors.join('; ')
+  for (const section of ['Goal', 'Scope', 'Contracts', 'Files to touch', 'Deployment Compatibility', 'Manual Verification', 'Estimate']) {
+    assert.match(hollowErrors, new RegExp(`"${section}" is empty`), `${section} must be reported empty`)
+  }
+  // Sub-headings are structure, not content.
+  assert.match(out.headingsOnly.errors.join('; '), /"Scope" is empty/)
+  assert.match(out.placeholder.errors.join('; '), /"Goal" is empty/)
+  assert.deepEqual(out.declaredNotApplicable.errors, [])
+})
+
+// Fase 1 made `.consumed.md` history. A migration that matched the name pattern alone could turn a
+// closed packet back into an active one, which is a format change reopening finished work.
+test('discipline:migrate-packets: archived packets are history, in dry-run and in --write', () => {
+  const body = ['# STEP_5_SLICE_PACKET', '', 'SLICE: 13', '', '## Goal', '- x', ''].join('\n')
+  const projectRoot = createDisciplineProject({
+    'STEP_5_SLICE_PACKET_13.consumed.md': body,
+    'STEP_5_SLICE_PACKET_14.superseded.md': body.replace('SLICE: 13', 'SLICE: 14'),
+    'STEP_5_SLICE_PACKET_15.archived.md': body.replace('SLICE: 13', 'SLICE: 15'),
+    'STEP_5_SLICE_PACKET.S16.consumed.md': body.replace('SLICE: 13', 'SLICE: 16'),
+  })
+  const packets = path.join(projectRoot, '.discipline', 'packets')
+  const before = fs.readdirSync(packets).sort()
+
+  const dry = runTsx('tools/discipline/migrate-packets.ts', ['--project-dir', projectRoot, '--stamp', 'T'])
+  assert.equal(dry.status, 0, getOutput(dry))
+  assert.match(getOutput(dry), /No Step 5 packets found/)
+
+  const written = runTsx('tools/discipline/migrate-packets.ts', ['--project-dir', projectRoot, '--write', '--stamp', 'T'])
+  assert.equal(written.status, 0, getOutput(written))
+  assert.deepEqual(fs.readdirSync(packets).sort(), before, 'no target, no backup, no legacy/ directory')
+  assert.ok(!fs.existsSync(path.join(packets, 'STEP_5_SLICE_PACKET_13.md')), 'an archived packet must not come back as active')
+  assert.ok(!fs.existsSync(path.join(packets, 'legacy')))
+
+  // And an active packet next to them is still migrated: the filter is about archives, not about
+  // giving up whenever an archive is present.
+  fs.writeFileSync(path.join(packets, 'STEP_5_SLICE_PACKET_17.md'), body.replace('SLICE: 13', 'SLICE: 17'), 'utf8')
+  const mixed = runTsx('tools/discipline/migrate-packets.ts', ['--project-dir', projectRoot, '--write', '--stamp', 'T'])
+  assert.equal(mixed.status, 0, getOutput(mixed))
+  assert.match(fs.readFileSync(path.join(packets, 'STEP_5_SLICE_PACKET_17.md'), 'utf8'), /schema: discipline\.packet\.step5/)
+  assert.ok(!fs.existsSync(path.join(packets, 'STEP_5_SLICE_PACKET_13.md')))
+})
+
+// A version nobody can read is not something to rewrite either: replacing that frontmatter with
+// 2.0.0 would be the migration declaring a contract the packet never met.
+test('discipline:migrate-packets: refuses a packet whose declared version it cannot read', () => {
+  const projectRoot = createDisciplineProject({
+    'STEP_5_SLICE_PACKET.md': ['---', 'schema: discipline.packet.step5', 'version: 3.0.0', 'id: x', 'status: ready',
+      'slice: 13', '---', '', '# STEP_5_SLICE_PACKET', '', '## Goal', '- x', ''].join('\n'),
+  })
+  const res = runTsx('tools/discipline/migrate-packets.ts', ['--project-dir', projectRoot, '--write', '--stamp', 'T'])
+  assert.notEqual(res.status, 0, getOutput(res))
+  assert.match(getOutput(res), /REFUSED.*cannot read/)
+  assert.deepEqual(fs.readdirSync(path.join(projectRoot, '.discipline', 'packets')), ['STEP_5_SLICE_PACKET.md'])
 })
 
 // Migration is a decision the operator takes between slices, so it says what it would do and
@@ -4798,6 +4907,7 @@ test('discipline:migrate-packets: keeps ready only when the migrated packet woul
   const draftPacket = fs.readFileSync(path.join(noSurfaces, '.discipline', 'packets', 'STEP_5_SLICE_PACKET_13.md'), 'utf8')
   assert.match(draftPacket, /status: draft\n/)
   assert.match(draftPacket, /# REQUIRED: declare what this slice touches/)
-  // A draft assembles (it is not claiming to be finished), and Step 5 sees it is not ready.
-  assert.equal(runTsx('tools/discipline/assemble-paste-ready.ts', ['--step', '5', '--slice', '13', '--project-dir', noSurfaces]).status, 0)
+  // And the draft it produced is not handed to an implementer: it assembles only for inspection.
+  assert.notEqual(runTsx('tools/discipline/assemble-paste-ready.ts', ['--step', '5', '--slice', '13', '--project-dir', noSurfaces]).status, 0)
+  assert.equal(runTsx('tools/discipline/assemble-paste-ready.ts', ['--step', '5', '--slice', '13', '--allow-draft', '--project-dir', noSurfaces]).status, 0)
 })
