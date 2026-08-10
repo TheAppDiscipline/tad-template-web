@@ -90,7 +90,7 @@ function isPlaceholder(text: string): boolean {
 function isEvasive(text: string): boolean {
   if (isPlaceholder(text)) return true;
   const bare = text.trim().toLowerCase().replace(/[.\s]+$/, '');
-  return ['n/a', 'na', 'none', 'no', 'nothing'].includes(bare);
+  return ['n/a', 'n.a', 'na', 'none', 'no', 'nothing', 'not applicable', 'does not apply', 'nil'].includes(bare);
 }
 
 /** True when a section explicitly says it does not apply. Its RATIONALE is checked separately. */
@@ -100,7 +100,9 @@ function declaresNotApplicable(lines: string[]): boolean {
 
 /**
  * Does this section actually say anything? A heading, a blank line and a table separator are
- * structure, not content, and a `TBD` bullet is a promise. Anything else counts: a table row is an
+ * structure, not content; a `TBD` bullet is a promise; and a bare `none` / `n/a` is a section
+ * saying it has nothing to say without taking responsibility for it. Where that is really true,
+ * `APPLIES: no` with a rationale says so on the record. Anything else counts: a table row is an
  * answer, and so is a one-line sentence.
  */
 function hasSubstance(lines: string[]): boolean {
@@ -110,7 +112,7 @@ function hasSubstance(lines: string[]): boolean {
     if (/^#{1,6}\s/.test(line)) return false;          // a sub-heading is more structure
     if (/^\|[\s:|-]+\|$/.test(line)) return false;      // a table separator row
     if (/^(-{3,}|_{3,}|\*{3,})$/.test(line)) return false; // a horizontal rule
-    return !isPlaceholder(line.replace(/^[-*+]\s*/, ''));
+    return !isEvasive(line.replace(/^[-*+]\s*/, ''));
   });
 }
 
@@ -166,16 +168,44 @@ export function parseTable(lines: string[]): ParsedTable | null {
  */
 export type Step5Format = 'v2' | 'legacy' | 'unsupported';
 
-export function step5Format(content: string): { format: Step5Format; version: string | null; reason?: string } {
-  const { meta } = parsePacketMeta(content);
-  if (!meta || meta.schema !== 'discipline.packet.step5') return { format: 'legacy', version: null };
+/** A well-formed version of a given major: `2`, `2.1`, `2.0.0`, `2.0.0-rc.1`. Nothing else. */
+const versionOfMajor = (major: string) => new RegExp(`^${major}(\\.\\d+){0,2}(-[0-9A-Za-z.-]+)?$`);
 
-  const raw = meta.version === undefined || meta.version === null ? '' : String(meta.version).trim();
-  if (raw === '') {
+export function step5Format(content: string): { format: Step5Format; version: string | null; reason?: string } {
+  const { meta, errors } = parsePacketMeta(content);
+
+  // No frontmatter at all is a legacy packet. Frontmatter that OPENED and could not be read is
+  // not: an unreadable declaration is not the same as no declaration, and deciding it was "no
+  // declaration" is exactly the fallback this classifier exists to remove. A packet whose YAML
+  // does not parse might be declaring v2 and failing every rule in it; nobody can tell, and
+  // "nobody can tell" has to read as a refusal.
+  if (meta === null) {
+    if (errors.length === 0) return { format: 'legacy', version: null };
+    return { format: 'unsupported', version: null, reason: `has frontmatter that cannot be read: ${errors.join('; ')}` };
+  }
+  if (meta.schema !== 'discipline.packet.step5') return { format: 'legacy', version: null };
+
+  if (meta.version === undefined || meta.version === null || String(meta.version).trim() === '') {
     return { format: 'unsupported', version: null, reason: 'declares schema discipline.packet.step5 with no version' };
   }
-  if (/^1(\.|$)/.test(raw)) return { format: 'legacy', version: raw };
-  if (/^2(\.|$)/.test(raw)) return { format: 'v2', version: raw };
+  // The version is a STRING, which is also what the schema says. YAML turns `2`, `2.0` and `2.`
+  // into the number 2, so a malformed `version: 2.` arrived here already normalized and passed as
+  // version 2 while the schema rejected it as "must be string": the classifier was more permissive
+  // than the contract it enforces, and the gap between them was a packet nobody checked.
+  if (typeof meta.version !== 'string') {
+    return {
+      format: 'unsupported',
+      version: String(meta.version),
+      reason: `declares version ${JSON.stringify(meta.version)} as a YAML number, not a version string. Quote it: version: "2.0.0"`,
+    };
+  }
+  const raw = meta.version.trim();
+  // The version has to be WELL FORMED, not merely start with the right digit: `2.`, `2.bad` and
+  // `2.0.bad` are not version 2, they are a version nobody can compare. Reading them as v2 made
+  // their malformed frontmatter a warning on a draft, which is the "unreadable version fails open"
+  // rule with an extra step.
+  if (versionOfMajor('1').test(raw)) return { format: 'legacy', version: raw };
+  if (versionOfMajor('2').test(raw)) return { format: 'v2', version: raw };
   return {
     format: 'unsupported',
     version: raw,
@@ -275,14 +305,25 @@ function checkV2(content: string, body: string, severity: SchemaFinding['severit
     }
     // A heading is not an answer. Checking only that the heading EXISTS meant a packet with twelve
     // empty sections read as a complete v2 spec, which is the contract satisfied by typing its
-    // table of contents. `APPLIES: no` is the one way a section is allowed to hold no content, and
-    // it brings its own rationale check below.
-    if (declaresNotApplicable(lines)) continue;
+    // table of contents.
+    if (declaresNotApplicable(lines)) {
+      // ...and `APPLIES: no` is not an answer either, in the sections that ARE the slice. There is
+      // no rationale for a slice with no Goal, no Scope or no Contracts: that is not a slice.
+      // Everywhere else it is allowed, with the rationale checked below.
+      if ((CORE_SECTIONS as readonly string[]).includes(section)) {
+        findings.push({
+          severity,
+          message: `${where}"${section}" declares APPLIES: no`,
+          detail: 'Goal, Scope and Contracts are what a slice IS. A slice that has none of them is not a slice with an exemption, it is not a slice.',
+        });
+      }
+      continue;
+    }
     if (!hasSubstance(lines)) {
       findings.push({
         severity,
         message: `${where}"${section}" is empty`,
-        detail: 'Write what it says, or declare `- APPLIES: no` with a `- RATIONALE:` somebody can check.',
+        detail: 'Write what it says. "none" and "n/a" are not answers here; where a section really does not apply, declare `- APPLIES: no` with a `- RATIONALE:` somebody can check.',
       });
     }
   }

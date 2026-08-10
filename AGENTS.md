@@ -195,10 +195,13 @@ contract of its own, defined once in `tools/discipline/lib/step5-schema.ts`.
 
 **Three outcomes, not two.** No frontmatter, or frontmatter that does not declare the Step 5 schema,
 or declares it at version 1: **legacy**, advisory. Thousands of those exist and none of them lied
-about anything. Version 2: the **current contract**. Anything else (no version, a malformed one, a
-version from the future): **refused**, never quietly demoted to legacy. Falling back would take a
-packet that explicitly opted into a versioned contract and validate it against none, which is the
-shape of the false green the version field exists to prevent.
+about anything. Version 2: the **current contract**. Anything else is **refused**, never quietly
+demoted to legacy: a missing version, a malformed one (`2.`, `2.bad`), one from a future this
+tooling does not know, or frontmatter that opened and could not be parsed at all. Falling back would
+take a packet that explicitly opted into a versioned contract and validate it against none, which is
+the shape of the false green the version field exists to prevent. **The version is a string**, which
+is what the schema says: `2.0.0` needs no quotes, but `2` and `2.0` do, because YAML turns those
+into numbers.
 
 **v2 fails closed once it says `ready`.** A ready packet is about to be handed to a builder, so an
 unmet requirement is an error and `npm run discipline:assemble` refuses it. The same packet as
@@ -244,9 +247,13 @@ Required sections: `Goal`, `Scope`, `Contracts`, `Provider Impact`, `AI Impact`,
 - An unfilled cell (`TBD`, `<placeholder>`, empty) is refused. `Committed effects: none` is a fine
   answer: `none` is an answer, it just has to be true.
 - **A heading is not an answer.** Every required section has to say something: a blank section, one
-  holding only sub-headings, or one holding `TBD` is refused. Otherwise the contract is satisfied by
-  typing its own table of contents. `- APPLIES: no` with a `RATIONALE:` is the one way a required
-  section may hold no prose.
+  holding only sub-headings, or one holding `TBD`, `none`, `n/a` or `not applicable` is refused.
+  Otherwise the contract is satisfied by typing its own table of contents. `- APPLIES: no` with a
+  `RATIONALE:` is the one way a required section may hold no prose.
+- **`Goal`, `Scope` and `Contracts` cannot declare `APPLIES: no`, with or without a rationale.**
+  They are what a slice IS. A slice with none of them is not a slice with an exemption.
+- **`--allow-draft` covers exactly `draft`.** `consumed` and `superseded` do not mean "being
+  written", they mean that slice is over, and the flag does not reopen them.
 
 **Migrating existing packets** is a decision the operator takes between slices, with the pipeline idle:
 

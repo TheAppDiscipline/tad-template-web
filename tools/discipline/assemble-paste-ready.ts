@@ -73,19 +73,27 @@ export async function assemblePasteReady(root: string, stepId: string, sliceId?:
     // and the watcher only selects ready ones, so the manual command was the one path that handed
     // an implementer a draft: a spec Step 4 has not finished, with its defects reported as warnings
     // precisely because it never claimed to be done. `--allow-draft` is for reading it, not building.
+    // `--allow-draft` covers EXACTLY `draft`, the one state that means "being written". `consumed`
+    // and `superseded` mean the opposite: that slice is over. A flag named for drafts that also
+    // reopened closed work would be a second door into the thing Fase 1 spent four rounds closing.
     const declaredStatus = packetStatus(slicePacketContent);
-    if (declaredStatus && declaredStatus !== 'ready' && !options.allowDraft) {
-      throw new Error(
-        `${path.basename(slicePacketPath)} has status "${declaredStatus}", not "ready": a paste-ready is the handoff an implementer builds from. `
-        + 'Finish the packet and set status: ready, or pass --allow-draft to assemble it for inspection only.',
-      );
+    if (declaredStatus && declaredStatus !== 'ready') {
+      const inspectable = declaredStatus === 'draft' && options.allowDraft === true;
+      if (!inspectable) {
+        throw new Error(
+          `${path.basename(slicePacketPath)} has status "${declaredStatus}", not "ready": a paste-ready is the handoff an implementer builds from. `
+          + (declaredStatus === 'draft'
+            ? 'Finish the packet and set status: ready, or pass --allow-draft to assemble it for inspection only.'
+            : `--allow-draft does not cover "${declaredStatus}"; only a draft is work in progress. Reopen the slice deliberately if that is what you mean.`),
+        );
+      }
     }
 
     const reading = readStep5Packet(slicePacketContent, slicePacketPath);
     const blocking = reading.findings.filter((finding) => finding.severity === 'error');
     for (const finding of reading.findings.filter((f) => f.severity === 'warning')) disciplineWarn(`  ${finding.message}`);
-    if (declaredStatus && declaredStatus !== 'ready' && options.allowDraft) {
-      disciplineWarn(`  --allow-draft: assembling a packet whose status is "${declaredStatus}". This handoff is for inspection; do not implement from it.`);
+    if (declaredStatus === 'draft' && options.allowDraft) {
+      disciplineWarn('  --allow-draft: assembling a packet whose status is "draft". This handoff is for inspection; do not implement from it.');
     }
     if (blocking.length > 0) {
       throw new Error(

@@ -4713,7 +4713,7 @@ test('step 5 schema: an unreadable version is refused, it does not fall back to 
     malformed: V2_PACKET.replace('version: 2.0.0', 'version: banana'),
     missing: V2_PACKET.replace('version: 2.0.0\n', ''),
     v1: V2_PACKET.replace('version: 2.0.0', 'version: 1.4.0'),
-    v2Minor: V2_PACKET.replace('version: 2.0.0', 'version: 2.1'),
+    v2Minor: V2_PACKET.replace('version: 2.0.0', 'version: "2.1"'),
   })
 
   for (const name of ['future', 'futureDraft', 'malformed', 'missing']) {
@@ -4802,6 +4802,99 @@ test('discipline:migrate-packets: refuses a packet whose declared version it can
   assert.notEqual(res.status, 0, getOutput(res))
   assert.match(getOutput(res), /REFUSED.*cannot read/)
   assert.deepEqual(fs.readdirSync(path.join(projectRoot, '.discipline', 'packets')), ['STEP_5_SLICE_PACKET.md'])
+})
+
+// Frontmatter that OPENED and could not be read is not "no frontmatter": a packet whose YAML does
+// not parse might be declaring v2 and failing every rule in it, and nobody can tell. Reading it as
+// legacy answered that question in the packet's favour.
+test('step 5 schema: unreadable frontmatter and a malformed 2.x version are refused, not demoted', () => {
+  const out = step5SchemaEval({
+    // The closing fence removed: the block opened and never closed.
+    unterminated: V2_PACKET.replace('---\n# STEP_5_SLICE_PACKET', '# STEP_5_SLICE_PACKET'),
+    badYaml: V2_PACKET.replace('slice: 13', 'slice: [13'),
+    notAMapping: ['---', '- just', '- a list', '---', '', '# STEP_5_SLICE_PACKET', '', '## Goal', '- x', ''].join('\n'),
+    trailingDot: V2_PACKET.replace('version: 2.0.0', 'version: 2.'),
+    badPatch: V2_PACKET.replace('version: 2.0.0', 'version: 2.bad'),
+    badThird: V2_PACKET.replace('version: 2.0.0', 'version: 2.0.bad'),
+    // The same malformed versions as a DRAFT: a version nobody can read fails with any status.
+    badPatchDraft: V2_PACKET.replace('version: 2.0.0', 'version: 2.bad').replace('status: ready', 'status: draft'),
+    // Well-formed ones keep working.
+    bare: V2_PACKET.replace('version: 2.0.0', 'version: "2"'),
+    prerelease: V2_PACKET.replace('version: 2.0.0', 'version: 2.0.0-rc.1'),
+    noFrontmatter: V2_BODY,
+  })
+
+  for (const name of ['unterminated', 'badYaml', 'notAMapping', 'trailingDot', 'badPatch', 'badThird', 'badPatchDraft']) {
+    assert.equal(out[name].format, 'unsupported', `${name}: ${JSON.stringify(out[name])}`)
+    assert.ok(out[name].errors.length > 0, `${name} must be refused, whatever its status says`)
+  }
+  assert.match(out.unterminated.errors.join('; '), /frontmatter that cannot be read/)
+  assert.match(out.badPatch.errors.join('; '), /version "2\.bad", which this tooling cannot read/)
+  assert.equal(out.bare.format, 'v2')
+  assert.equal(out.prerelease.format, 'v2')
+  // A packet with NO frontmatter is still what legacy means.
+  assert.equal(out.noFrontmatter.format, 'legacy')
+  assert.deepEqual(out.noFrontmatter.errors, [])
+})
+
+// `APPLIES: no` was accepted before the content check ran, and the rationale was only demanded of
+// the sections v2 added. So Goal, Scope and Contracts could opt out of themselves, with no reason
+// at all, and the packet reported zero findings.
+test('step 5 schema: Goal, Scope and Contracts cannot opt out of being the slice', () => {
+  const gut = (packet, section, replacement) => packet.replace(new RegExp(`## ${section}\\n[^#]*`, 'm'), `## ${section}\n${replacement}\n\n`)
+  let optedOut = V2_PACKET
+  for (const section of ['Goal', 'Scope', 'Contracts']) optedOut = gut(optedOut, section, '- APPLIES: no')
+
+  const out = step5SchemaEval({
+    optedOut,
+    optedOutWithReason: gut(V2_PACKET, 'Goal', '- APPLIES: no\n- RATIONALE: this slice is pure refactoring with no user-visible goal.'),
+    justNone: gut(V2_PACKET, 'Goal', '- none'),
+    justNotApplicable: gut(V2_PACKET, 'Contracts', '- Not applicable.'),
+    justNil: gut(V2_PACKET, 'Files to touch', '- nil'),
+    // Where it is allowed, it still needs a reason somebody can check.
+    optionalNoReason: gut(V2_PACKET, 'Deployment Compatibility', '- APPLIES: no'),
+    optionalWithReason: gut(V2_PACKET, 'Deployment Compatibility', '- APPLIES: no\n- RATIONALE: the slice ships no artifact and needs no migration.'),
+  })
+
+  const opted = out.optedOut.errors.join('; ')
+  for (const section of ['Goal', 'Scope', 'Contracts']) {
+    assert.match(opted, new RegExp(`"${section}" declares APPLIES: no`), `${section} must not be allowed to opt out`)
+  }
+  // A rationale does not buy it either: these three sections are what a slice IS.
+  assert.match(out.optedOutWithReason.errors.join('; '), /"Goal" declares APPLIES: no/)
+  assert.match(out.justNone.errors.join('; '), /"Goal" is empty/)
+  assert.match(out.justNotApplicable.errors.join('; '), /"Contracts" is empty/)
+  assert.match(out.justNil.errors.join('; '), /"Files to touch" is empty/)
+  assert.match(out.optionalNoReason.errors.join('; '), /"Deployment Compatibility" declares APPLIES: no without a checkable RATIONALE/)
+  assert.deepEqual(out.optionalWithReason.errors, [])
+})
+
+// `--allow-draft` is named for drafts. `consumed` and `superseded` do not mean "being written",
+// they mean that slice is over, and a flag that reopened them would be a second door into the
+// thing Fase 1 spent four rounds closing.
+test('step 5 schema: --allow-draft covers exactly draft, not every non-ready status', () => {
+  const plan = ['# task_plan.md', '', '## 4) Ready Slices', '', '## Slice 13 - list', '- Status: ready', '#### Goal', 'x', ''].join('\n')
+  const project = (status) => {
+    const root = createDisciplineProject({ 'STEP_5_SLICE_PACKET_13.md': V2_PACKET.replace('status: ready', `status: ${status}`) })
+    fs.writeFileSync(path.join(root, 'task_plan.md'), plan, 'utf8')
+    return root
+  }
+  const assemble = (root, args = []) => runTsx('tools/discipline/assemble-paste-ready.ts', ['--step', '5', '--slice', '13', '--project-dir', root, ...args])
+
+  for (const status of ['consumed', 'superseded']) {
+    const root = project(status)
+    const refused = assemble(root)
+    assert.notEqual(refused.status, 0, getOutput(refused))
+    const stillRefused = assemble(root, ['--allow-draft'])
+    assert.notEqual(stillRefused.status, 0, getOutput(stillRefused))
+    assert.match(getOutput(stillRefused), new RegExp(`--allow-draft does not cover "${status}"`))
+    assert.deepEqual(fs.readdirSync(path.join(root, '.discipline', 'paste-ready')).filter((f) => f.endsWith('.md')), [])
+  }
+
+  // A draft is the one state the flag is for.
+  const draft = project('draft')
+  assert.notEqual(assemble(draft).status, 0)
+  assert.equal(assemble(draft, ['--allow-draft']).status, 0)
 })
 
 // Migration is a decision the operator takes between slices, so it says what it would do and
