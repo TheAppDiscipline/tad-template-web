@@ -9,6 +9,7 @@ import { ALL_PACKET_NAMES } from './lib/artifact-flow.js';
 import { parsePacketFile } from './lib/parse-packet.js';
 import { parsePacketMeta } from './lib/packet-meta.js';
 import { findSliceHeadings, isActiveSlicePacketName, parseReadySlicesTable, resolvePacketIdentity, resolveSlice, slicePacketFileName, type SliceHeading } from './lib/slice-identity.js';
+import { readStep5Packet } from './lib/step5-schema.js';
 import { validateScorecard, type ScorecardMode } from './validate-scorecard.js';
 
 const args = minimist(process.argv.slice(2));
@@ -283,7 +284,11 @@ function checkPacketSemantics(root: string, issues: ValidationIssue[]) {
     const filePath = path.join(packetsDir, fileName);
     const fileContent = fs.readFileSync(filePath, 'utf-8');
     const parsed = parsePacketFile(filePath, fileContent);
-    const packetName = normalizePacketName(parsed.name || fileName);
+    // The suffixed name is the CANONICAL one since Fase 1, so it cannot be the less-checked one.
+    // `STEP_5_SLICE_PACKET_13.md` resolved to the rule key "STEP_5_SLICE_PACKET_13", which matches
+    // no rule, so every canonically named Step 5 packet skipped these checks entirely: a v2 packet
+    // that said `ready` and met none of its contract passed `discipline:validate` in silence.
+    const packetName = collapseSlicePacketName(normalizePacketName(parsed.name || fileName));
     const rules = SEMANTIC_PACKET_RULES[packetName];
 
     if (!rules) continue;
@@ -314,6 +319,17 @@ function checkPacketSemantics(root: string, issues: ValidationIssue[]) {
       }
     }
 
+    // The Step 5 packet has a versioned contract of its own. A v2 packet is read against it (as
+    // errors once it says `ready`); a legacy one keeps the advisory heading nudges below, which is
+    // the whole point of keeping v1 advisory: nothing already on disk turns red overnight.
+    if (packetName === 'STEP_5_SLICE_PACKET') {
+      const reading = readStep5Packet(fileContent, fileName);
+      for (const finding of reading.findings) {
+        issues.push({ severity: finding.severity, file: fileName, message: finding.message, detail: finding.detail });
+      }
+      if (reading.format === 'v2') continue;
+    }
+
     if (parsed.status === 'ready') {
       for (const heading of rules.readyHeadings ?? []) {
         if (!hasPacketHeading(parsed.body, heading)) {
@@ -327,6 +343,15 @@ function checkPacketSemantics(root: string, issues: ValidationIssue[]) {
       }
     }
   }
+}
+
+/**
+ * `STEP_5_SLICE_PACKET_13` and `STEP_5_SLICE_PACKET_13.2` are Step 5 packets, and the rules for one
+ * are the rules for all. Only the Step 5 family is collapsed here: applying the completion-packet
+ * rules to suffixed completion packets is a separate decision, not a side effect of this one.
+ */
+function collapseSlicePacketName(value: string): string {
+  return /^STEP_5_SLICE_PACKET(_.+)?$/i.test(value) ? 'STEP_5_SLICE_PACKET' : value;
 }
 
 function normalizePacketName(value: string): string {

@@ -1,0 +1,76 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "discipline.packet.step5.v2",
+  "title": "STEP_5_SLICE_PACKET v2 frontmatter",
+  "description": "The frontmatter of a Step 5 slice packet, version 2. Unlike the generic packet-meta schema (advisory), a v2 packet whose status is `ready` FAILS CLOSED when this contract is not met: it is the document an implementer is about to build from, so an incomplete one is a spec nobody wrote.",
+  "type": "object",
+  "required": [
+    "schema",
+    "version",
+    "id",
+    "status",
+    "slice",
+    "affected_surfaces",
+    "required_gates"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "schema": {
+      "const": "discipline.packet.step5"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^2(\\.\\d+){0,2}(-[0-9A-Za-z.-]+)?$"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^step5:[^:\\s]+:[^:\\s]+$"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "ready",
+        "consumed",
+        "superseded"
+      ]
+    },
+    "slice": {
+      "type": [
+        "string",
+        "number"
+      ],
+      "minLength": 1
+    },
+    "affected_surfaces": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "ui",
+          "authenticated-ui",
+          "backend",
+          "schema",
+          "permissions",
+          "deployment-artifact",
+          "ai",
+          "docs-only"
+        ]
+      }
+    },
+    "required_gates": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "produced_by": {
+      "type": "object"
+    }
+  }
+}

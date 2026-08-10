@@ -50,6 +50,8 @@ const COMMANDS: Record<string, CommandSpec> = {
   patch: { script: 'discipline:patch' },
   assemble: { script: 'discipline:assemble' },
   'step4-origin': { script: 'discipline:step4-origin' },
+  // Legacy Step 5 packets onto the v2 contract. Dry-run unless --write is passed.
+  'migrate-packets': { script: 'discipline:migrate-packets' },
   progress: { script: 'discipline:progress' },
   watch: { script: 'discipline:watch' },
   lease: { script: 'discipline:lease' },
@@ -86,6 +88,7 @@ function printHelp(): void {
       '  approve|reject   Decide a checkpoint: `approve <packet-file-or-id>` / `reject <..> [--reason "..."]`',
       '  run              Reconciler: one stateless tick for one slice (level 0/1 plumbing without --with-llm)',
       '  step4-origin     Resolve the Step 4 origin (input|reentry|feedback|hardening); exits 0 chosen / 3 ambiguous / 2 invalid',
+      '  migrate-packets  Legacy Step 5 packets -> the v2 contract. Dry-run by default; --write applies it',
       '  patch | assemble | progress | watch | cross-validate',
       '',
       'LLM layer (opt-in, spawns a headless provider CLI; never hides cost/network):',

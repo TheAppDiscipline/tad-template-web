@@ -35,12 +35,35 @@ NOTE: Step 5 (implementation) is still iterative and manual in the daily driver.
 Read the slice's own packet, `.discipline/packets/STEP_5_SLICE_PACKET_<slice>.md`. A project that
 still has the generic `STEP_5_SLICE_PACKET.md` keeps working: it is accepted while it identifies
 THIS slice and no other. Migrating it to the suffixed name is a deliberate decision the operator
-takes between slices, never something this step does on its way past. Confirm:
+takes between slices, never something this step does on its way past.
+
+**A v2 packet has already been checked for you.** Its frontmatter says
+`schema: discipline.packet.step5` with `version: 2.x`, and `npm run discipline:assemble` refuses it
+outright when it says `status: ready` and does not meet the contract, so a packet that reached you
+through the pipeline has its tables filled, its acceptance criteria uniquely identified with real
+negative controls, and a declared falsifiability METHOD. What you still have to do with it:
+
+- Read `affected_surfaces` and `required_gates`: they are what this slice must exercise and pass,
+  not a summary of what it touches. If implementing the slice makes you touch a surface the packet
+  does not declare, stop and say so; the packet is wrong and Step 4 fixes it, not you.
+- Treat every Acceptance Criteria row as a test to write, ID included: the ID is how a failure is
+  referred to in the completion packet and in `progress.md`.
+- Treat the Reachable States table as the error paths to cover. A state with committed effects and
+  no recovery is the partial-state bug this table exists to surface.
+- `status: draft` means Step 4 has not finished the spec. Do not implement from a draft: go back to
+  /discipline-step4.
+
+**A legacy packet (no v2 frontmatter) is accepted with a warning**, and then the DoR is yours to
+check by eye. Confirm:
 - Goal defined
 - Scope IN/OUT explicit
 - Contracts (data model, API/IO, interaction surface)
 - Verifiable acceptance criteria
 - Risks / edge cases listed
+
+`npm run discipline -- migrate-packets` shows what a v2 version of that packet would look like
+without touching anything; `--write` applies it and keeps the original with its SHA-256 under
+`.discipline/packets/legacy/`. Migrating is the operator's decision between slices, not this step's.
 
 If DoR is missing, abort:
 ```

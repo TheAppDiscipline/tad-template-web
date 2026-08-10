@@ -339,14 +339,28 @@ slice, so a promoted slice with no packet would fail there.
 1. If `progress.md` exists and indicates a specific slice as next, use that one
 2. Otherwise, use the first slice in the execution order (typically Slice 0 / bootstrap)
 
-**For each slice you are promoting to ready, assemble the full implementation context:**
+**For each slice you are promoting to ready, assemble the full implementation context.** The packet
+is the document an implementer builds from, so it carries a versioned contract: the frontmatter
+below is **v2 and required**, and once `status: ready` the tooling refuses a packet that does not
+meet it. While you are still filling it in, write `status: draft` and nothing is blocked.
 
 ```markdown
+---
+schema: discipline.packet.step5
+version: 2.0.0
+id: step5:<slice>:<YYYYMMDDTHHMMSS>
+status: ready
+slice: <slice>
+affected_surfaces:
+  - <ui | authenticated-ui | backend | schema | permissions | deployment-artifact | ai | docs-only>
+required_gates:
+  - gate
+---
+
 # STEP_5_SLICE_PACKET
 
 SLICE: <number and name>
 COMPLEXITY: <S/M/L>
-STATUS: ready
 
 ---
 
@@ -364,32 +378,55 @@ STATUS: ready
 <relevant data contracts, copied from the STEP_4_EXECUTION_PACKET in full detail>
 <include types/interfaces, table schemas, endpoints with request/response>
 
+## Provider Impact
+<provider configuration used or changed>
+<when it does not apply: `- APPLIES: no` plus `- RATIONALE: <why this slice cannot touch it>`>
+
+## AI Impact
+<model, prompt, schema or evals this slice touches>
+<when it does not apply: `- APPLIES: no` plus `- RATIONALE: <why this slice cannot touch it>`>
+
+## Reachable States
+| State | Trigger | Committed effects | Returned result | Recovery |
+|---|---|---|---|---|
+| <state> | <what puts the system there> | <what is already written> | <what the caller sees> | <how to get out> |
+
+## Acceptance Criteria
+| ID | Setup | Action | Observable result | Negative control |
+|---|---|---|---|---|
+| AC1 | <starting state> | <what is done> | <what is observed> | <what would have to break for this to fail> |
+
+## Falsifiability
+- METHOD: <red-evidence | mutation | rationale>
+- <the failing run, the mutation that must break a test, or why this slice cannot be falsified>
+
+## Files to touch
+<new and modified files, including contract-related types, adapters, tests, and fixtures>
+
+## Deployment Compatibility
+<migrations, feature flags, config or artifact changes this slice needs, and whether the previous
+build keeps working while it lands>
+
+## Manual Verification
+<short happy-path and failure or access-boundary check>
+
+## Estimate
+<expected production lines, and the split decision if it is large>
+
 ## UI Reference
 <if there is a UI_HANDOFF_PACKET: copy the sections for the screens affected by this slice>
 <include all 4 states of each affected screen>
-<if there is no UI: "N/A">
+<if there is no UI: `- APPLIES: no` plus a RATIONALE>
 
 ## AI Implementation Reference
 <if there is an AI_IMPLEMENTATION_PACKET and the slice touches AI features: copy the relevant sections>
-<if not: "N/A">
-
-## Acceptance Criteria
-<acceptance criteria in checkbox format>
+<if not: `- APPLIES: no` plus a RATIONALE>
 
 ## DoD
 <definition of done>
 
-## Provider Impact
-<provider configuration used or changed; write "None" when there is no impact>
-
-## Files To Touch
-<new and modified files, including contract-related types, adapters, tests, and fixtures>
-
 ## Gates
-<automated checks required before this slice is complete>
-
-## Manual Verification
-<short happy-path and failure or access-boundary check>
+<automated checks required before this slice is complete; keep them in sync with required_gates>
 
 ## Architecture Context
 <relevant extract from the STEP_4_EXECUTION_PACKET: locks, guardrails, decisions that affect this slice>
@@ -404,6 +441,18 @@ STATUS: ready
 <- what to avoid (anti-patterns documented in guardrails)>
 ```
 
+**Fill the tables; do not leave a cell for later.** A row with `TBD` in it is refused, and so is an
+acceptance criterion whose negative control says `none`: a check that passes proves nothing until
+you can say what would have made it fail. Two criteria may not share an ID, because an ID is how a
+failure is referred to later. `Committed effects: none` is a fine answer, it just has to be true.
+
+**`APPLIES: no` needs a reason somebody can check.** Declaring a section irrelevant is the fastest
+way to satisfy it, so `RATIONALE: n/a` is refused and a real sentence is not.
+
+**Declare the surfaces honestly.** `affected_surfaces` is what routes the gates this slice has to
+pass, so an omitted surface is a gate the slice never runs. Declaring one extra is harmless; leaving
+one out is the failure mode this field exists to prevent.
+
 Save to: `.discipline/packets/STEP_5_SLICE_PACKET_<slice>.md`, where `<slice>` is the slice id in
 lowercase (`S13` -> `STEP_5_SLICE_PACKET_13.md`, `S13.2` -> `STEP_5_SLICE_PACKET_13.2.md`).
 Report: `STEP_5_SLICE_PACKET_<slice>.md generated for Slice <N>: <name>`
@@ -412,9 +461,13 @@ Report: `STEP_5_SLICE_PACKET_<slice>.md generated for Slice <N>: <name>`
 `STEP_5_SLICE_PACKET.md`: that single slot is what made two ready slices fight over one file, and
 what made "which slice is this packet for" a guess. Expanding a second slice writes a second file.
 
-**The packet must name its slice, and only its slice.** Keep the `SLICE: <id> - <name>` line in the
-header, and if you write frontmatter, its `slice:` must carry the same id. Two declarations that
-disagree stop the pipeline on purpose, so do not restate the id anywhere you are not keeping in sync.
+**The packet must name its slice, and only its slice.** The frontmatter `slice:`, the `id:` middle
+segment and the `SLICE: <id> - <name>` header line all carry the id, and they must agree. Two
+declarations that disagree stop the pipeline on purpose.
+
+**Existing projects:** a packet written before this contract keeps working, with a warning.
+`npm run discipline -- migrate-packets` shows what a v2 version of it would look like, and
+`--write` applies it, keeping the original and its SHA-256 under `.discipline/packets/legacy/`.
 
 **The slice must already exist in `task_plan.md`, exactly once.** A packet for a slice the plan does
 not describe is refused by `discipline:assemble`, by `discipline run` and by `discipline:validate`.

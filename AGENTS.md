@@ -53,6 +53,7 @@ npm run discipline:assemble   # assemble paste-ready file for the next step
 npm run discipline:progress   # update progress.md from SLICE_COMPLETION_PACKET
 npm run discipline:status     # show pipeline dashboard
 npm run discipline:validate   # check pipeline integrity and packet completeness
+npm run discipline:migrate-packets  # legacy Step 5 packets -> the v2 contract (dry run; --write applies it)
 npm run discipline:watch      # auto-run the plumbing on new packets
 ```
 
@@ -186,6 +187,68 @@ anything on its own. `npm run discipline:validate` warns once per generic packet
 suffixed file it belongs in; moving it is a deliberate decision the operator takes between slices,
 with the pipeline idle. Inside a slice nothing is renamed, moved or hand-marked: consumption is
 recorded in place by the watcher when the completion packet carries a green gate.
+
+## Step 5 Packet Contract (v2)
+
+The `STEP_5_SLICE_PACKET` is the document an implementer builds from, so it carries a versioned
+contract of its own, defined once in `tools/discipline/lib/step5-schema.ts`.
+
+**v1 stays advisory. v2 fails closed.** A packet written before this contract keeps working and only
+warns: thousands of them exist and none of them lied about anything. A packet that DECLARES v2 and
+says `status: ready` is about to be handed to a builder, so an unmet requirement is an error and
+`npm run discipline:assemble` refuses it. The same packet as `status: draft` reports the same
+problems as warnings, because a draft is what Step 4 is still filling in.
+
+Frontmatter (all required in v2):
+
+```yaml
+---
+schema: discipline.packet.step5
+version: 2.0.0
+id: step5:<slice>:<timestamp>
+status: draft | ready | consumed | superseded
+slice: <slice>
+affected_surfaces:      # at least one, from the list below
+  - ui
+required_gates:         # at least one
+  - gate
+---
+```
+
+Surfaces: `ui`, `authenticated-ui`, `backend`, `schema`, `permissions`, `deployment-artifact`,
+`ai`, `docs-only`. They are what routes the gates a slice has to pass, so an omitted surface is a
+gate the slice never runs; declaring one extra is harmless.
+
+Required sections: `Goal`, `Scope`, `Contracts`, `Provider Impact`, `AI Impact`,
+`Reachable States`, `Acceptance Criteria`, `Falsifiability`, `Files to touch`,
+`Deployment Compatibility`, `Manual Verification`, `Estimate`.
+
+- **Reachable States** is a table with `State | Trigger | Committed effects | Returned result | Recovery`.
+  A state with committed effects and no recovery is the partial-state bug this table exists to surface.
+- **Acceptance Criteria** is a table with `ID | Setup | Action | Observable result | Negative control`.
+  IDs are unique (an ID is how a failure is referred to later) and the negative control may not be
+  `none`: a check that passes proves nothing until you can say what would have made it fail.
+- **Falsifiability** declares `METHOD: red-evidence | mutation | rationale` plus the evidence itself.
+  It is a declaration, not a tone of voice: a state read from prose is language-dependent and inverts
+  on the first negation.
+- **`APPLIES: no`** is how a section says it does not apply, and it needs a `RATIONALE:` somebody can
+  check. Without that rule, declaring a section irrelevant is the fastest way to satisfy it.
+- An unfilled cell (`TBD`, `<placeholder>`, empty) is refused. `Committed effects: none` is a fine
+  answer: `none` is an answer, it just has to be true.
+
+**Migrating existing packets** is a decision the operator takes between slices, with the pipeline idle:
+
+```bash
+npm run discipline:migrate-packets            # dry run: says exactly what it would do
+npm run discipline:migrate-packets -- --write # applies it
+```
+
+It infers the slice from the same declarations everything else reads and **refuses ambiguity rather
+than guessing**. With `--write` the original is kept verbatim under `.discipline/packets/legacy/`
+next to a `.sha256` of its bytes, the suffixed packet is created, and nothing is ever overwritten,
+so running it twice does what running it once did. The migrated packet keeps `status: ready` only
+when it already meets v2; otherwise it lands as `draft`, which is honest about the sections Step 4
+still has to write. No surface is invented for you: a guessed surface is a gate the slice skips.
 
 ## Anchor Rules
 

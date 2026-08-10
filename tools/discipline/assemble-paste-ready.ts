@@ -8,6 +8,7 @@ import { resolveProjectRoot } from './lib/discipline-config.js';
 import { copyToClipboard } from './lib/clipboard.js';
 import { STEP_ASSEMBLY_MAP, VALID_STEPS } from './lib/artifact-flow.js';
 import { locateSlicePacket, normalizeSliceId, slicePasteReadyFileName } from './lib/slice-identity.js';
+import { readStep5Packet } from './lib/step5-schema.js';
 
 const args = minimist(process.argv.slice(2));
 const projectRoot = resolveProjectRoot(args['project-dir']);
@@ -61,6 +62,19 @@ export async function assemblePasteReady(root: string, stepId: string, sliceId?:
     for (const warning of (located as { warnings: string[] }).warnings) disciplineWarn(warning);
     slicePacketPath = (located as { path: string }).path;
     outputFile = slicePasteReadyFileName(sliceId);
+
+    // Every Step 5 handoff is assembled here: the watcher, `discipline run` at every level and the
+    // manual command all come through this one door, so this is where a packet that declared the v2
+    // contract and then failed it stops. A legacy packet only warns; it never promised this much.
+    const reading = readStep5Packet(fs.readFileSync(slicePacketPath, 'utf-8'), slicePacketPath);
+    const blocking = reading.findings.filter((finding) => finding.severity === 'error');
+    for (const finding of reading.findings.filter((f) => f.severity === 'warning')) disciplineWarn(`  ${finding.message}`);
+    if (blocking.length > 0) {
+      throw new Error(
+        `${path.basename(slicePacketPath)} declares the v2 contract with status: ready and does not meet it. `
+        + `Fix the packet (or set status: draft while you finish it):\n  - ${blocking.map((f) => (f.detail ? `${f.message} (${f.detail})` : f.message)).join('\n  - ')}`,
+      );
+    }
   }
 
   for (const p of config.requiredPackets) {
