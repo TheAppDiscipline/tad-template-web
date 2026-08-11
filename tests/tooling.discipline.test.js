@@ -5914,6 +5914,33 @@ test('check-authenticated-ui: files are not tests, and the runner is what counts
     assert.equal(real.status, 0, getOutput(real))
     assert.match(getOutput(real), /1 test\(s\)/)
 
+    // A runner that exits 0 and reports no count tells us nothing, and the file total is the very
+    // thing this check exists to stop standing in for it. --discover-command swaps the discoverer
+    // (another runner, or a fake one like these).
+    const withRunner = (dir, command) => spawnSync(
+      process.execPath,
+      [path.join(repoRoot, 'tools', 'check_authenticated_ui.js'), '--project-dir', dir, '--discover-command', command],
+      { cwd: repoRoot, encoding: 'utf8' },
+    )
+    const populated = project('counted', REAL_AUTH_TEST)
+
+    const silent = withRunner(populated, 'node -e "console.log(\'Listing tests:\')"')
+    assert.notEqual(silent.status, 0, getOutput(silent))
+    assert.match(getOutput(silent), /reported no test count/)
+
+    const worded = withRunner(populated, 'node -e "console.log(\'ran 2 specs, all good\')"')
+    assert.notEqual(worded.status, 0, getOutput(worded))
+    assert.match(getOutput(worded), /reported no test count/)
+
+    const zero = withRunner(populated, 'node -e "console.log(\'Total: 0 tests in 0 files\')"')
+    assert.notEqual(zero.status, 0, getOutput(zero))
+    assert.match(getOutput(zero), /found 0 tests/)
+
+    // A count is the only thing that passes, and the message quotes it.
+    const counted = withRunner(populated, 'node -e "console.log(\'Total: 3 tests in 1 file\')"')
+    assert.equal(counted.status, 0, getOutput(counted))
+    assert.match(getOutput(counted), /3 test\(s\)/)
+
     // AUTH_MODE: NONE means nothing is behind a login, so declaring the surface contradicts the project.
     const none2 = run(project('no-auth', REAL_AUTH_TEST, 'NONE'))
     assert.notEqual(none2.status, 0, getOutput(none2))

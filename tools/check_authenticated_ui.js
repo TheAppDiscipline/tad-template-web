@@ -43,6 +43,10 @@ const SUITE = {
   // One string, not argv: `npx` is a .cmd on Windows and needs a shell, and passing args
   // alongside `shell: true` concatenates them unescaped (Node DEP0190).
   discover: (dir) => `npx playwright test --list "${dir}"`,
+  // How the runner reports the count. If this stops matching (a Playwright version that words it
+  // differently, another runner wired through --discover-command), the check FAILS: an exit code
+  // with no count is not a count, and the file total is not an answer to "how many tests".
+  countPattern: /Total:\s+(\d+)\s+test/i,
   runner: 'npm run e2e:auth',
 };
 
@@ -98,27 +102,39 @@ if (files.length === 0) {
 }
 
 // Ask the runner how many tests it can actually find. A file is not a test.
-const listing = spawnSync(SUITE.discover(SUITE_DIR), { cwd: ROOT, encoding: 'utf-8', shell: true });
+const commandFlag = args.indexOf('--discover-command');
+const command = commandFlag !== -1 && args[commandFlag + 1] ? args[commandFlag + 1] : SUITE.discover(SUITE_DIR);
+const listing = spawnSync(command, { cwd: ROOT, encoding: 'utf-8', shell: true });
 const output = `${listing.stdout ?? ''}${listing.stderr ?? ''}`;
+const quoted = output.trim().split(/\r?\n/).slice(0, 6).map((line) => `| ${line}`);
 
 if (listing.error || listing.status !== 0) {
   fail([
     `the runner could not list any test in ${SUITE_DIR}/.`,
     `${files.length} file(s) are there, and none of them produced a runnable test.`,
     'An empty file, a file holding only comments, and a file that does not compile all look the same on disk.',
-    ...output.trim().split(/\r?\n/).slice(0, 6).map((line) => `| ${line}`),
+    ...quoted,
   ]);
 }
 
-const total = output.match(/Total:\s+(\d+)\s+test/i);
-if (total && Number(total[1]) === 0) {
+// Exit 0 is not a count. A runner that succeeded and reported no number tells us nothing about
+// how many tests are in there, and the number of FILES is the very thing this check exists to
+// stop standing in for it. So an unreadable count fails, exactly like a count of zero.
+const total = output.match(SUITE.countPattern);
+if (!total) {
+  fail([
+    `the runner exited 0 but reported no test count for ${SUITE_DIR}/.`,
+    `This check needs a number, and "${SUITE.countPattern}" matched nothing in its output.`,
+    'The count of files is not the count of tests, so there is nothing here to accept.',
+    ...quoted,
+  ]);
+}
+if (Number(total[1]) === 0) {
   fail([
     `the runner found 0 tests in ${SUITE_DIR}/.`,
     `${files.length} file(s) are there, and none of them declares a test.`,
   ]);
 }
 
-console.log(
-  `[check-authenticated-ui] OK: ${total ? `${total[1]} test(s)` : `${files.length} file(s)`} in ${SUITE_DIR}/, run by ${SUITE.runner}.`,
-);
+console.log(`[check-authenticated-ui] OK: ${total[1]} test(s) in ${SUITE_DIR}/, run by ${SUITE.runner}.`);
 process.exit(0);
