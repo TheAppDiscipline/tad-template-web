@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { withWriterLock } from './locks.js';
-import { locateSlicePacket, normalizeSliceId } from './slice-identity.js';
+import { locateSlicePacket, normalizeSliceId, packetStatus } from './slice-identity.js';
 import {
   declaredSurfaces, evaluateAsV2, isEstimateBasis, parseEstimateBasis, plainDeclaration,
   readStep5Packet, sectionLines, type EstimateBasis,
@@ -44,6 +44,11 @@ export interface SliceMetricRecord {
     categories: Record<MetricCategory, LineTotals>;
   };
   signature: string;
+}
+
+export interface Step5Implementability {
+  ok: boolean;
+  reasons: string[];
 }
 
 interface NumstatEntry {
@@ -241,18 +246,38 @@ export function recordSignature(record: Omit<SliceMetricRecord, 'signature'>): s
   return crypto.createHash('sha256').update(JSON.stringify(record)).digest('hex');
 }
 
+/**
+ * A packet remains readable after it records its own metric. For readiness checks, exclude exactly
+ * the latest record produced from these exact packet bytes; every older record remains evidence,
+ * including records for the same slice. Pre-record metrics validation deliberately does not call
+ * this helper, because at that point every record on disk is prior history.
+ */
+export function metricHistoryBeforeCurrentPacket(
+  records: SliceMetricRecord[],
+  currentSlice: string,
+  packetSha256: string,
+): SliceMetricRecord[] {
+  const current = normalizeSliceId(currentSlice);
+  let producedIndex = -1;
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const record = records[index];
+    if (normalizeSliceId(record.slice) === current && record.packet.sha256 === packetSha256) {
+      producedIndex = index;
+      break;
+    }
+  }
+  return producedIndex === -1 ? records : records.filter((_, index) => index !== producedIndex);
+}
+
 /** Resolve every analogy claim to signed history before the packet is handed off or measured. */
 export function validateEstimateBasisEvidence(
   basis: EstimateBasis,
   affectedSurfaces: string[],
   records: SliceMetricRecord[],
-  currentSlice: string,
 ): void {
-  const current = normalizeSliceId(currentSlice);
   if (basis.kind === 'no-history') {
     const comparable = records.find((record) =>
-      normalizeSliceId(record.slice) !== current
-      && record.affected_surfaces.some((surface) => affectedSurfaces.includes(surface)));
+      record.affected_surfaces.some((surface) => affectedSurfaces.includes(surface)));
     if (comparable) {
       throw new Error(
         `BASIS claims no history, but signed metric history contains comparable slice ${comparable.slice} `
@@ -266,7 +291,6 @@ export function validateEstimateBasisEvidence(
     throw new Error(`BASIS analogy calls ${missingCurrent.join(', ')} shared, but the current packet does not declare those affected surfaces.`);
   }
   for (const comparable of basis.comparables) {
-    if (comparable.slice === current) throw new Error(`BASIS analogy cannot use the current slice ${current} as its own comparable.`);
     const matching = records.filter((record) =>
       normalizeSliceId(record.slice) === comparable.slice
       && record.actual.changed_lines === comparable.measured_lines
@@ -278,6 +302,42 @@ export function validateEstimateBasisEvidence(
       );
     }
   }
+}
+
+/** The single readiness predicate consumed by both state-view and Step 5 assembly. */
+export function inspectStep5Implementability(
+  root: string,
+  packet: string,
+  packetFile: string,
+  slice: string,
+): Step5Implementability {
+  const reasons: string[] = [];
+  const status = packetStatus(packet);
+  const reading = readStep5Packet(packet, packetFile);
+  // Status-less legacy packets remain available to the explicit manual compatibility path. They
+  // are never advertised as ready by state-view, which independently requires packet.status=ready.
+  if (status !== 'ready' && !(reading.format === 'legacy' && status === null)) {
+    reasons.push(`packet status is ${status ?? 'missing'}, not ready`);
+  }
+  reasons.push(...reading.findings.filter((finding) => finding.severity === 'error').map((finding) =>
+    finding.detail ? `${finding.message} (${finding.detail})` : finding.message));
+  if (reasons.length > 0 || reading.format !== 'v2') return { ok: reasons.length === 0, reasons };
+
+  const declaration = declaredSurfaces(packet);
+  if (!declaration.surfaces || declaration.surfaces.length === 0 || declaration.invalid.length > 0) {
+    reasons.push('v2 packet does not declare valid affected_surfaces');
+    return { ok: false, reasons };
+  }
+  try {
+    const estimate = readEstimateContract(packet);
+    const records = readMetricRecords(root);
+    const packetSha256 = crypto.createHash('sha256').update(packet).digest('hex');
+    const history = metricHistoryBeforeCurrentPacket(records, slice, packetSha256);
+    validateEstimateBasisEvidence(estimate.basis, declaration.surfaces, history);
+  } catch (err) {
+    reasons.push((err as Error).message);
+  }
+  return { ok: reasons.length === 0, reasons };
 }
 
 function atomicWriteMetricRecords(output: string, records: SliceMetricRecord[]): void {
@@ -331,11 +391,11 @@ function recordSliceMetricsLocked(root: string, slice: string, base: string, rec
   }
   const estimate = readEstimateContract(packet);
   const records = readMetricRecords(root);
-  validateEstimateBasisEvidence(estimate.basis, declaration.surfaces ?? [], records, normalizedSlice);
   const prior = records.filter((record) => normalizeSliceId(record.slice) === normalizedSlice);
   if (prior.length > 0 && estimate.duplicate_metrics !== 'allowed') {
     throw new Error(`Metrics already contain ${prior.length} record(s) for slice ${normalizedSlice}. Declare DUPLICATE_METRICS: allowed in Estimate before appending another measurement.`);
   }
+  validateEstimateBasisEvidence(estimate.basis, declaration.surfaces ?? [], records);
   const { resolvedBase, totals } = collectLineMetrics(root, base);
   if (totals.changed_lines > estimate.max_changed_lines && estimate.split_decision === null) {
     throw new Error(

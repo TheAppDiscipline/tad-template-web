@@ -71,11 +71,11 @@ function completionPacket(id, outcome = 'done', gate = 'passed') {
   ].join('\n')
 }
 
-function signedMetric(slice = '1', changedLines = 42) {
+function signedMetric(slice = '1', changedLines = 42, packetSha256 = 'b'.repeat(64)) {
   const unsigned = {
     schema: 'discipline.slice_metric.v1', recorded_at: '2026-08-11T00:00:00.000Z', slice,
     base: { requested: 'main', resolved: 'a'.repeat(40) },
-    packet: { file: `.discipline/packets/STEP_5_SLICE_PACKET_${slice}.md`, sha256: 'b'.repeat(64) },
+    packet: { file: `.discipline/packets/STEP_5_SLICE_PACKET_${slice}.md`, sha256: packetSha256 },
     affected_surfaces: ['ui'],
     estimate: {
       raw: `- MAX_CHANGED_LINES: 100\n- BASIS: ${ANALOGY_BASIS}`,
@@ -151,6 +151,12 @@ test('metrics records categorized numstat, fails above the maximum, and refuses 
   })
   assert.match(record.signature, /^[a-f0-9]{64}$/)
 
+  const postFirstState = runTsx('tools/discipline/state-view.ts', ['--json', '--project-dir', root])
+  assert.equal(postFirstState.status, 0, output(postFirstState))
+  assert.equal(JSON.parse(postFirstState.stdout).slices.find((slice) => slice.id === '13').status, 'ready')
+  const postFirstAssembly = runTsx('tools/discipline/assemble-paste-ready.ts', ['--step', '5', '--slice', '13', '--project-dir', root])
+  assert.equal(postFirstAssembly.status, 0, output(postFirstAssembly))
+
   const duplicate = runTsx('tools/discipline/metrics.ts', ['--slice', '13', '--base', base, '--project-dir', root])
   assert.notEqual(duplicate.status, 0)
   assert.match(output(duplicate), /DUPLICATE_METRICS: allowed/)
@@ -159,11 +165,23 @@ test('metrics records categorized numstat, fails above the maximum, and refuses 
     '- MAX_CHANGED_LINES: 3', `- BASIS: ${NO_HISTORY_BASIS}`,
     '- SPLIT_DECISION: exception-approved', '- DUPLICATE_METRICS: allowed',
   ].join('\n')))
+  const falseNoHistory = runTsx('tools/discipline/metrics.ts', ['--slice', '13', '--base', base, '--project-dir', root])
+  assert.notEqual(falseNoHistory.status, 0)
+  assert.match(output(falseNoHistory), /claims no history, but signed metric history contains comparable slice 13/)
+
+  const selfAnalogy = `analogy; comparables=S13@${record.actual.changed_lines}; shared_surfaces=ui`
+  write(root, '.discipline/packets/STEP_5_SLICE_PACKET_13.md', completePacket('13', 'ready', [
+    '- MAX_CHANGED_LINES: 3', `- BASIS: ${selfAnalogy}`,
+    '- SPLIT_DECISION: exception-approved', '- DUPLICATE_METRICS: allowed',
+  ].join('\n')))
   const declaredDuplicate = runTsx('tools/discipline/metrics.ts', ['--slice', '13', '--base', base, '--recorded-at', '2026-08-11T01:00:00.000Z', '--project-dir', root])
   assert.equal(declaredDuplicate.status, 0, output(declaredDuplicate))
   const records = fs.readFileSync(path.join(root, '.discipline', 'metrics', 'slices.jsonl'), 'utf8').trim().split('\n').map(JSON.parse)
   assert.equal(records.length, 2)
   assert.equal(records[1].actual.paths.includes('.discipline/metrics/slices.jsonl'), false)
+  const postSecondState = runTsx('tools/discipline/state-view.ts', ['--json', '--project-dir', root])
+  assert.equal(postSecondState.status, 0, output(postSecondState))
+  assert.equal(JSON.parse(postSecondState.stdout).slices.find((slice) => slice.id === '13').status, 'ready')
 })
 
 test('metrics classifies real Web, Mobile, Desktop, Extension and CI configuration before test parents', () => {
@@ -245,7 +263,8 @@ test('state-view is byte deterministic and --json exposes the same slice, gate, 
     '# progress.md', '', '## Current Status', '- Blockers: none', '', '---',
     '### 2026-08-11 — Slice 3', '- **Slice:** 3', '- **Status:** done', '- **Gates:** yes', '',
   ].join('\n'))
-  const metric = signedMetric()
+  const packetOne = fs.readFileSync(path.join(root, '.discipline', 'packets', 'STEP_5_SLICE_PACKET_1.md'))
+  const metric = signedMetric('1', 42, crypto.createHash('sha256').update(packetOne).digest('hex'))
   write(root, '.discipline/metrics/slices.jsonl', `${JSON.stringify(metric)}\n`)
   write(root, '.discipline/gate-report.json', JSON.stringify({
     schema: 'discipline.gate_report.v2', ts: '2026-08-11T00:00:00.000Z', mode: 'changed', passed: true,
@@ -286,23 +305,29 @@ test('state-view is byte deterministic and --json exposes the same slice, gate, 
 
 test('state-view only reports ready when plan and exactly one valid ready packet agree', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'discipline-state-ready-contract-'))
-  scaffold(root, [['10', 'ready'], ['11', 'ready'], ['12', 'ready'], ['13', 'ready']])
+  scaffold(root, [['10', 'ready'], ['11', 'ready'], ['12', 'ready'], ['13', 'ready'], ['14', 'ready']])
   write(root, '.discipline/packets/STEP_5_SLICE_PACKET_11.md', completePacket('11', 'draft'))
   write(root, '.discipline/packets/STEP_5_SLICE_PACKET_12.md', completePacket('12').replace('## Goal\n- deliver the slice\n\n', ''))
   write(root, '.discipline/packets/STEP_5_SLICE_PACKET_13.md', completePacket('13'))
   write(root, '.discipline/packets/STEP_5_SLICE_PACKET.md', completePacket('13'))
+  write(root, '.discipline/packets/STEP_5_SLICE_PACKET_14.md', completePacket('14'))
+  write(root, '.discipline/metrics/slices.jsonl', `${JSON.stringify(signedMetric('9', 42))}\n`)
 
   const result = runTsx('tools/discipline/state-view.ts', ['--json', '--project-dir', root])
   assert.equal(result.status, 0, output(result))
   const state = JSON.parse(result.stdout)
   assert.deepEqual(state.slices.map((slice) => [slice.id, slice.status]), [
-    ['10', 'blocked'], ['11', 'blocked'], ['12', 'blocked'], ['13', 'blocked'],
+    ['9', 'unknown'], ['10', 'blocked'], ['11', 'blocked'], ['12', 'blocked'], ['13', 'blocked'], ['14', 'blocked'],
   ])
   const blockers = state.blockers.join('\n')
   assert.match(blockers, /Slice 10 is plan-ready but has no active Step 5 packet/)
   assert.match(blockers, /Slice 11 is plan-ready but its packet status is draft/)
   assert.match(blockers, /Slice 12 is plan-ready but its Step 5 packet is invalid/)
   assert.match(blockers, /Slice 13 has more than one active Step 5 packet/)
+  assert.match(blockers, /Slice 14 Step 5 packet is not implementable: BASIS claims no history/)
+  const assembled = runTsx('tools/discipline/assemble-paste-ready.ts', ['--step', '5', '--slice', '14', '--project-dir', root])
+  assert.notEqual(assembled.status, 0)
+  assert.match(output(assembled), /BASIS claims no history/)
 })
 
 test('state-view refuses partial consumption and expands multiline Open Errors', () => {

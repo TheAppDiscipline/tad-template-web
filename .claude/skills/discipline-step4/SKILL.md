@@ -262,7 +262,9 @@ Expand it with the following detail:
    `analogy; comparables=S12@120,S14@95; shared_surfaces=ui,backend`, or, only when there is no
    comparable record, `no-history; planned_files=src/a.ts,tests/a.test.ts; risks=<concrete risks>`.
    Each `@` value is that slice's measured changed-line count. Free prose, `none`, `N/A`, `TBD`, a
-   duplicate, missing keys, or an unmeasured comparable is refused. Never copy an estimate
+   duplicate, missing keys, or an unmeasured comparable is refused. A prior measurement of this
+   same slice is valid evidence and is normally its strongest comparable; do not call it no-history.
+   Never copy an estimate
    from an unrelated surface merely because one exists.
 
 10. **Provider impact**: State which backend, hosting, authentication, or other provider

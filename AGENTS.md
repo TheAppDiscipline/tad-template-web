@@ -270,7 +270,10 @@ four categories and exactly one structured `BASIS:`. Its grammar is either
 forms are not evidence. Both values are structured into the signed metric record. Step 4 assembly
 verifies every JSONL signature before including history and writes no
 handoff when the log is invalid; `discipline metrics` likewise refuses an invalid v2 packet rather
-than signing missing surfaces.
+than signing missing surfaces. A previous signed measurement of the same slice is valid analogy
+evidence. `no-history` means no earlier overlapping record at all; readiness ignores only the latest
+metric produced from the exact current packet bytes so recording that metric does not invalidate its
+own packet. State view and Step 5 assembly use the same complete implementability predicate.
 After implementation, `discipline metrics --slice <id> --base <ref>` compares that maximum with
 `git diff --numstat`, separates production, tests, fixtures/config and documentation, and appends
 a signed record to `.discipline/metrics/slices.jsonl`. Above the maximum, the packet must declare

@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { inspectDisciplineDocuments, type DocumentHealth } from './document-health.js';
 import { readGateReportFile } from './gate-report-io.js';
-import { readMetricRecords, type SliceMetricRecord } from './metrics.js';
+import { inspectStep5Implementability, readMetricRecords, type SliceMetricRecord } from './metrics.js';
 import {
   activeSlicePackets,
   findSliceHeadings,
@@ -120,6 +120,7 @@ function packetBySlice(packets: ActiveSlicePacket[], blockers: string[]): {
 function packetDetails(root: string, packet: ActiveSlicePacket, blockers: string[]): {
   view: SliceStateView['packet'];
   valid: boolean;
+  implementable: boolean;
 } {
   const content = fs.readFileSync(packet.path, 'utf-8');
   const declaration = declaredSurfaces(content);
@@ -129,6 +130,12 @@ function packetDetails(root: string, packet: ActiveSlicePacket, blockers: string
     : reading.findings.filter((item) => item.severity === 'error');
   for (const finding of structuralErrors) blockers.push(finding.message);
   if (declaration.invalid.length) blockers.push(`${packet.fileName} declares invalid surfaces: ${declaration.invalid.join(', ')}.`);
+  const implementability = packet.sliceId
+    ? inspectStep5Implementability(root, content, packet.path, packet.sliceId)
+    : { ok: false, reasons: [] };
+  if (!implementability.ok && packet.status === 'ready') {
+    blockers.push(`Slice ${packet.sliceId ?? 'unknown'} Step 5 packet is not implementable: ${implementability.reasons.join('; ')}.`);
+  }
   return {
     view: {
       file: path.relative(root, packet.path).replace(/\\/g, '/'),
@@ -137,6 +144,7 @@ function packetDetails(root: string, packet: ActiveSlicePacket, blockers: string
       required_gates: declaration.requiredGates,
     },
     valid: structuralErrors.length === 0 && declaration.invalid.length === 0,
+    implementable: implementability.ok,
   };
 }
 
@@ -199,7 +207,7 @@ export function buildStateView(root: string): DisciplineStateView {
     const planState = normalizedStatus(planStatus);
     const planReady = planState === 'ready';
     const packetReady = packet?.status === 'ready';
-    const implementableReady = planReady && packetReady && packetUnique && Boolean(packetHealth?.valid);
+    const implementableReady = planReady && packetReady && packetUnique && Boolean(packetHealth?.implementable);
     if (planReady && !packet) blockers.push(`Slice ${id} is plan-ready but has no active Step 5 packet.`);
     else if (planReady && !packetUnique) { /* duplicate blocker already names the slice */ }
     else if (planReady && !packetReady) blockers.push(`Slice ${id} is plan-ready but its packet status is ${packet?.status ?? 'missing'}.`);
