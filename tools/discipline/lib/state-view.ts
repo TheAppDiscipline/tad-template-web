@@ -14,6 +14,7 @@ import {
   type ActiveSlicePacket,
 } from './slice-identity.js';
 import { declaredSurfaces, readStep5Packet } from './step5-schema.js';
+import { meaningfulItems, sectionItems } from './completion-packet.js';
 
 export const STATE_VIEW_SCHEMA = 'discipline.state_view.v1';
 export const STATE_VIEW_FILE = path.join('.discipline', 'views', 'current-state.md');
@@ -33,6 +34,7 @@ export interface SliceStateView {
   } | null;
   latest_metric: {
     recorded_at: string;
+    affected_surfaces: string[];
     changed_lines: number;
     max_changed_lines: number;
     split_decision: string | null;
@@ -65,14 +67,40 @@ function normalizedStatus(raw: string | null): SliceViewStatus {
   return 'unknown';
 }
 
-function progressBlockers(root: string): string[] {
+function progressContent(root: string): string | null {
   const file = path.join(root, 'progress.md');
-  if (!fs.existsSync(file)) return ['progress.md is missing.'];
-  const content = fs.readFileSync(file, 'utf-8');
+  return fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : null;
+}
+
+function progressBlockers(content: string | null): string[] {
+  if (content === null) return ['progress.md is missing.'];
   const match = content.match(/^\s*-\s*Blockers:\s*(.*?)\s*$/im);
   if (!match) return ['progress.md does not declare Blockers in Current Status.'];
   const value = match[1].trim();
-  return /^(none|n\/a|na|-|\(none\))$/i.test(value) ? [] : [value];
+  if (/^(none|n\/a|na|-|\(none\))$/i.test(value)) return [];
+  if (/^(see|refer to)\s+(the\s+)?open errors\.?$/i.test(value)) {
+    const openErrors = meaningfulItems(sectionItems(content, 'Open Errors'));
+    return openErrors.length ? openErrors : ['progress.md points to Open Errors, but that section has no blocker details.'];
+  }
+  return [value];
+}
+
+/** True only when update-progress recorded a terminal green log entry for this exact slice. */
+function progressRecordsClosure(content: string | null, sliceId: string): boolean {
+  if (content === null) return false;
+  const headings = [...content.matchAll(/^###\s+\d{4}-\d{2}-\d{2}\s+[—-]\s+(.+?)\s*$/gm)];
+  for (let index = 0; index < headings.length; index++) {
+    const label = headings[index][1];
+    const idMatch = label.match(/^(?:slice\s+)?([A-Za-z][A-Za-z0-9._-]*|\d[A-Za-z0-9._-]*)(?:\s|$)/i);
+    if (!idMatch || normalizeSliceId(idMatch[1]) !== normalizeSliceId(sliceId)) continue;
+    const start = (headings[index].index ?? 0) + headings[index][0].length;
+    const end = index + 1 < headings.length ? headings[index + 1].index ?? content.length : content.length;
+    const block = content.slice(start, end);
+    const status = block.match(/^\s*-\s*\*\*Status:\*\*\s*(\S+)/im)?.[1]?.toLowerCase() ?? null;
+    const gates = block.match(/^\s*-\s*\*\*Gates:\*\*\s*(\S+)/im)?.[1]?.toLowerCase() ?? null;
+    if (['done', 'shipped'].includes(status ?? '') && gates === 'yes') return true;
+  }
+  return false;
 }
 
 function latestMetricBySlice(records: SliceMetricRecord[]): Map<string, SliceMetricRecord> {
@@ -119,6 +147,7 @@ function metricSummary(record: SliceMetricRecord | undefined): SliceStateView['l
   if (!record) return null;
   return {
     recorded_at: record.recorded_at,
+    affected_surfaces: [...record.affected_surfaces],
     changed_lines: record.actual.changed_lines,
     max_changed_lines: record.estimate.max_changed_lines,
     split_decision: record.estimate.split_decision,
@@ -127,7 +156,8 @@ function metricSummary(record: SliceMetricRecord | undefined): SliceStateView['l
 }
 
 export function buildStateView(root: string): DisciplineStateView {
-  const blockers = progressBlockers(root);
+  const progress = progressContent(root);
+  const blockers = progressBlockers(progress);
   const planPath = path.join(root, 'task_plan.md');
   const plan = fs.existsSync(planPath) ? fs.readFileSync(planPath, 'utf-8') : '';
   const headings = findSliceHeadings(plan);
@@ -154,8 +184,19 @@ export function buildStateView(root: string): DisciplineStateView {
     const planStatus = heading ? sectionStatusOf(plan, heading) ?? table?.status ?? null : table?.status ?? null;
     const packet = packets.get(id);
     const packetView = packet ? packetDetails(root, packet, blockers) : null;
-    const consumed = packet?.status === 'consumed' || isSliceConsumed(root, id).consumed;
+    const completion = isSliceConsumed(root, id);
+    const packetMarked = packet?.status === 'consumed';
+    const progressMarked = progressRecordsClosure(progress, id);
+    const planMarked = normalizedStatus(planStatus) === 'consumed';
+    const consumed = packetMarked && completion.consumed && progressMarked;
+    if (!consumed && (packetMarked || completion.consumed || progressMarked || planMarked)) {
+      blockers.push(
+        `Slice ${id} has an incomplete consumption transition: packet=${packetMarked ? 'consumed' : packet?.status ?? 'missing'}, `
+        + `completion=${completion.consumed ? 'terminal-green' : completion.reason}, progress=${progressMarked ? 'recorded' : 'not-recorded'}.`,
+      );
+    }
     let status = consumed ? 'consumed' as const : normalizedStatus(planStatus ?? packet?.status ?? null);
+    if (!consumed && status === 'consumed') status = 'blocked';
     if (status === 'unknown' && packet?.status === 'ready') status = 'ready';
     return {
       id,
@@ -203,7 +244,7 @@ function renderSliceTable(slices: SliceStateView[]): string[] {
     '|---|---|---|---|---|---|---|',
     ...slices.map((slice) => {
       const metric = slice.latest_metric
-        ? `${slice.latest_metric.changed_lines}/${slice.latest_metric.max_changed_lines} lines @ ${slice.latest_metric.recorded_at}; split=${slice.latest_metric.split_decision ?? 'none'}; sig=${slice.latest_metric.signature}`
+        ? `${slice.latest_metric.changed_lines}/${slice.latest_metric.max_changed_lines} lines @ ${slice.latest_metric.recorded_at}; surfaces=${slice.latest_metric.affected_surfaces.join(', ') || 'none'}; split=${slice.latest_metric.split_decision ?? 'none'}; sig=${slice.latest_metric.signature}`
         : '—';
       const packet = slice.packet ? `${slice.packet.file} (${slice.packet.status ?? 'no status'})` : '—';
       return `| ${cell(slice.id)} | ${cell(slice.title)} | ${cell(slice.plan_status)} | ${cell(packet)} | ${cell(slice.packet?.affected_surfaces.join(', '))} | ${cell(slice.packet?.required_gates.join(', '))} | ${metric} |`;

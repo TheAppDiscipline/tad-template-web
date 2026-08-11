@@ -2,6 +2,7 @@ import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { withWriterLock } from './locks.js';
 import { locateSlicePacket, normalizeSliceId } from './slice-identity.js';
 import { declaredSurfaces, plainDeclaration, sectionLines } from './step5-schema.js';
 
@@ -134,10 +135,19 @@ function untrackedEntries(root: string): NumstatEntry[] {
 export function classifyMetricPath(file: string): MetricCategory {
   const value = file.replace(/\\/g, '/').toLowerCase();
   const base = path.posix.basename(value);
-  if (/(^|\/)(tests?|__tests__|specs?|e2e|a11y)(\/|$)/.test(value) || /\.(test|spec)\.[^.]+$/.test(base)) return 'tests';
+  // A fixture remains a fixture even when it lives below tests/. Classifying the parent first
+  // made tests/fixtures/data.json look like executable test coverage.
   if (/(^|\/)(fixtures?|mocks?|test-data)(\/|$)/.test(value)
-    || /(^|\/)(package(-lock)?\.json|tsconfig[^/]*\.json|eslint[^/]*|vite\.config[^/]*|vitest\.config[^/]*|playwright[^/]*\.config[^/]*)$/.test(value)
+    || /(^|\/)(package(-lock)?\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|cargo\.(toml|lock)|tsconfig[^/]*\.json|eslint[^/]*|prettier[^/]*|babel\.config[^/]*|metro\.config[^/]*|vite\.config[^/]*|vitest\.config[^/]*|jest\.config[^/]*|playwright[^/]*\.config[^/]*|tailwind\.config[^/]*|postcss\.config[^/]*|wxt\.config[^/]*|webpack\.config[^/]*)$/.test(value)
+    || /(^|\/)(app|eas|firebase|vercel|netlify)\.json$/.test(value)
+    || /(^|\/)app\.config\.[^/]+$/.test(value)
+    || /(^|\/)src-tauri\/tauri\.conf\.json$/.test(value)
+    || /(^|\/)(public\/)?manifest\.json$/.test(value)
+    || /(^|\/)\.github\/workflows\/[^/]+\.ya?ml$/.test(value)
+    || /(^|\/)\.env(?:\.[^/]+)?\.example$/.test(value)
+    || /(^|\/)dockerfile(?:\.[^/]+)?$/.test(value)
     || /(^|\/)\.discipline\/gates\.json$/.test(value)) return 'fixtures-config';
+  if (/(^|\/)(tests?|__tests__|specs?|e2e|a11y)(\/|$)/.test(value) || /\.(test|spec)\.[^.]+$/.test(base)) return 'tests';
   if (/\.(md|mdx|rst|adoc|txt)$/.test(base) || /(^|\/)(docs?|documentation)(\/|$)/.test(value)) return 'documentation';
   return 'production';
 }
@@ -195,24 +205,51 @@ export function readMetricRecords(root: string): SliceMetricRecord[] {
     if (typeof candidate.slice !== 'string'
       || !actual || typeof actual.changed_lines !== 'number'
       || !estimate || typeof estimate.max_changed_lines !== 'number'
-      || typeof candidate.signature !== 'string') {
+      || typeof candidate.signature !== 'string' || !/^[a-f0-9]{64}$/.test(candidate.signature)) {
       throw new Error(`${METRICS_FILE}:${index + 1} is missing slice, estimate, actual, or signature fields.`);
+    }
+    const { signature, ...unsigned } = parsed as SliceMetricRecord;
+    const expected = recordSignature(unsigned);
+    if (signature !== expected) {
+      throw new Error(`${METRICS_FILE}:${index + 1} signature mismatch (expected ${expected}, found ${signature}).`);
     }
     records.push(parsed as SliceMetricRecord);
   }
   return records;
 }
 
-function recordSignature(record: Omit<SliceMetricRecord, 'signature'>): string {
+export function recordSignature(record: Omit<SliceMetricRecord, 'signature'>): string {
   return crypto.createHash('sha256').update(JSON.stringify(record)).digest('hex');
 }
 
-export function recordSliceMetrics(
+function atomicWriteMetricRecords(output: string, records: SliceMetricRecord[]): void {
+  fs.mkdirSync(path.dirname(output), { recursive: true });
+  const temporary = `${output}.${process.pid}.${Date.now()}.tmp`;
+  const payload = records.map((record) => JSON.stringify(record)).join('\n') + '\n';
+  const fd = fs.openSync(temporary, 'wx');
+  try {
+    fs.writeFileSync(fd, payload, 'utf-8');
+  } finally {
+    fs.closeSync(fd);
+  }
+  try {
+    fs.renameSync(temporary, output);
+  } catch (err) {
+    try { fs.unlinkSync(temporary); } catch { /* preserve the original error */ }
+    throw err;
+  }
+}
+
+export async function recordSliceMetrics(
   root: string,
   slice: string,
   base: string,
   recordedAt = new Date().toISOString(),
-): SliceMetricRecord {
+): Promise<SliceMetricRecord> {
+  return await withWriterLock(root, { tool: 'discipline:metrics' }, () => recordSliceMetricsLocked(root, slice, base, recordedAt));
+}
+
+function recordSliceMetricsLocked(root: string, slice: string, base: string, recordedAt: string): SliceMetricRecord {
   const normalizedSlice = normalizeSliceId(slice);
   if (!normalizedSlice) throw new Error('--slice must identify one slice.');
   const taskPlanPath = path.join(root, 'task_plan.md');
@@ -221,7 +258,8 @@ export function recordSliceMetrics(
   if (!located.ok) throw new Error(located.message);
   const packet = fs.readFileSync(located.path, 'utf-8');
   const estimate = readEstimateContract(packet);
-  const prior = readMetricRecords(root).filter((record) => normalizeSliceId(record.slice) === normalizedSlice);
+  const records = readMetricRecords(root);
+  const prior = records.filter((record) => normalizeSliceId(record.slice) === normalizedSlice);
   if (prior.length > 0 && estimate.duplicate_metrics !== 'allowed') {
     throw new Error(`Metrics already contain ${prior.length} record(s) for slice ${normalizedSlice}. Declare DUPLICATE_METRICS: allowed in Estimate before appending another measurement.`);
   }
@@ -248,7 +286,9 @@ export function recordSliceMetrics(
   };
   const record: SliceMetricRecord = { ...unsigned, signature: recordSignature(unsigned) };
   const output = path.join(root, METRICS_FILE);
-  fs.mkdirSync(path.dirname(output), { recursive: true });
-  fs.appendFileSync(output, `${JSON.stringify(record)}\n`, 'utf-8');
+  // The duplicate check and durable write are inside one writer lock. Rewriting the complete
+  // append-only log through a same-directory temporary file makes a crash leave either the old
+  // valid file or the old records plus this one, never a truncated JSON line.
+  atomicWriteMetricRecords(output, [...records, record]);
   return record;
 }

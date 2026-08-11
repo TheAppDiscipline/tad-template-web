@@ -410,6 +410,36 @@ function checkV2(content: string, body: string, severity: SchemaFinding['severit
   checkAcceptanceCriteria(body, severity, where, findings);
   checkFalsifiability(body, severity, where, findings);
   checkNotApplicableRationales(body, severity, where, findings);
+  checkEstimate(body, severity, where, findings);
+}
+
+function declaredValues(lines: string[], key: string): string[] {
+  const matcher = new RegExp(`^${key}\\s*:\\s*(.*?)\\s*$`, 'i');
+  return lines
+    .map((line) => plainDeclaration(line).match(matcher)?.[1]?.trim())
+    .filter((value): value is string => value !== undefined);
+}
+
+/** The Step 4 producer and `discipline metrics` share this machine-readable boundary. */
+function checkEstimate(body: string, severity: SchemaFinding['severity'], where: string, findings: SchemaFinding[]) {
+  const lines = sectionLines(body, 'Estimate');
+  if (lines === null) return;
+  const maximums = declaredValues(lines, 'MAX_CHANGED_LINES');
+  if (maximums.length !== 1 || !/^\d+$/.test(maximums[0] ?? '') || Number(maximums[0]) <= 0) {
+    findings.push({
+      severity,
+      message: `${where}"Estimate" must declare exactly one MAX_CHANGED_LINES: <positive integer>`,
+      detail: 'This is the falsifiable maximum discipline metrics measures after implementation.',
+    });
+  }
+  const decisions = declaredValues(lines, 'SPLIT_DECISION');
+  if (decisions.length > 1 || decisions.some((value) => !['split', 'exception-approved'].includes(value))) {
+    findings.push({ severity, message: `${where}"Estimate" SPLIT_DECISION must be exactly split or exception-approved when present` });
+  }
+  const duplicate = declaredValues(lines, 'DUPLICATE_METRICS');
+  if (duplicate.length > 1 || duplicate.some((value) => value !== 'allowed')) {
+    findings.push({ severity, message: `${where}"Estimate" DUPLICATE_METRICS must be exactly allowed when present` });
+  }
 }
 
 function checkTable(body: string, name: string, columns: string[], severity: SchemaFinding['severity'], where: string, findings: SchemaFinding[]): ParsedTable | null {

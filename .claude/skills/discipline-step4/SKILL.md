@@ -162,6 +162,8 @@ not just the original plan.
 12. `.discipline/step2-outputs/Step2_01_Architecture_Core.md` - validated core architecture
 13. `.discipline/step2-outputs/Step2_02_Permissions_Security.md` - permissions and security
 14. `.discipline/step2-outputs/Step2_03_Migrations_Backend.md` - migrations and backend
+15. `.discipline/metrics/slices.jsonl` - prior measured slices; read through the validated compact
+    view with `npm run --silent discipline -- state-view --json`
 
 ### Reconcile the plan with the starter project
 
@@ -254,6 +256,11 @@ Expand it with the following detail:
    - S: One new file, a localized change, no new integrations
    - M: Several files, one new integration, moderate logic
    - L: Multiple files, several integrations, complex logic or edge cases
+   Also declare a positive integer `MAX_CHANGED_LINES` for the whole slice (production, tests,
+   fixtures/config, and documentation). Base it on prior metric records whose
+   `affected_surfaces` overlap this slice. Name the comparable slice IDs and measured lines in
+   `BASIS`; when none exist, say so and give a file/risk-based rationale. Never copy an estimate
+   from an unrelated surface merely because one exists.
 
 10. **Provider impact**: State which backend, hosting, authentication, or other provider
     configuration the slice uses or changes. Write `None` when there is no provider impact.
@@ -411,7 +418,11 @@ build keeps working while it lands>
 <short happy-path and failure or access-boundary check>
 
 ## Estimate
-<expected production lines, and the split decision if it is large>
+- MAX_CHANGED_LINES: <positive integer covering all changed-line categories>
+- BASIS: <similar slice IDs, shared surfaces and measured lines; or no comparable history plus a file/risk rationale>
+<when actual scope later exceeds the maximum, add exactly `- SPLIT_DECISION: split` or
+`- SPLIT_DECISION: exception-approved`; a repeated measurement also requires the reviewed
+declaration `- DUPLICATE_METRICS: allowed`>
 
 ## UI Reference
 <if there is a UI_HANDOFF_PACKET: copy the sections for the screens affected by this slice>

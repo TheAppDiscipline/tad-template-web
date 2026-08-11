@@ -56,7 +56,8 @@ npm run discipline:validate   # check pipeline integrity and packet completeness
 npm run discipline:migrate-packets  # legacy Step 5 packets -> the v2 contract (dry run; --write applies it)
 npm run discipline:gate:changed     # run only the gates the change needs (see Hybrid Gates); npm run gate is unchanged
 npm run discipline:metrics -- --slice <id> --base <ref>  # append measured slice size by category
-npm run discipline:state-view       # regenerate compact derived state; add --json for data
+npm run discipline:state-view       # regenerate compact derived state
+npm run --silent discipline -- state-view --json # JSON-only stdout (PowerShell: use npm.cmd)
 npm run discipline:watch      # auto-run the plumbing on new packets
 ```
 
@@ -262,7 +263,9 @@ Required sections: `Goal`, `Scope`, `Contracts`, `Provider Impact`, `AI Impact`,
   the emphasis and the code ticks come off before any rule looks at the value. A contract you can
   satisfy by changing a bullet character is not a contract.
 
-**Estimate feeds measured scope.** Step 4 declares `MAX_CHANGED_LINES: <positive integer>`.
+**Estimate feeds measured scope.** Step 4 declares `MAX_CHANGED_LINES: <positive integer>` for all
+four categories and a `BASIS:` from prior slices with overlapping affected surfaces (or an explicit
+file/risk rationale when no comparable history exists).
 After implementation, `discipline metrics --slice <id> --base <ref>` compares that maximum with
 `git diff --numstat`, separates production, tests, fixtures/config and documentation, and appends
 a signed record to `.discipline/metrics/slices.jsonl`. Above the maximum, the packet must declare
@@ -374,7 +377,9 @@ archive changes arrive as ordinary reviewable patch blocks.
 metrics, the gate report and consumption state. It shows ready, in-progress and consumed slices,
 blockers, required gates, latest measurements and document sizes. The view is gitignored,
 contains no decisions, and identical inputs produce identical bytes. `--json` returns the same
-state as structured data. `discipline status` regenerates and links the view and prints sizes.
+state as structured data. Use `npm run --silent discipline -- state-view --json` when stdout must be
+pure JSON (`npm.cmd` in PowerShell); the direct `discipline:state-view` npm script prints npm's own
+banner. `discipline status` regenerates and links the view and prints sizes.
 
 Step 4 handoffs include `.discipline/metrics/slices.jsonl`. Compare a proposed slice with prior
 records that share affected surfaces; do not copy an estimate from an unrelated surface.

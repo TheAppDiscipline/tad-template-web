@@ -13,7 +13,7 @@ if (!slice || !base) {
 }
 
 try {
-  const record = recordSliceMetrics(root, slice, base, typeof args['recorded-at'] === 'string' ? args['recorded-at'] : undefined);
+  const record = await recordSliceMetrics(root, slice, base, typeof args['recorded-at'] === 'string' ? args['recorded-at'] : undefined);
   console.log(
     `Recorded slice ${record.slice}: ${record.actual.changed_lines} changed lines across ${record.actual.files} files `
     + `(maximum ${record.estimate.max_changed_lines}) -> ${METRICS_FILE.replace(/\\/g, '/')}`,

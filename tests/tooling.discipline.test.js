@@ -4541,7 +4541,8 @@ const V2_BODY = [
   '- Open the app with an empty store and check the empty state.',
   '',
   '## Estimate',
-  '- 120 lines of production code.',
+  '- MAX_CHANGED_LINES: 120',
+  '- BASIS: no comparable history; one screen, its state logic, tests, and fixtures bound the estimate.',
   '',
 ].join('\n')
 
