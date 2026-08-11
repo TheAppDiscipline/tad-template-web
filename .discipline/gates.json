@@ -17,7 +17,7 @@
   "base": ["discipline:provider:check"],
   "surfaces": {
     "ui": ["lint", "typecheck", "test", "check-tokens", "gate:visual"],
-    "authenticated-ui": ["lint", "typecheck", "test", "check-tokens", "check-secrets", "check-queries", "check-rls", "gate:visual", "test:rls", "test:storage:privacy"],
+    "authenticated-ui": ["lint", "typecheck", "test", "check-tokens", "check-secrets", "check-queries", "check-rls", "gate:visual", "e2e:auth", "test:rls", "test:storage:privacy"],
     "backend": ["lint", "typecheck", "test", "check-secrets", "check-rls", "check-cors", "check-https", "check-queries", "check-fk-indexes"],
     "schema": ["test", "migration:lint", "check-fk-indexes", "check-rls", "check-firebase"],
     "permissions": ["test", "check-rls", "check-firebase", "check-secrets"],

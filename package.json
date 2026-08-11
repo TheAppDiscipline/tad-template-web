@@ -16,6 +16,7 @@
     "preview": "vite preview",
     "test": "node --test tests/tooling.test.js tests/tooling.discipline.test.js",
     "check-tokens": "node tools/check_no_hex_colors.js",
+    "e2e:auth": "node tools/check_authenticated_ui.js",
     "check-secrets": "node tools/check_no_secrets_in_frontend.js",
     "check-bundle": "node tools/check_bundle_size.js",
     "check-rls": "node tools/check_rls.js",

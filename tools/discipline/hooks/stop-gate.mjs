@@ -55,6 +55,32 @@ const REASON_UNCOVERED =
 const KNOWN_GATE_REPORT_SCHEMAS = ['discipline.gate_report.v1', 'discipline.gate_report.v2'];
 
 /**
+ * Paths under `.discipline/` that the tooling GENERATES. Nobody edits these by
+ * hand, and the gate report cannot list itself, so counting them as edited code
+ * would block every session forever.
+ *
+ * Everything else under `.discipline/` counts, on purpose: `gates.json` decides
+ * which gates run, and the packets are what `discipline:validate` reads. Editing
+ * either after the gate means the gate never saw the thing that decides it.
+ */
+const GENERATED_PIPELINE_STATE = [
+  '.discipline/gate-report.json',
+  '.discipline/STOP',
+  '.discipline/locks/',
+  '.discipline/ledger/',
+  '.discipline/review/',
+  '.discipline/backups/',
+  '.discipline/metrics/',
+];
+
+function isGeneratedState(file) {
+  const normalized = String(file).replace(/\\/g, '/');
+  return GENERATED_PIPELINE_STATE.some((prefix) =>
+    prefix.endsWith('/') ? normalized.startsWith(prefix) : normalized === prefix,
+  );
+}
+
+/**
  * Parse `git status --porcelain` output into the files this session changed:
  * modified, added, and **untracked** ("?? path"). Ignored entries ("!! path")
  * are the only ones dropped, because git was told to ignore them.
@@ -64,9 +90,11 @@ const KNOWN_GATE_REPORT_SCHEMAS = ['discipline.gate_report.v1', 'discipline.gate
  * missing. Under the old rule a session could create `src/new-component.tsx`
  * after the gate and end cleanly.
  *
- * `.discipline/` is dropped: it is pipeline state written BY the pipeline, and
- * the gate report cannot appear in its own file list, so counting it would block
- * every session forever.
+ * Only GENERATED pipeline state is dropped, path by path: the gate report (which
+ * can never appear in its own file list), the locks, the ledger, the rendered
+ * diffs, the kill switch. `.discipline/` as a whole is NOT exempt: `gates.json`
+ * decides which gates run at all, and packets are what `discipline:validate`
+ * reads, so a change to either after the gate is a change the gate never saw.
  *
  * Porcelain v1 format: 2 status chars, a space, then the path (rename shows
  * "orig -> new"; we take the destination). Callers must pass `-uall`, or git
@@ -83,7 +111,7 @@ export function parsePorcelainModified(porcelain) {
     let rest = rawLine.slice(3).trim();
     const arrow = rest.indexOf(' -> ');
     if (arrow !== -1) rest = rest.slice(arrow + 4).trim();
-    if (rest.replace(/\\/g, '/').startsWith('.discipline/')) continue; // pipeline state, not edited code
+    if (isGeneratedState(rest)) continue; // written by the pipeline itself, never by hand
     // Porcelain may quote paths with special chars; strip surrounding quotes.
     if (rest.startsWith('"') && rest.endsWith('"')) rest = rest.slice(1, -1);
     if (rest) files.push(rest);

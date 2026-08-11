@@ -5748,6 +5748,23 @@ test('gate --changed: the buyer paths route to the gates this lane actually need
   for (const script of gates.surfaces['deployment-artifact']) {
     assert.ok(out.api.scripts.includes(script), `an API change must run ${script}`)
   }
+  // Named here rather than read from the map: "every script the map lists" is satisfied by a map
+  // that lists none, which is exactly how this lane shipped without an artifact check at all.
+  assert.ok(
+    out.api.scripts.includes('check-bundle'),
+    `an API change must run this lane's artifact check (check-bundle): ${out.api.scripts.join(', ')}`,
+  )
+  // Same for authenticated UI: rls/storage tests prove the BACKEND isolates users, and the public
+  // visual gate proves public screens render. Neither opens the app as a signed-in user.
+  const authScripts = runTsxModule(
+    [
+      `const __out = {}`,
+      `const config = parseGatesConfig(${JSON.stringify(JSON.stringify(gates))}, null)`,
+      `__out.scripts = gatesForSurfaces(config, ['authenticated-ui'])`,
+    ],
+    { '{ parseGatesConfig, gatesForSurfaces }': 'tools/discipline/lib/gates-config.ts' },
+  ).scripts
+  assert.ok(authScripts.includes('e2e:auth'), `authenticated-ui must route to an authenticated test: ${authScripts.join(', ')}`)
 
   // Every gate either of them selects has to be a script that exists, or it is a check nobody runs.
   for (const script of [...out.ui.scripts, ...out.api.scripts]) {
@@ -5812,4 +5829,66 @@ test('stop-gate: a new untracked file the report never saw blocks the stop', asy
   // Covering that same file ends the session, so the rule is about coverage and not about newness.
   writeReport(['progress.md', 'src/new-component.tsx'])
   assert.equal(decide({ stop_hook_active: false }, root).block, false)
+})
+
+const AUTHENTICATED_TEST = 'tests/e2e/authenticated/signed-in.spec.ts'
+const MISPLACED_TEST = 'tests/e2e/signed-in.spec.ts'
+
+// `authenticated-ui` routes here. The check is deliberately narrow: it proves an authenticated test
+// EXISTS where the runner will execute it, and refuses the two ways that verification goes missing.
+// It does not read the test's source looking for a login, because judging intent from prose is the
+// guess this pipeline refuses to make.
+test('check-authenticated-ui: no auth, or no authenticated test, is a failure', () => {
+  const project = (authMode, files = {}) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'auth-ui-'))
+    fs.writeFileSync(path.join(dir, 'discipline.md'),
+      ['# discipline.md', '', '## 0) Profile', '- PROFILE: LITE', `- AUTH_MODE: ${authMode}`, ''].join('\n'), 'utf8')
+    for (const [rel, content] of Object.entries(files)) {
+      fs.mkdirSync(path.join(dir, path.dirname(rel)), { recursive: true })
+      fs.writeFileSync(path.join(dir, rel), content, 'utf8')
+    }
+    return dir
+  }
+  const run = (dir) => spawnSync(process.execPath, [path.join(repoRoot, 'tools', 'check_authenticated_ui.js')], { cwd: dir, encoding: 'utf8' })
+
+  // AUTH_MODE: NONE means nothing is behind a login, so declaring the surface contradicts the project.
+  const none = run(project('NONE'))
+  assert.notEqual(none.status, 0, getOutput(none))
+  assert.match(getOutput(none), /AUTH_MODE: NONE/)
+
+  // With auth and no authenticated test, the surface would route to nothing.
+  const empty = run(project('MAGIC_LINK'))
+  assert.notEqual(empty.status, 0, getOutput(empty))
+  assert.match(getOutput(empty), /no authenticated test/)
+
+  // With auth and a test where the runner executes it, it passes.
+  const ready = run(project('MAGIC_LINK', { [AUTHENTICATED_TEST]: 'signed-in fixture\n' }))
+  assert.equal(ready.status, 0, getOutput(ready))
+  assert.match(getOutput(ready), /1 authenticated test/)
+
+  // And a test filed somewhere else does not count: the runner would never open it.
+  const misplaced = run(project('MAGIC_LINK', { [MISPLACED_TEST]: 'signed-in fixture\n' }))
+  assert.notEqual(misplaced.status, 0, getOutput(misplaced))
+})
+
+// The hook exempted ALL of `.discipline/`, so editing the gate MAP after the gate ended the session
+// without re-verifying anything. Only generated state is exempt now, path by path.
+test('stop-gate: the gate map counts as edited code, the generated report does not', async () => {
+  const { parsePorcelainModified } = await importHook('stop-gate.mjs')
+  const porcelain = [
+    ' M .discipline/gates.json',
+    '?? .discipline/gates.json',
+    ' M .discipline/packets/STEP_5_SLICE_PACKET_13.md',
+    '?? .discipline/gate-report.json',
+    ' M .discipline/ledger/2026-08.jsonl',
+    ' M .discipline/locks/writer.lock',
+    '?? .discipline/review/x.html',
+    ' M .discipline/STOP',
+    '',
+  ].join('\n')
+  assert.deepEqual(parsePorcelainModified(porcelain), [
+    '.discipline/gates.json',
+    '.discipline/gates.json',
+    '.discipline/packets/STEP_5_SLICE_PACKET_13.md',
+  ])
 })

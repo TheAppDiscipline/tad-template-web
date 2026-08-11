@@ -303,14 +303,18 @@ The map is refused outright (nothing runs) when it is unreadable, when it names 
 does not define, or when it says nothing about one of the surfaces, because a surface nobody mentions
 is a gate nobody runs.
 
-**A surface may demand a gate `npm run gate` does not run**, and the shipped map does: `ui` demands
-`gate:visual`, `authenticated-ui` adds the authenticated checks, and an `api/` route is both
-`backend` and `deployment-artifact`, so it runs the artifact checks too. That is the whole point of
-a surface. `npm run gate` cannot demand browser or device verification of every project, and this map
-demands it only of a change that touched the UI, which is why those gates need their prerequisites
-installed (`npm run e2e:install`, or the device tooling for the mobile lane). **A project that does
-not verify UI that way takes `gate:visual` out of this file**, deliberately and in a diff somebody
-can read, instead of finding out later that nothing ever ran it.
+**A surface may demand a gate `npm run gate` does not run**, and the shipped map does. That is the
+whole point of a surface: `npm run gate` cannot demand browser or device verification of every
+project, and this map demands it only of the change that needs it.
+
+| Surface | Beyond the usual lint/types/tests | Why |
+|---|---|---|
+| `ui` | `gate:visual` | A screen that renders wrong passes every static check. Needs the browsers (`npm run e2e:install`) or the device tooling. |
+| `authenticated-ui` | `e2e:auth`, plus the RLS/storage privacy tests | A screen behind a login renders somebody else's data, or nothing at all. `e2e:auth` refuses when `AUTH_MODE: NONE` (the surface contradicts the project) and when there is no test under `tests/e2e/authenticated/` (`.maestro/authenticated/` on mobile) for the visual gate to run. |
+| `deployment-artifact` | the lane's artifact check (`check-bundle`, `check-mobile-release`, `check-desktop-release`, `check-bundle-extension`) | `app.json`, `tauri.conf.json` and the manifest are not code: lint and tests pass while the artifact is unbuildable or still carries the template's identifiers. An `api/` route is both `backend` AND `deployment-artifact`. |
+
+**A project that does not verify UI that way takes `gate:visual` out of this file**, deliberately and
+in a diff somebody can read, instead of finding out later that nothing ever ran it.
 
 **The packet is checked against the change.** With `--slice`, the surfaces the change implies are
 compared to the `affected_surfaces` the Step 5 packet declares:
@@ -333,7 +337,10 @@ other schema**: an unknown report is not read as green. Two consequences worth k
   from it would otherwise read "PASSED" as the whole gate.
 - The Stop hook blocks a session whose edited files the report never saw, not just a stale one.
   Untracked files count as edited: a source file created after the gate is exactly what a scoped
-  report is missing. Only git-ignored paths and `.discipline/` state are left out.
+  report is missing. What it leaves out is only git-ignored paths and the state the pipeline
+  GENERATES (`gate-report.json`, locks, ledger, rendered diffs, `STOP`). `gates.json` and the
+  packets are NOT exempt: one decides which gates run and the others are what `discipline:validate`
+  reads, so editing either after the gate is a change the gate never saw.
 
 **Headless runs (L2/L3) use it**, with the pre-run tag as `--base` and the slice as `--slice`. The
 point there is not speed: the shipped Step 4 template asks for `required_gates: gate`, so the run is
