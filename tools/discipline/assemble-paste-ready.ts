@@ -8,8 +8,8 @@ import { resolveProjectRoot } from './lib/discipline-config.js';
 import { copyToClipboard } from './lib/clipboard.js';
 import { STEP_ASSEMBLY_MAP, VALID_STEPS } from './lib/artifact-flow.js';
 import { locateSlicePacket, normalizeSliceId, packetStatus, slicePasteReadyFileName } from './lib/slice-identity.js';
-import { readStep5Packet } from './lib/step5-schema.js';
-import { METRICS_FILE, readMetricRecords } from './lib/metrics.js';
+import { declaredSurfaces, readStep5Packet } from './lib/step5-schema.js';
+import { METRICS_FILE, readEstimateContract, readMetricRecords, validateEstimateBasisEvidence } from './lib/metrics.js';
 
 const args = minimist(process.argv.slice(2));
 const projectRoot = resolveProjectRoot(args['project-dir']);
@@ -109,6 +109,11 @@ export async function assemblePasteReady(root: string, stepId: string, sliceId?:
         `${path.basename(slicePacketPath)} does not meet the contract it declares. `
         + `Fix the packet (or set status: draft while you finish it):\n  - ${blocking.map((f) => (f.detail ? `${f.message} (${f.detail})` : f.message)).join('\n  - ')}`,
       );
+    }
+    if (reading.format === 'v2' && declaredStatus === 'ready') {
+      const estimate = readEstimateContract(slicePacketContent);
+      const surfaces = declaredSurfaces(slicePacketContent).surfaces ?? [];
+      validateEstimateBasisEvidence(estimate.basis, surfaces, readMetricRecords(root), normalizeSliceId(sliceId));
     }
   }
 

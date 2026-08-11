@@ -1,4 +1,5 @@
 import { normalizeSliceId } from './slice-identity.js';
+import { plainDeclaration } from './step5-schema.js';
 
 export interface ProgressLogBody {
   sliceId: string;
@@ -10,9 +11,17 @@ export interface ProgressLogBody {
 
 export interface ProgressLogEntry {
   sliceId: string | null;
+  candidateSliceIds: string[];
   outcome: string | null;
   gates: string | null;
   identitySource: 'field' | 'legacy-heading' | 'missing';
+  problems: string[];
+}
+
+export interface ProgressClosureReading {
+  closed: boolean;
+  state: 'closed' | 'missing' | 'invalid' | 'contradictory' | 'open';
+  reason: string;
 }
 
 /** Canonical, date-independent log body written by update-progress. */
@@ -27,9 +36,12 @@ export function buildProgressLogBody(input: ProgressLogBody): string {
   return parts.join('\n');
 }
 
-function field(block: string, name: string): string | null {
+function fieldValues(block: string, name: string): string[] {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return block.match(new RegExp(`^\\s*-\\s*\\*\\*${escaped}:\\*\\*\\s*(.+?)\\s*$`, 'im'))?.[1]?.trim() ?? null;
+  const matcher = new RegExp(`^${escaped}\\s*:\\s*(.*)$`, 'i');
+  return block.split(/\r?\n/)
+    .map((line) => plainDeclaration(line).match(matcher)?.[1]?.trim())
+    .filter((value): value is string => value !== undefined);
 }
 
 function legacyHeadingSlice(label: string): string | null {
@@ -46,22 +58,74 @@ export function readProgressLog(content: string): ProgressLogEntry[] {
     const start = (heading.index ?? 0) + heading[0].length;
     const end = index + 1 < headings.length ? headings[index + 1].index ?? content.length : content.length;
     const block = content.slice(start, end);
-    const explicit = field(block, 'Slice');
-    const fallback = explicit ? null : legacyHeadingSlice(heading[1]);
+    const slices = fieldValues(block, 'Slice');
+    const statuses = fieldValues(block, 'Status');
+    const gates = fieldValues(block, 'Gates');
+    const fallback = slices.length === 0 ? legacyHeadingSlice(heading[1]) : null;
+    const candidateSliceIds = [...new Set(
+      (slices.length > 0 ? slices.map(normalizeSliceId) : [fallback]).filter((value): value is string => Boolean(value)),
+    )];
+    const problems: string[] = [];
+    if (slices.length > 1) problems.push(`Slice has ${slices.length} declarations`);
+    if (slices.length === 1 && !normalizeSliceId(slices[0])) problems.push('Slice is empty or invalid');
+    if (slices.length === 0 && !fallback) problems.push('Slice is missing and the legacy heading has no identity');
+    if (statuses.length !== 1) problems.push(`Status has ${statuses.length} declarations`);
+    if (gates.length !== 1) problems.push(`Gates has ${gates.length} declarations`);
     return {
-      sliceId: explicit ? normalizeSliceId(explicit) : fallback,
-      outcome: field(block, 'Status')?.toLowerCase() ?? null,
-      gates: field(block, 'Gates')?.toLowerCase() ?? null,
-      identitySource: explicit ? 'field' : fallback ? 'legacy-heading' : 'missing',
+      sliceId: candidateSliceIds.length === 1 ? candidateSliceIds[0] : null,
+      candidateSliceIds,
+      outcome: statuses.length === 1 ? statuses[0].toLowerCase() : null,
+      gates: gates.length === 1 ? gates[0].toLowerCase() : null,
+      identitySource: slices.length > 0 ? 'field' : fallback ? 'legacy-heading' : 'missing',
+      problems,
     };
   });
 }
 
-export function progressRecordsClosure(content: string | null, sliceId: string): boolean {
-  if (content === null) return false;
+/** Validate the whole append-only log, including entries that do not currently appear in the plan. */
+export function progressIntegrityBlockers(content: string | null): string[] {
+  if (content === null) return [];
+  const entries = readProgressLog(content);
+  const blockers: string[] = [];
+  entries.forEach((entry, index) => {
+    if (entry.problems.length === 0) return;
+    const owner = entry.candidateSliceIds[0] ? `Slice ${entry.candidateSliceIds[0]}` : `progress.md entry ${index + 1}`;
+    blockers.push(`${owner} progress log is invalid: ${entry.problems.join('; ')}.`);
+  });
+
+  const validBySlice = new Map<string, ProgressLogEntry[]>();
+  for (const entry of entries) {
+    if (entry.problems.length > 0 || !entry.sliceId) continue;
+    validBySlice.set(entry.sliceId, [...(validBySlice.get(entry.sliceId) ?? []), entry]);
+  }
+  for (const [slice, sliceEntries] of validBySlice) {
+    const verdicts = sliceEntries.map((entry) => `${entry.outcome ?? 'missing'}/${entry.gates ?? 'missing'}`);
+    if (new Set(verdicts).size > 1) {
+      blockers.push(`Slice ${slice} progress log is contradictory: entries disagree (${verdicts.join(', ')}).`);
+    }
+  }
+  return blockers;
+}
+
+export function progressClosureState(content: string | null, sliceId: string): ProgressClosureReading {
+  if (content === null) return { closed: false, state: 'missing', reason: 'progress.md is missing' };
   const wanted = normalizeSliceId(sliceId);
-  return readProgressLog(content).some((entry) =>
-    entry.sliceId === wanted
-    && ['done', 'shipped'].includes(entry.outcome ?? '')
-    && entry.gates === 'yes');
+  const entries = readProgressLog(content).filter((entry) => entry.candidateSliceIds.includes(wanted));
+  if (entries.length === 0) return { closed: false, state: 'missing', reason: `no progress entry for slice ${wanted}` };
+  const invalid = entries.flatMap((entry, index) => entry.problems.map((problem) => `entry ${index + 1}: ${problem}`));
+  if (invalid.length > 0) return { closed: false, state: 'invalid', reason: invalid.join('; ') };
+
+  const verdicts = entries.map((entry) => `${entry.outcome ?? 'missing'}/${entry.gates ?? 'missing'}`);
+  if (new Set(verdicts).size > 1) {
+    return { closed: false, state: 'contradictory', reason: `entries disagree (${verdicts.join(', ')})` };
+  }
+  const [entry] = entries;
+  const closed = ['done', 'shipped'].includes(entry.outcome ?? '') && entry.gates === 'yes';
+  return closed
+    ? { closed: true, state: 'closed', reason: `${entries.length} coherent terminal progress entr${entries.length === 1 ? 'y' : 'ies'}` }
+    : { closed: false, state: 'open', reason: `progress records ${verdicts[0]}, not a terminal green closure` };
+}
+
+export function progressRecordsClosure(content: string | null, sliceId: string): boolean {
+  return progressClosureState(content, sliceId).closed;
 }

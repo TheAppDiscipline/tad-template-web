@@ -13,9 +13,9 @@ import {
   sectionStatusOf,
   type ActiveSlicePacket,
 } from './slice-identity.js';
-import { declaredSurfaces, readStep5Packet } from './step5-schema.js';
+import { declaredSurfaces, evaluateAsV2, readStep5Packet } from './step5-schema.js';
 import { meaningfulItems, sectionItems } from './completion-packet.js';
-import { progressRecordsClosure } from './progress-log.js';
+import { progressClosureState, progressIntegrityBlockers } from './progress-log.js';
 
 export const STATE_VIEW_SCHEMA = 'discipline.state_view.v1';
 export const STATE_VIEW_FILE = path.join('.discipline', 'views', 'current-state.md');
@@ -92,8 +92,12 @@ function latestMetricBySlice(records: SliceMetricRecord[]): Map<string, SliceMet
   return result;
 }
 
-function packetBySlice(packets: ActiveSlicePacket[], blockers: string[]): Map<string, ActiveSlicePacket> {
+function packetBySlice(packets: ActiveSlicePacket[], blockers: string[]): {
+  packets: Map<string, ActiveSlicePacket>;
+  duplicates: Set<string>;
+} {
   const result = new Map<string, ActiveSlicePacket>();
+  const duplicates = new Set<string>();
   for (const packet of packets) {
     if (packet.identityError) {
       blockers.push(`${packet.fileName}: ${packet.identityError}`);
@@ -105,24 +109,34 @@ function packetBySlice(packets: ActiveSlicePacket[], blockers: string[]): Map<st
     }
     if (result.has(packet.sliceId)) {
       blockers.push(`Slice ${packet.sliceId} has more than one active Step 5 packet.`);
+      duplicates.add(packet.sliceId);
       continue;
     }
     result.set(packet.sliceId, packet);
   }
-  return result;
+  return { packets: result, duplicates };
 }
 
-function packetDetails(root: string, packet: ActiveSlicePacket, blockers: string[]): SliceStateView['packet'] {
+function packetDetails(root: string, packet: ActiveSlicePacket, blockers: string[]): {
+  view: SliceStateView['packet'];
+  valid: boolean;
+} {
   const content = fs.readFileSync(packet.path, 'utf-8');
   const declaration = declaredSurfaces(content);
   const reading = readStep5Packet(content, packet.fileName);
-  for (const finding of reading.findings.filter((item) => item.severity === 'error')) blockers.push(finding.message);
+  const structuralErrors = reading.format === 'v2'
+    ? evaluateAsV2(content, packet.fileName)
+    : reading.findings.filter((item) => item.severity === 'error');
+  for (const finding of structuralErrors) blockers.push(finding.message);
   if (declaration.invalid.length) blockers.push(`${packet.fileName} declares invalid surfaces: ${declaration.invalid.join(', ')}.`);
   return {
-    file: path.relative(root, packet.path).replace(/\\/g, '/'),
-    status: packet.status,
-    affected_surfaces: declaration.surfaces ?? [],
-    required_gates: declaration.requiredGates,
+    view: {
+      file: path.relative(root, packet.path).replace(/\\/g, '/'),
+      status: packet.status,
+      affected_surfaces: declaration.surfaces ?? [],
+      required_gates: declaration.requiredGates,
+    },
+    valid: structuralErrors.length === 0 && declaration.invalid.length === 0,
   };
 }
 
@@ -140,12 +154,13 @@ function metricSummary(record: SliceMetricRecord | undefined): SliceStateView['l
 
 export function buildStateView(root: string): DisciplineStateView {
   const progress = progressContent(root);
-  const blockers = progressBlockers(progress);
+  const blockers = [...progressBlockers(progress), ...progressIntegrityBlockers(progress)];
   const planPath = path.join(root, 'task_plan.md');
   const plan = fs.existsSync(planPath) ? fs.readFileSync(planPath, 'utf-8') : '';
   const headings = findSliceHeadings(plan);
   const tableRows = parseReadySlicesTable(plan);
-  const packets = packetBySlice(activeSlicePackets(root), blockers);
+  const inventory = packetBySlice(activeSlicePackets(root), blockers);
+  const packets = inventory.packets;
   let metrics: SliceMetricRecord[] = [];
   try { metrics = readMetricRecords(root); } catch (err) { blockers.push((err as Error).message); }
   const latestMetrics = latestMetricBySlice(metrics);
@@ -166,21 +181,39 @@ export function buildStateView(root: string): DisciplineStateView {
     const table = tableRows.find((item) => item.id === id);
     const planStatus = heading ? sectionStatusOf(plan, heading) ?? table?.status ?? null : table?.status ?? null;
     const packet = packets.get(id);
-    const packetView = packet ? packetDetails(root, packet, blockers) : null;
+    const packetHealth = packet ? packetDetails(root, packet, blockers) : null;
+    const packetView = packetHealth?.view ?? null;
     const completion = isSliceConsumed(root, id);
     const packetMarked = packet?.status === 'consumed';
-    const progressMarked = progressRecordsClosure(progress, id);
+    const progressState = progressClosureState(progress, id);
+    const progressMarked = progressState.closed;
     const planMarked = normalizedStatus(planStatus) === 'consumed';
-    const consumed = packetMarked && completion.consumed && progressMarked;
+    const packetUnique = !inventory.duplicates.has(id);
+    const consumed = packetMarked && packetUnique && Boolean(packetHealth?.valid) && completion.consumed && progressMarked;
     if (!consumed && (packetMarked || completion.consumed || progressMarked || planMarked)) {
       blockers.push(
         `Slice ${id} has an incomplete consumption transition: packet=${packetMarked ? 'consumed' : packet?.status ?? 'missing'}, `
         + `completion=${completion.consumed ? 'terminal-green' : completion.reason}, progress=${progressMarked ? 'recorded' : 'not-recorded'}.`,
       );
     }
-    let status = consumed ? 'consumed' as const : normalizedStatus(planStatus ?? packet?.status ?? null);
-    if (!consumed && status === 'consumed') status = 'blocked';
-    if (status === 'unknown' && packet?.status === 'ready') status = 'ready';
+    const planState = normalizedStatus(planStatus);
+    const planReady = planState === 'ready';
+    const packetReady = packet?.status === 'ready';
+    const implementableReady = planReady && packetReady && packetUnique && Boolean(packetHealth?.valid);
+    if (planReady && !packet) blockers.push(`Slice ${id} is plan-ready but has no active Step 5 packet.`);
+    else if (planReady && !packetUnique) { /* duplicate blocker already names the slice */ }
+    else if (planReady && !packetReady) blockers.push(`Slice ${id} is plan-ready but its packet status is ${packet?.status ?? 'missing'}.`);
+    else if (planReady && !packetHealth?.valid) blockers.push(`Slice ${id} is plan-ready but its Step 5 packet is invalid.`);
+    if (packetReady && !planReady) {
+      blockers.push(`Slice ${id} has a ready Step 5 packet but plan status is ${planStatus ?? 'missing'}.`);
+    }
+
+    let status: SliceViewStatus;
+    if (consumed) status = 'consumed';
+    else if (planMarked || packetMarked || completion.consumed || progressMarked) status = 'blocked';
+    else if (implementableReady) status = 'ready';
+    else if (planReady || packetReady || !packetUnique) status = 'blocked';
+    else status = planState === 'unknown' ? normalizedStatus(packet?.status ?? null) : planState;
     return {
       id,
       title: heading?.title || null,

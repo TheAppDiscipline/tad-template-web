@@ -5,8 +5,8 @@ import { spawnSync } from 'node:child_process';
 import { withWriterLock } from './locks.js';
 import { locateSlicePacket, normalizeSliceId } from './slice-identity.js';
 import {
-  declaredSurfaces, evaluateAsV2, isEvasiveDeclaration, plainDeclaration, readStep5Packet,
-  sectionLines,
+  declaredSurfaces, evaluateAsV2, isEstimateBasis, parseEstimateBasis, plainDeclaration,
+  readStep5Packet, sectionLines, type EstimateBasis,
 } from './step5-schema.js';
 
 export const METRICS_SCHEMA = 'discipline.slice_metric.v1';
@@ -26,7 +26,7 @@ export interface LineTotals {
 export interface EstimateContract {
   raw: string;
   max_changed_lines: number;
-  basis: string;
+  basis: EstimateBasis;
   split_decision: 'split' | 'exception-approved' | null;
   duplicate_metrics: 'allowed' | null;
 }
@@ -73,9 +73,9 @@ export function readEstimateContract(packet: string): EstimateContract {
     throw new Error('Estimate must declare exactly one MAX_CHANGED_LINES: <positive integer> so measured scope has a falsifiable maximum.');
   }
   const bases = declarationValues(lines, 'BASIS');
-  const basis = bases[0];
-  if (bases.length !== 1 || !basis || isEvasiveDeclaration(basis)) {
-    throw new Error('Estimate must declare exactly one substantive BASIS with comparable surfaces, or a concrete rationale when no comparable history exists.');
+  const basis = bases.length === 1 ? parseEstimateBasis(bases[0]) : null;
+  if (bases.length !== 1 || !basis?.ok) {
+    throw new Error(`Estimate must declare exactly one structured BASIS: ${basis && !basis.ok ? basis.reason : 'missing or duplicate declaration'}.`);
   }
   const splitValues = declarationValues(lines, 'SPLIT_DECISION');
   const splitRaw = splitValues[0];
@@ -92,7 +92,7 @@ export function readEstimateContract(packet: string): EstimateContract {
   return {
     raw,
     max_changed_lines: Number(maxRaw),
-    basis,
+    basis: basis.value,
     split_decision: (splitRaw as EstimateContract['split_decision']) ?? null,
     duplicate_metrics: duplicateRaw === 'allowed' ? 'allowed' : null,
   };
@@ -221,11 +221,11 @@ export function readMetricRecords(root: string): SliceMetricRecord[] {
     if (typeof candidate.slice !== 'string'
       || !actual || typeof actual.changed_lines !== 'number'
       || !estimate || typeof estimate.max_changed_lines !== 'number'
-      || typeof estimate.basis !== 'string' || isEvasiveDeclaration(estimate.basis)
+      || !isEstimateBasis(estimate.basis)
       || !Array.isArray(candidate.affected_surfaces)
       || candidate.affected_surfaces.some((surface) => typeof surface !== 'string')
       || typeof candidate.signature !== 'string' || !/^[a-f0-9]{64}$/.test(candidate.signature)) {
-      throw new Error(`${METRICS_FILE}:${index + 1} is missing slice, substantive estimate BASIS, surfaces, actual, or signature fields.`);
+      throw new Error(`${METRICS_FILE}:${index + 1} is missing slice, structured estimate BASIS, surfaces, actual, or signature fields.`);
     }
     const { signature, ...unsigned } = parsed as SliceMetricRecord;
     const expected = recordSignature(unsigned);
@@ -239,6 +239,45 @@ export function readMetricRecords(root: string): SliceMetricRecord[] {
 
 export function recordSignature(record: Omit<SliceMetricRecord, 'signature'>): string {
   return crypto.createHash('sha256').update(JSON.stringify(record)).digest('hex');
+}
+
+/** Resolve every analogy claim to signed history before the packet is handed off or measured. */
+export function validateEstimateBasisEvidence(
+  basis: EstimateBasis,
+  affectedSurfaces: string[],
+  records: SliceMetricRecord[],
+  currentSlice: string,
+): void {
+  const current = normalizeSliceId(currentSlice);
+  if (basis.kind === 'no-history') {
+    const comparable = records.find((record) =>
+      normalizeSliceId(record.slice) !== current
+      && record.affected_surfaces.some((surface) => affectedSurfaces.includes(surface)));
+    if (comparable) {
+      throw new Error(
+        `BASIS claims no history, but signed metric history contains comparable slice ${comparable.slice} `
+        + `with shared surfaces ${comparable.affected_surfaces.filter((surface) => affectedSurfaces.includes(surface)).join(', ')}.`,
+      );
+    }
+    return;
+  }
+  const missingCurrent = basis.shared_surfaces.filter((surface) => !affectedSurfaces.includes(surface));
+  if (missingCurrent.length > 0) {
+    throw new Error(`BASIS analogy calls ${missingCurrent.join(', ')} shared, but the current packet does not declare those affected surfaces.`);
+  }
+  for (const comparable of basis.comparables) {
+    if (comparable.slice === current) throw new Error(`BASIS analogy cannot use the current slice ${current} as its own comparable.`);
+    const matching = records.filter((record) =>
+      normalizeSliceId(record.slice) === comparable.slice
+      && record.actual.changed_lines === comparable.measured_lines
+      && basis.shared_surfaces.every((surface) => record.affected_surfaces.includes(surface)));
+    if (matching.length === 0) {
+      throw new Error(
+        `BASIS analogy ${comparable.slice}@${comparable.measured_lines} does not match signed metric history `
+        + `with shared surfaces ${basis.shared_surfaces.join(', ')}.`,
+      );
+    }
+  }
 }
 
 function atomicWriteMetricRecords(output: string, records: SliceMetricRecord[]): void {
@@ -292,6 +331,7 @@ function recordSliceMetricsLocked(root: string, slice: string, base: string, rec
   }
   const estimate = readEstimateContract(packet);
   const records = readMetricRecords(root);
+  validateEstimateBasisEvidence(estimate.basis, declaration.surfaces ?? [], records, normalizedSlice);
   const prior = records.filter((record) => normalizeSliceId(record.slice) === normalizedSlice);
   if (prior.length > 0 && estimate.duplicate_metrics !== 'allowed') {
     throw new Error(`Metrics already contain ${prior.length} record(s) for slice ${normalizedSlice}. Declare DUPLICATE_METRICS: allowed in Estimate before appending another measurement.`);

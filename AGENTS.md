@@ -264,9 +264,11 @@ Required sections: `Goal`, `Scope`, `Contracts`, `Provider Impact`, `AI Impact`,
   satisfy by changing a bullet character is not a contract.
 
 **Estimate feeds measured scope.** Step 4 declares `MAX_CHANGED_LINES: <positive integer>` for all
-four categories and a `BASIS:` from prior slices with overlapping affected surfaces (or an explicit
-file/risk rationale when no comparable history exists). Both values are structured into the signed
-metric record. Step 4 assembly verifies every JSONL signature before including history and writes no
+four categories and exactly one structured `BASIS:`. Its grammar is either
+`analogy; comparables=S12@120,S14@95; shared_surfaces=ui,backend` or
+`no-history; planned_files=src/a.ts,tests/a.test.ts; risks=<concrete risks>`. Free prose and incomplete
+forms are not evidence. Both values are structured into the signed metric record. Step 4 assembly
+verifies every JSONL signature before including history and writes no
 handoff when the log is invalid; `discipline metrics` likewise refuses an invalid v2 packet rather
 than signing missing surfaces.
 After implementation, `discipline metrics --slice <id> --base <ref>` compares that maximum with
@@ -382,7 +384,11 @@ blockers, required gates, latest measurements and document sizes. The view is gi
 contains no decisions, and identical inputs produce identical bytes. `--json` returns the same
 state as structured data. Use `npm run --silent discipline -- state-view --json` when stdout must be
 pure JSON (`npm.cmd` in PowerShell); the direct `discipline:state-view` npm script prints npm's own
-banner. `discipline status` regenerates and links the view and prints sizes.
+banner. A slice is shown as ready only when the plan says ready and exactly one structurally valid
+packet says ready. Missing, duplicate, invalid or non-ready packets are blockers. Consumption also
+requires every applicable progress entry to contain exactly one Slice, Status and Gates declaration;
+duplicate fields or contradictory entries fail closed. `discipline status` regenerates and links the
+view and prints sizes.
 
 Step 4 handoffs include `.discipline/metrics/slices.jsonl`. Compare a proposed slice with prior
 records that share affected surfaces; do not copy an estimate from an unrelated surface.

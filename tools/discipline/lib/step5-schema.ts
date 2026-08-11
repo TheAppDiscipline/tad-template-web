@@ -27,6 +27,22 @@ export const AFFECTED_SURFACES = [
 
 export type AffectedSurface = (typeof AFFECTED_SURFACES)[number];
 
+export type EstimateBasis =
+  | {
+    kind: 'analogy';
+    comparables: Array<{ slice: string; measured_lines: number }>;
+    shared_surfaces: AffectedSurface[];
+  }
+  | {
+    kind: 'no-history';
+    planned_files: string[];
+    risks: string;
+  };
+
+export type EstimateBasisReading =
+  | { ok: true; value: EstimateBasis }
+  | { ok: false; reason: string };
+
 /** How a slice proves it could have failed. One of these, declared, not guessed from prose. */
 export const FALSIFIABILITY_METHODS = ['red-evidence', 'mutation', 'rationale'] as const;
 
@@ -120,6 +136,123 @@ function isEvasive(text: string): boolean {
 /** Public form used by other contract readers so `none` and `TBD` mean the same everywhere. */
 export function isEvasiveDeclaration(text: string): boolean {
   return isEvasive(text);
+}
+
+function structuredFields(parts: string[]): { ok: true; fields: Map<string, string> } | { ok: false; reason: string } {
+  const fields = new Map<string, string>();
+  for (const part of parts) {
+    const match = part.match(/^([a-z_]+)\s*=\s*(.+)$/i);
+    if (!match) return { ok: false, reason: `"${part}" is not key=value` };
+    const key = match[1].toLowerCase();
+    if (fields.has(key)) return { ok: false, reason: `${key} is declared more than once` };
+    fields.set(key, match[2].trim());
+  }
+  return { ok: true, fields };
+}
+
+function exactKeys(fields: Map<string, string>, expected: string[]): string | null {
+  const actual = [...fields.keys()].sort();
+  const wanted = [...expected].sort();
+  return actual.length === wanted.length && actual.every((key, index) => key === wanted[index])
+    ? null
+    : `expected exactly ${wanted.join(', ')}; found ${actual.join(', ') || 'none'}`;
+}
+
+/**
+ * BASIS is evidence, not prose. Two forms are accepted:
+ * - analogy; comparables=S12@120,S14@95; shared_surfaces=ui,backend
+ * - no-history; planned_files=src/a.ts,tests/a.test.ts; risks=<concrete risks>
+ */
+export function parseEstimateBasis(text: string): EstimateBasisReading {
+  const parts = text.split(';').map((part) => part.trim()).filter(Boolean);
+  const kind = parts.shift()?.toLowerCase();
+  if (kind !== 'analogy' && kind !== 'no-history') {
+    return { ok: false, reason: 'BASIS must start with analogy or no-history' };
+  }
+  const parsed = structuredFields(parts);
+  if (!parsed.ok) return parsed;
+
+  if (kind === 'analogy') {
+    const keyError = exactKeys(parsed.fields, ['comparables', 'shared_surfaces']);
+    if (keyError) return { ok: false, reason: `analogy ${keyError}` };
+    const comparableParts = (parsed.fields.get('comparables') ?? '').split(',').map((item) => item.trim()).filter(Boolean);
+    const comparables: Array<{ slice: string; measured_lines: number }> = [];
+    for (const item of comparableParts) {
+      const match = item.match(/^([^@\s,]+)@(\d+)$/);
+      const slice = match ? normalizeSliceId(match[1]) : '';
+      const lines = match ? Number(match[2]) : 0;
+      if (!slice || lines <= 0) return { ok: false, reason: `comparable "${item}" must be <slice>@<positive measured lines>` };
+      comparables.push({ slice, measured_lines: lines });
+    }
+    if (comparables.length === 0) return { ok: false, reason: 'analogy requires at least one comparable slice measurement' };
+    if (new Set(comparables.map((item) => item.slice)).size !== comparables.length) {
+      return { ok: false, reason: 'analogy comparable slices must be unique' };
+    }
+    const surfaces = (parsed.fields.get('shared_surfaces') ?? '').split(',').map((item) => item.trim().toLowerCase()).filter(Boolean);
+    if (surfaces.length === 0 || surfaces.some((surface) => !(AFFECTED_SURFACES as readonly string[]).includes(surface))) {
+      return { ok: false, reason: 'analogy shared_surfaces must contain valid affected surfaces' };
+    }
+    if (new Set(surfaces).size !== surfaces.length) return { ok: false, reason: 'analogy shared_surfaces must be unique' };
+    return { ok: true, value: { kind, comparables, shared_surfaces: surfaces as AffectedSurface[] } };
+  }
+
+  const keyError = exactKeys(parsed.fields, ['planned_files', 'risks']);
+  if (keyError) return { ok: false, reason: `no-history ${keyError}` };
+  const plannedFiles = (parsed.fields.get('planned_files') ?? '').split(',').map((item) => item.trim()).filter(Boolean);
+  if (plannedFiles.length === 0 || plannedFiles.some((file) => /\s/.test(file) || !/(?:[/\\]|\.[A-Za-z0-9]+$)/.test(file))) {
+    return { ok: false, reason: 'no-history planned_files must name one or more concrete repository paths' };
+  }
+  if (new Set(plannedFiles).size !== plannedFiles.length) return { ok: false, reason: 'no-history planned_files must be unique' };
+  const risks = parsed.fields.get('risks') ?? '';
+  if (!isConcreteRiskRationale(risks)) {
+    return { ok: false, reason: 'no-history risks must be a concrete, non-evasive rationale' };
+  }
+  return { ok: true, value: { kind, planned_files: plannedFiles, risks } };
+}
+
+function exactObjectKeys(candidate: Record<string, unknown>, expected: string[]): boolean {
+  const actual = Object.keys(candidate).sort();
+  const wanted = [...expected].sort();
+  return actual.length === wanted.length && actual.every((key, index) => key === wanted[index]);
+}
+
+function isConcreteRiskRationale(risks: string): boolean {
+  return risks.trim().split(/\s+/).length >= 3
+    && !/\b(?:tbd|todo|later|looks? good|no risks?|none|n\/?a|unknown)\b/i.test(risks);
+}
+
+/** Validate the structured object stored inside a signed metric record. */
+export function isEstimateBasis(value: unknown): value is EstimateBasis {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Record<string, unknown>;
+  if (candidate.kind === 'analogy') {
+    if (!exactObjectKeys(candidate, ['kind', 'comparables', 'shared_surfaces'])) return false;
+    if (!Array.isArray(candidate.comparables) || !Array.isArray(candidate.shared_surfaces)) return false;
+    const comparables = candidate.comparables as Array<Record<string, unknown>>;
+    const surfaces = candidate.shared_surfaces as unknown[];
+    return comparables.length > 0
+      && candidate.comparables.every((item) => item && typeof item === 'object'
+        && exactObjectKeys(item as Record<string, unknown>, ['slice', 'measured_lines'])
+        && typeof (item as Record<string, unknown>).slice === 'string'
+        && normalizeSliceId(String((item as Record<string, unknown>).slice)) === (item as Record<string, unknown>).slice
+        && typeof (item as Record<string, unknown>).measured_lines === 'number'
+        && Number.isInteger((item as Record<string, unknown>).measured_lines)
+        && Number((item as Record<string, unknown>).measured_lines) > 0)
+      && new Set(comparables.map((item) => item.slice)).size === comparables.length
+      && surfaces.length > 0
+      && surfaces.every((surface) => typeof surface === 'string'
+        && (AFFECTED_SURFACES as readonly string[]).includes(surface))
+      && new Set(surfaces).size === surfaces.length;
+  }
+  if (candidate.kind === 'no-history') {
+    if (!exactObjectKeys(candidate, ['kind', 'planned_files', 'risks'])) return false;
+    return Array.isArray(candidate.planned_files) && candidate.planned_files.length > 0
+      && candidate.planned_files.every((file) => typeof file === 'string' && !/\s/.test(file) && /(?:[/\\]|\.[A-Za-z0-9]+$)/.test(file))
+      && new Set(candidate.planned_files).size === candidate.planned_files.length
+      && typeof candidate.risks === 'string'
+      && isConcreteRiskRationale(candidate.risks);
+  }
+  return false;
 }
 
 /** True when a section explicitly says it does not apply. Its RATIONALE is checked separately. */
@@ -438,11 +571,14 @@ function checkEstimate(body: string, severity: SchemaFinding['severity'], where:
     });
   }
   const bases = declaredValues(lines, 'BASIS');
-  if (bases.length !== 1 || isEvasive(bases[0] ?? '')) {
+  const basis = bases.length === 1 ? parseEstimateBasis(bases[0]) : null;
+  if (bases.length !== 1 || !basis?.ok) {
     findings.push({
       severity,
-      message: `${where}"Estimate" must declare exactly one substantive BASIS`,
-      detail: 'Name comparable slice metrics and shared surfaces, or state that no comparable history exists and give a concrete file/risk rationale. none, N/A and TBD are not evidence.',
+      message: `${where}"Estimate" must declare exactly one structured BASIS`,
+      detail: basis && !basis.ok
+        ? `${basis.reason}. Use analogy; comparables=S12@120; shared_surfaces=ui or no-history; planned_files=src/a.ts,tests/a.test.ts; risks=<concrete risks>.`
+        : 'Use analogy; comparables=S12@120; shared_surfaces=ui or no-history; planned_files=src/a.ts,tests/a.test.ts; risks=<concrete risks>.',
     });
   }
   const decisions = declaredValues(lines, 'SPLIT_DECISION');

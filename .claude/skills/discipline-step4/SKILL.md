@@ -258,10 +258,11 @@ Expand it with the following detail:
    - L: Multiple files, several integrations, complex logic or edge cases
    Also declare exactly one positive integer `MAX_CHANGED_LINES` for the whole slice (production, tests,
    fixtures/config, and documentation). Base it on prior metric records whose
-   `affected_surfaces` overlap this slice. Name the comparable slice IDs and measured lines in
-   `BASIS`; it must be exactly one substantive declaration. `none`, `N/A`, `TBD`, a duplicate, or
-   a label without evidence is refused. When no comparable records exist, say so and give a
-   concrete file/risk-based rationale. Never copy an estimate
+   `affected_surfaces` overlap this slice. `BASIS` is exactly one machine-readable declaration:
+   `analogy; comparables=S12@120,S14@95; shared_surfaces=ui,backend`, or, only when there is no
+   comparable record, `no-history; planned_files=src/a.ts,tests/a.test.ts; risks=<concrete risks>`.
+   Each `@` value is that slice's measured changed-line count. Free prose, `none`, `N/A`, `TBD`, a
+   duplicate, missing keys, or an unmeasured comparable is refused. Never copy an estimate
    from an unrelated surface merely because one exists.
 
 10. **Provider impact**: State which backend, hosting, authentication, or other provider
@@ -421,7 +422,7 @@ build keeps working while it lands>
 
 ## Estimate
 - MAX_CHANGED_LINES: <positive integer covering all changed-line categories>
-- BASIS: <similar slice IDs, shared surfaces and measured lines; or no comparable history plus a file/risk rationale>
+- BASIS: <exactly `analogy; comparables=S12@120,S14@95; shared_surfaces=ui,backend` or `no-history; planned_files=src/a.ts,tests/a.test.ts; risks=parser ambiguity and legacy compatibility`>
 <when actual scope later exceeds the maximum, add exactly `- SPLIT_DECISION: split` or
 `- SPLIT_DECISION: exception-approved`; a repeated measurement also requires the reviewed
 declaration `- DUPLICATE_METRICS: allowed`>

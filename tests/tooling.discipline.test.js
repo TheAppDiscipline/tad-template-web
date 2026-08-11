@@ -4542,7 +4542,7 @@ const V2_BODY = [
   '',
   '## Estimate',
   '- MAX_CHANGED_LINES: 120',
-  '- BASIS: no comparable history; one screen, its state logic, tests, and fixtures bound the estimate.',
+  '- BASIS: no-history; planned_files=src/screens/list.tsx,tests/list.test.tsx; risks=new state branch and fixture compatibility',
   '',
 ].join('\n')
 

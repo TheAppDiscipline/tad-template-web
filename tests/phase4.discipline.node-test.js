@@ -9,6 +9,8 @@ import { fileURLToPath } from 'node:url'
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const tsxCli = path.join(repoRoot, 'node_modules', 'tsx', 'dist', 'cli.mjs')
+const NO_HISTORY_BASIS = 'no-history; planned_files=tools/discipline/lib/metrics.ts,tests/phase4.discipline.node-test.js; risks=parser ambiguity and legacy compatibility'
+const ANALOGY_BASIS = 'analogy; comparables=S12@42,S11@37; shared_surfaces=ui'
 
 function runTsx(script, args = []) {
   return spawnSync(process.execPath, [tsxCli, script, ...args], { cwd: repoRoot, encoding: 'utf8' })
@@ -43,7 +45,7 @@ function write(root, relative, content) {
 
 function completePacket(id, status = 'ready', estimate = [
   '- MAX_CHANGED_LINES: 100',
-  '- BASIS: no comparable history; one bounded UI change plus its tests and fixtures.',
+  `- BASIS: ${NO_HISTORY_BASIS}`,
 ].join('\n')) {
   return [
     '---', 'schema: discipline.packet.step5', 'version: 2.0.0', `id: step5:${id}:T1`, `status: ${status}`,
@@ -76,8 +78,9 @@ function signedMetric(slice = '1', changedLines = 42) {
     packet: { file: `.discipline/packets/STEP_5_SLICE_PACKET_${slice}.md`, sha256: 'b'.repeat(64) },
     affected_surfaces: ['ui'],
     estimate: {
-      raw: '- MAX_CHANGED_LINES: 100\n- BASIS: comparable slice 0 touched ui and measured 42 lines',
-      max_changed_lines: 100, basis: 'comparable slice 0 touched ui and measured 42 lines',
+      raw: `- MAX_CHANGED_LINES: 100\n- BASIS: ${ANALOGY_BASIS}`,
+      max_changed_lines: 100,
+      basis: { kind: 'analogy', comparables: [{ slice: '12', measured_lines: 42 }, { slice: '11', measured_lines: 37 }], shared_surfaces: ['ui'] },
       split_decision: null, duplicate_metrics: null,
     },
     actual: {
@@ -109,7 +112,7 @@ test('metrics records categorized numstat, fails above the maximum, and refuses 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'discipline-metrics-'))
   scaffold(root)
   write(root, '.discipline/packets/STEP_5_SLICE_PACKET_13.md', completePacket('13', 'ready', [
-    '- MAX_CHANGED_LINES: 3', '- BASIS: no comparable history; four bounded files define the initial maximum.',
+    '- MAX_CHANGED_LINES: 3', `- BASIS: ${NO_HISTORY_BASIS}`,
   ].join('\n')))
   write(root, 'src/app.ts', 'export const base = true\n')
   git(root, ['init', '-q'])
@@ -130,7 +133,7 @@ test('metrics records categorized numstat, fails above the maximum, and refuses 
   assert.equal(fs.existsSync(path.join(root, '.discipline', 'metrics', 'slices.jsonl')), false)
 
   write(root, '.discipline/packets/STEP_5_SLICE_PACKET_13.md', completePacket('13', 'ready', [
-    '- MAX_CHANGED_LINES: 3', '- BASIS: no comparable history; four bounded files define the initial maximum.',
+    '- MAX_CHANGED_LINES: 3', `- BASIS: ${NO_HISTORY_BASIS}`,
     '- SPLIT_DECISION: exception-approved',
   ].join('\n')))
   const recorded = runTsx('tools/discipline/metrics.ts', ['--slice', '13', '--base', base, '--recorded-at', '2026-08-11T00:00:00.000Z', '--project-dir', root])
@@ -141,7 +144,11 @@ test('metrics records categorized numstat, fails above the maximum, and refuses 
   assert.equal(record.actual.categories.tests.files, 1)
   assert.ok(record.actual.categories.documentation.files >= 1)
   assert.equal(record.actual.categories['fixtures-config'].files, 1)
-  assert.match(record.estimate.basis, /no comparable history/)
+  assert.deepEqual(record.estimate.basis, {
+    kind: 'no-history',
+    planned_files: ['tools/discipline/lib/metrics.ts', 'tests/phase4.discipline.node-test.js'],
+    risks: 'parser ambiguity and legacy compatibility',
+  })
   assert.match(record.signature, /^[a-f0-9]{64}$/)
 
   const duplicate = runTsx('tools/discipline/metrics.ts', ['--slice', '13', '--base', base, '--project-dir', root])
@@ -149,7 +156,7 @@ test('metrics records categorized numstat, fails above the maximum, and refuses 
   assert.match(output(duplicate), /DUPLICATE_METRICS: allowed/)
 
   write(root, '.discipline/packets/STEP_5_SLICE_PACKET_13.md', completePacket('13', 'ready', [
-    '- MAX_CHANGED_LINES: 3', '- BASIS: no comparable history; four bounded files define the initial maximum.',
+    '- MAX_CHANGED_LINES: 3', `- BASIS: ${NO_HISTORY_BASIS}`,
     '- SPLIT_DECISION: exception-approved', '- DUPLICATE_METRICS: allowed',
   ].join('\n')))
   const declaredDuplicate = runTsx('tools/discipline/metrics.ts', ['--slice', '13', '--base', base, '--recorded-at', '2026-08-11T01:00:00.000Z', '--project-dir', root])
@@ -224,7 +231,7 @@ test('metrics verifies signatures and serializes concurrent duplicate checks', a
   write(root, '.discipline/metrics/slices.jsonl', `${JSON.stringify(record)}\n`)
   const structurallyInvalid = runTsx('tools/discipline/state-view.ts', ['--json', '--project-dir', root])
   assert.equal(structurallyInvalid.status, 0, output(structurallyInvalid))
-  assert.match(JSON.parse(structurallyInvalid.stdout).blockers.join('\n'), /substantive estimate BASIS/)
+  assert.match(JSON.parse(structurallyInvalid.stdout).blockers.join('\n'), /structured estimate BASIS/)
 })
 
 test('state-view is byte deterministic and --json exposes the same slice, gate, metric, and blocker state', () => {
@@ -275,6 +282,27 @@ test('state-view is byte deterministic and --json exposes the same slice, gate, 
   assert.match(markdown, /## Ready[\s\S]*42\/100 lines/)
   assert.match(markdown, /## In progress/)
   assert.match(markdown, /## Consumed/)
+})
+
+test('state-view only reports ready when plan and exactly one valid ready packet agree', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'discipline-state-ready-contract-'))
+  scaffold(root, [['10', 'ready'], ['11', 'ready'], ['12', 'ready'], ['13', 'ready']])
+  write(root, '.discipline/packets/STEP_5_SLICE_PACKET_11.md', completePacket('11', 'draft'))
+  write(root, '.discipline/packets/STEP_5_SLICE_PACKET_12.md', completePacket('12').replace('## Goal\n- deliver the slice\n\n', ''))
+  write(root, '.discipline/packets/STEP_5_SLICE_PACKET_13.md', completePacket('13'))
+  write(root, '.discipline/packets/STEP_5_SLICE_PACKET.md', completePacket('13'))
+
+  const result = runTsx('tools/discipline/state-view.ts', ['--json', '--project-dir', root])
+  assert.equal(result.status, 0, output(result))
+  const state = JSON.parse(result.stdout)
+  assert.deepEqual(state.slices.map((slice) => [slice.id, slice.status]), [
+    ['10', 'blocked'], ['11', 'blocked'], ['12', 'blocked'], ['13', 'blocked'],
+  ])
+  const blockers = state.blockers.join('\n')
+  assert.match(blockers, /Slice 10 is plan-ready but has no active Step 5 packet/)
+  assert.match(blockers, /Slice 11 is plan-ready but its packet status is draft/)
+  assert.match(blockers, /Slice 12 is plan-ready but its Step 5 packet is invalid/)
+  assert.match(blockers, /Slice 13 has more than one active Step 5 packet/)
 })
 
 test('state-view refuses partial consumption and expands multiline Open Errors', () => {
@@ -335,6 +363,34 @@ test('progress logs canonical identity independently from the visible name and r
   ])
 })
 
+test('state-view denies consumption for duplicate fields and contradictory progress entries', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'discipline-progress-contradictions-'))
+  scaffold(root, [['13', 'done'], ['14', 'done']])
+  for (const id of ['13', '14']) {
+    write(root, `.discipline/packets/STEP_5_SLICE_PACKET_${id}.md`, completePacket(id, 'consumed'))
+    write(root, `.discipline/packets/SLICE_COMPLETION_PACKET_${id}.md`, completionPacket(id))
+  }
+  write(root, 'progress.md', [
+    '# progress.md', '', '## Current Status', '- Blockers: none', '',
+    '### 2026-08-11 — Slice 13',
+    '- **Slice:** 13', '- **Slice:** 99',
+    '- **Status:** done', '- **Status:** blocked',
+    '- **Gates:** yes', '- **Gates:** no', '',
+    '### 2026-08-12 — Slice 14', '- **Slice:** 14', '- **Status:** done', '- **Gates:** yes', '',
+    '### 2026-08-13 — Slice 14 retry', '- **Slice:** 14', '- **Status:** blocked', '- **Gates:** no', '',
+    '### 2026-08-14 — Shopping list', '- **Slice:** 99', '- **Slice:** 99', '- **Status:** done', '- **Gates:** yes', '',
+  ].join('\n'))
+
+  const result = runTsx('tools/discipline/state-view.ts', ['--json', '--project-dir', root])
+  assert.equal(result.status, 0, output(result))
+  const state = JSON.parse(result.stdout)
+  assert.deepEqual(state.slices.map((slice) => [slice.id, slice.status]), [['13', 'blocked'], ['14', 'blocked']])
+  const blockers = state.blockers.join('\n')
+  assert.match(blockers, /Slice 13 progress log is invalid:.*Slice.*2 declarations.*Status.*2 declarations.*Gates.*2 declarations/)
+  assert.match(blockers, /Slice 14 progress log is contradictory/)
+  assert.match(blockers, /Slice 99 progress log is invalid:.*Slice has 2 declarations/)
+})
+
 test('Step 4 producer declares the metrics contract and v2 refuses a prose-only Estimate', () => {
   const skill = fs.readFileSync(path.join(repoRoot, '.claude', 'skills', 'discipline-step4', 'SKILL.md'), 'utf8')
   const templateEstimate = skill.match(/## Estimate\r?\n([\s\S]*?)\r?\n## UI Reference/)?.[1] ?? ''
@@ -353,15 +409,35 @@ test('Step 4 producer declares the metrics contract and v2 refuses a prose-only 
     ['duplicate', '- MAX_CHANGED_LINES: 40\n- BASIS: comparable ui slice 1 measured 35 lines\n- BASIS: comparable ui slice 2 measured 38 lines'],
     ['none', '- MAX_CHANGED_LINES: 40\n- BASIS: none'],
     ['tbd', '- MAX_CHANGED_LINES: 40\n- BASIS: TBD'],
+    ['tbd-later', '- MAX_CHANGED_LINES: 40\n- BASIS: TBD later'],
+    ['looks-good', '- MAX_CHANGED_LINES: 40\n- BASIS: looks good'],
+    ['unstructured-no-history', '- MAX_CHANGED_LINES: 40\n- BASIS: no comparable history'],
+    ['no-history-without-risks', '- MAX_CHANGED_LINES: 40\n- BASIS: no-history; planned_files=src/app.ts'],
+    ['analogy-without-measurements', '- MAX_CHANGED_LINES: 40\n- BASIS: analogy; comparables=S12; shared_surfaces=ui'],
   ]) {
     write(root, '.discipline/packets/STEP_5_SLICE_PACKET_13.md', completePacket('13', 'ready', estimate))
     const refused = runTsx('tools/discipline/assemble-paste-ready.ts', ['--step', '5', '--slice', '13', '--project-dir', root])
     assert.notEqual(refused.status, 0, `${name}: ${output(refused)}`)
-    assert.match(output(refused), /exactly one substantive BASIS/)
+    assert.match(output(refused), /exactly one structured BASIS/)
   }
   write(root, '.discipline/packets/STEP_5_SLICE_PACKET_13.md', completePacket('13'))
   const rationale = runTsx('tools/discipline/assemble-paste-ready.ts', ['--step', '5', '--slice', '13', '--project-dir', root])
   assert.equal(rationale.status, 0, output(rationale))
+  write(root, '.discipline/metrics/slices.jsonl', `${JSON.stringify(signedMetric('12', 42))}\n${JSON.stringify(signedMetric('11', 37))}\n`)
+  const staleNoHistory = runTsx('tools/discipline/assemble-paste-ready.ts', ['--step', '5', '--slice', '13', '--project-dir', root])
+  assert.notEqual(staleNoHistory.status, 0)
+  assert.match(output(staleNoHistory), /claims no history, but signed metric history contains comparable slice/)
+  write(root, '.discipline/packets/STEP_5_SLICE_PACKET_13.md', completePacket('13', 'ready', [
+    '- MAX_CHANGED_LINES: 40', `- BASIS: ${ANALOGY_BASIS}`,
+  ].join('\n')))
+  const analogy = runTsx('tools/discipline/assemble-paste-ready.ts', ['--step', '5', '--slice', '13', '--project-dir', root])
+  assert.equal(analogy.status, 0, output(analogy))
+  write(root, '.discipline/packets/STEP_5_SLICE_PACKET_13.md', completePacket('13', 'ready', [
+    '- MAX_CHANGED_LINES: 40', '- BASIS: analogy; comparables=S99@40; shared_surfaces=ui',
+  ].join('\n')))
+  const unbackedAnalogy = runTsx('tools/discipline/assemble-paste-ready.ts', ['--step', '5', '--slice', '13', '--project-dir', root])
+  assert.notEqual(unbackedAnalogy.status, 0)
+  assert.match(output(unbackedAnalogy), /does not match signed metric history/)
 })
 
 test('document growth reports the 2,000-line threshold and Step 4 receives historical metrics', () => {
