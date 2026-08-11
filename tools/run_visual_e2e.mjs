@@ -39,8 +39,20 @@ function killViteTree() {
 
 // Playwright configs to run: the default (tests/e2e) plus the a11y config if this lane ships
 // one. Each has had its `webServer` removed; this runner owns the server lifecycle instead.
-const runs = ['npx playwright test']
-if (existsSync('playwright.a11y.config.ts')) {
+//
+// `--only <dir>` narrows the run to one directory and skips the a11y pass. `e2e:auth` uses it to
+// execute JUST the authenticated suite: running the whole visual gate would prove the public
+// screens render and say nothing about the signed-in ones, which is the surface that asked.
+// Playwright exits non-zero when a path matches no test, so "the suite ran nothing" cannot pass.
+const onlyIndex = process.argv.indexOf('--only')
+const only = onlyIndex !== -1 ? process.argv[onlyIndex + 1] : null
+if (onlyIndex !== -1 && !only) {
+    console.error('[run_visual_e2e] --only needs a directory (for example: --only tests/e2e/authenticated)')
+    process.exit(2)
+}
+
+const runs = only ? [`npx playwright test ${only}`] : ['npx playwright test']
+if (!only && existsSync('playwright.a11y.config.ts')) {
     runs.push('npx playwright test --config playwright.a11y.config.ts')
 }
 

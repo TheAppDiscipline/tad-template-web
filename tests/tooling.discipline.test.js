@@ -5831,45 +5831,17 @@ test('stop-gate: a new untracked file the report never saw blocks the stop', asy
   assert.equal(decide({ stop_hook_active: false }, root).block, false)
 })
 
-const AUTHENTICATED_TEST = 'tests/e2e/authenticated/signed-in.spec.ts'
-const MISPLACED_TEST = 'tests/e2e/signed-in.spec.ts'
 
-// `authenticated-ui` routes here. The check is deliberately narrow: it proves an authenticated test
-// EXISTS where the runner will execute it, and refuses the two ways that verification goes missing.
-// It does not read the test's source looking for a login, because judging intent from prose is the
-// guess this pipeline refuses to make.
-test('check-authenticated-ui: no auth, or no authenticated test, is a failure', () => {
-  const project = (authMode, files = {}) => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'auth-ui-'))
-    fs.writeFileSync(path.join(dir, 'discipline.md'),
-      ['# discipline.md', '', '## 0) Profile', '- PROFILE: LITE', `- AUTH_MODE: ${authMode}`, ''].join('\n'), 'utf8')
-    for (const [rel, content] of Object.entries(files)) {
-      fs.mkdirSync(path.join(dir, path.dirname(rel)), { recursive: true })
-      fs.writeFileSync(path.join(dir, rel), content, 'utf8')
-    }
-    return dir
-  }
-  const run = (dir) => spawnSync(process.execPath, [path.join(repoRoot, 'tools', 'check_authenticated_ui.js')], { cwd: dir, encoding: 'utf8' })
+const REAL_AUTH_TEST = [
+  "import { test, expect } from '@playwright/test'",
+  '',
+  "test('the signed-in dashboard renders', async ({ page }) => {",
+  "  await page.goto('/')",
+  '  await expect(page).toHaveTitle(/./)',
+  '})',
+  '',
+].join('\n')
 
-  // AUTH_MODE: NONE means nothing is behind a login, so declaring the surface contradicts the project.
-  const none = run(project('NONE'))
-  assert.notEqual(none.status, 0, getOutput(none))
-  assert.match(getOutput(none), /AUTH_MODE: NONE/)
-
-  // With auth and no authenticated test, the surface would route to nothing.
-  const empty = run(project('MAGIC_LINK'))
-  assert.notEqual(empty.status, 0, getOutput(empty))
-  assert.match(getOutput(empty), /no authenticated test/)
-
-  // With auth and a test where the runner executes it, it passes.
-  const ready = run(project('MAGIC_LINK', { [AUTHENTICATED_TEST]: 'signed-in fixture\n' }))
-  assert.equal(ready.status, 0, getOutput(ready))
-  assert.match(getOutput(ready), /1 authenticated test/)
-
-  // And a test filed somewhere else does not count: the runner would never open it.
-  const misplaced = run(project('MAGIC_LINK', { [MISPLACED_TEST]: 'signed-in fixture\n' }))
-  assert.notEqual(misplaced.status, 0, getOutput(misplaced))
-})
 
 // The hook exempted ALL of `.discipline/`, so editing the gate MAP after the gate ended the session
 // without re-verifying anything. Only generated state is exempt now, path by path.
@@ -5891,4 +5863,69 @@ test('stop-gate: the gate map counts as edited code, the generated report does n
     '.discipline/gates.json',
     '.discipline/packets/STEP_5_SLICE_PACKET_13.md',
   ])
+})
+
+// A file with the right extension is not a test. The positive control used to write the words
+// "signed-in fixture" into a .spec.ts and call it proof; an empty file and a file holding only a
+// comment passed just as well. The RUNNER is now asked how many tests it finds, and zero fails.
+test('check-authenticated-ui: files are not tests, and the runner is what counts them', () => {
+  const fixtures = path.join(repoRoot, 'tests', '.tmp-auth-fixtures')
+  const project = (name, content, authMode = 'MAGIC_LINK') => {
+    const dir = path.join(fixtures, name)
+    fs.mkdirSync(path.join(dir, 'tests', 'e2e', 'authenticated'), { recursive: true })
+    fs.writeFileSync(path.join(dir, 'discipline.md'),
+      ['# discipline.md', '', '## 0) Profile', '- PROFILE: LITE', `- AUTH_MODE: ${authMode}`, ''].join('\n'), 'utf8')
+    if (content !== null) fs.writeFileSync(path.join(dir, 'tests', 'e2e', 'authenticated', 'signed-in.spec.ts'), content, 'utf8')
+    return dir
+  }
+  const run = (dir) => spawnSync(process.execPath, [path.join(repoRoot, 'tools', 'check_authenticated_ui.js'), '--project-dir', dir],
+    { cwd: repoRoot, encoding: 'utf8' })
+
+  try {
+    // No file at all.
+    const none = run(project('none', null))
+    assert.notEqual(none.status, 0, getOutput(none))
+    assert.match(getOutput(none), /no authenticated test under/)
+
+    // A file with nothing in it.
+    const empty = run(project('empty', ''))
+    assert.notEqual(empty.status, 0, getOutput(empty))
+    assert.match(getOutput(empty), /could not list any test|found 0 tests/)
+
+    // A file holding only a comment: the extension is right and the content declares nothing.
+    const comment = run(project('comment', '// TODO: write the signed-in test\n'))
+    assert.notEqual(comment.status, 0, getOutput(comment))
+    assert.match(getOutput(comment), /could not list any test|found 0 tests/)
+
+    // Prose in a .spec.ts, which is what the previous positive control wrote.
+    const prose = run(project('prose', 'signed-in fixture\n'))
+    assert.notEqual(prose.status, 0, getOutput(prose))
+
+    // A real test. This is the only shape that passes.
+    const real = run(project('real', [
+      "import { test, expect } from '@playwright/test'",
+      '',
+      "test('the signed-in dashboard renders', async ({ page }) => {",
+      "  await page.goto('/')",
+      '  await expect(page).toHaveTitle(/./)',
+      '})',
+      '',
+    ].join('\n')))
+    assert.equal(real.status, 0, getOutput(real))
+    assert.match(getOutput(real), /1 test\(s\)/)
+
+    // AUTH_MODE: NONE means nothing is behind a login, so declaring the surface contradicts the project.
+    const none2 = run(project('no-auth', REAL_AUTH_TEST, 'NONE'))
+    assert.notEqual(none2.status, 0, getOutput(none2))
+    assert.match(getOutput(none2), /AUTH_MODE: NONE/)
+
+    // A real test, filed where the runner does not look, is not the authenticated suite.
+    const misplaced = project('misplaced', null)
+    fs.writeFileSync(path.join(misplaced, 'tests', 'e2e', 'signed-in.spec.ts'), REAL_AUTH_TEST, 'utf8')
+    const off = run(misplaced)
+    assert.notEqual(off.status, 0, getOutput(off))
+    assert.match(getOutput(off), /no authenticated test under/)
+  } finally {
+    fs.rmSync(fixtures, { recursive: true, force: true })
+  }
 })
