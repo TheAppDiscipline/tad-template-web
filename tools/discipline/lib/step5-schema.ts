@@ -117,6 +117,11 @@ function isEvasive(text: string): boolean {
   return ['n/a', 'n.a', 'na', 'none', 'no', 'nothing', 'not applicable', 'does not apply', 'nil'].includes(bare);
 }
 
+/** Public form used by other contract readers so `none` and `TBD` mean the same everywhere. */
+export function isEvasiveDeclaration(text: string): boolean {
+  return isEvasive(text);
+}
+
 /** True when a section explicitly says it does not apply. Its RATIONALE is checked separately. */
 function declaresNotApplicable(lines: string[]): boolean {
   return lines.some((line) => /^APPLIES\s*:\s*no\b/i.test(plainDeclaration(line)));
@@ -430,6 +435,14 @@ function checkEstimate(body: string, severity: SchemaFinding['severity'], where:
       severity,
       message: `${where}"Estimate" must declare exactly one MAX_CHANGED_LINES: <positive integer>`,
       detail: 'This is the falsifiable maximum discipline metrics measures after implementation.',
+    });
+  }
+  const bases = declaredValues(lines, 'BASIS');
+  if (bases.length !== 1 || isEvasive(bases[0] ?? '')) {
+    findings.push({
+      severity,
+      message: `${where}"Estimate" must declare exactly one substantive BASIS`,
+      detail: 'Name comparable slice metrics and shared surfaces, or state that no comparable history exists and give a concrete file/risk rationale. none, N/A and TBD are not evidence.',
     });
   }
   const decisions = declaredValues(lines, 'SPLIT_DECISION');

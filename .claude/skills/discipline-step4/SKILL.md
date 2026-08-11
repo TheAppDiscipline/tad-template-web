@@ -256,10 +256,12 @@ Expand it with the following detail:
    - S: One new file, a localized change, no new integrations
    - M: Several files, one new integration, moderate logic
    - L: Multiple files, several integrations, complex logic or edge cases
-   Also declare a positive integer `MAX_CHANGED_LINES` for the whole slice (production, tests,
+   Also declare exactly one positive integer `MAX_CHANGED_LINES` for the whole slice (production, tests,
    fixtures/config, and documentation). Base it on prior metric records whose
    `affected_surfaces` overlap this slice. Name the comparable slice IDs and measured lines in
-   `BASIS`; when none exist, say so and give a file/risk-based rationale. Never copy an estimate
+   `BASIS`; it must be exactly one substantive declaration. `none`, `N/A`, `TBD`, a duplicate, or
+   a label without evidence is refused. When no comparable records exist, say so and give a
+   concrete file/risk-based rationale. Never copy an estimate
    from an unrelated surface merely because one exists.
 
 10. **Provider impact**: State which backend, hosting, authentication, or other provider

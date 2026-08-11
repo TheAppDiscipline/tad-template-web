@@ -41,7 +41,10 @@ function write(root, relative, content) {
   fs.writeFileSync(full, content, 'utf8')
 }
 
-function completePacket(id, status = 'ready', estimate = '- MAX_CHANGED_LINES: 100') {
+function completePacket(id, status = 'ready', estimate = [
+  '- MAX_CHANGED_LINES: 100',
+  '- BASIS: no comparable history; one bounded UI change plus its tests and fixtures.',
+].join('\n')) {
   return [
     '---', 'schema: discipline.packet.step5', 'version: 2.0.0', `id: step5:${id}:T1`, `status: ${status}`,
     `slice: ${id}`, 'affected_surfaces:', '  - ui', 'required_gates:', '  - gate', '---', '',
@@ -72,7 +75,11 @@ function signedMetric(slice = '1', changedLines = 42) {
     base: { requested: 'main', resolved: 'a'.repeat(40) },
     packet: { file: `.discipline/packets/STEP_5_SLICE_PACKET_${slice}.md`, sha256: 'b'.repeat(64) },
     affected_surfaces: ['ui'],
-    estimate: { raw: '- MAX_CHANGED_LINES: 100', max_changed_lines: 100, split_decision: null, duplicate_metrics: null },
+    estimate: {
+      raw: '- MAX_CHANGED_LINES: 100\n- BASIS: comparable slice 0 touched ui and measured 42 lines',
+      max_changed_lines: 100, basis: 'comparable slice 0 touched ui and measured 42 lines',
+      split_decision: null, duplicate_metrics: null,
+    },
     actual: {
       files: 1, additions: changedLines, deletions: 0, changed_lines: changedLines, binary_files: 0,
       paths: ['src/app.ts'], categories: {
@@ -101,7 +108,9 @@ function scaffold(root, slices = [['13', 'ready']]) {
 test('metrics records categorized numstat, fails above the maximum, and refuses undeclared duplicates', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'discipline-metrics-'))
   scaffold(root)
-  write(root, '.discipline/packets/STEP_5_SLICE_PACKET_13.md', completePacket('13', 'ready', '- MAX_CHANGED_LINES: 3'))
+  write(root, '.discipline/packets/STEP_5_SLICE_PACKET_13.md', completePacket('13', 'ready', [
+    '- MAX_CHANGED_LINES: 3', '- BASIS: no comparable history; four bounded files define the initial maximum.',
+  ].join('\n')))
   write(root, 'src/app.ts', 'export const base = true\n')
   git(root, ['init', '-q'])
   git(root, ['config', 'user.email', 'tests@example.invalid'])
@@ -121,7 +130,8 @@ test('metrics records categorized numstat, fails above the maximum, and refuses 
   assert.equal(fs.existsSync(path.join(root, '.discipline', 'metrics', 'slices.jsonl')), false)
 
   write(root, '.discipline/packets/STEP_5_SLICE_PACKET_13.md', completePacket('13', 'ready', [
-    '- MAX_CHANGED_LINES: 3', '- SPLIT_DECISION: exception-approved',
+    '- MAX_CHANGED_LINES: 3', '- BASIS: no comparable history; four bounded files define the initial maximum.',
+    '- SPLIT_DECISION: exception-approved',
   ].join('\n')))
   const recorded = runTsx('tools/discipline/metrics.ts', ['--slice', '13', '--base', base, '--recorded-at', '2026-08-11T00:00:00.000Z', '--project-dir', root])
   assert.equal(recorded.status, 0, output(recorded))
@@ -131,6 +141,7 @@ test('metrics records categorized numstat, fails above the maximum, and refuses 
   assert.equal(record.actual.categories.tests.files, 1)
   assert.ok(record.actual.categories.documentation.files >= 1)
   assert.equal(record.actual.categories['fixtures-config'].files, 1)
+  assert.match(record.estimate.basis, /no comparable history/)
   assert.match(record.signature, /^[a-f0-9]{64}$/)
 
   const duplicate = runTsx('tools/discipline/metrics.ts', ['--slice', '13', '--base', base, '--project-dir', root])
@@ -138,7 +149,8 @@ test('metrics records categorized numstat, fails above the maximum, and refuses 
   assert.match(output(duplicate), /DUPLICATE_METRICS: allowed/)
 
   write(root, '.discipline/packets/STEP_5_SLICE_PACKET_13.md', completePacket('13', 'ready', [
-    '- MAX_CHANGED_LINES: 3', '- SPLIT_DECISION: exception-approved', '- DUPLICATE_METRICS: allowed',
+    '- MAX_CHANGED_LINES: 3', '- BASIS: no comparable history; four bounded files define the initial maximum.',
+    '- SPLIT_DECISION: exception-approved', '- DUPLICATE_METRICS: allowed',
   ].join('\n')))
   const declaredDuplicate = runTsx('tools/discipline/metrics.ts', ['--slice', '13', '--base', base, '--recorded-at', '2026-08-11T01:00:00.000Z', '--project-dir', root])
   assert.equal(declaredDuplicate.status, 0, output(declaredDuplicate))
@@ -156,6 +168,27 @@ test('metrics classifies real Web, Mobile, Desktop, Extension and CI configurati
   const result = spawnSync(process.execPath, [tsxCli, '-e', source], { cwd: repoRoot, encoding: 'utf8' })
   assert.equal(result.status, 0, output(result))
   assert.deepEqual(JSON.parse(result.stdout), paths.map((file) => [file, 'fixtures-config']))
+})
+
+test('metrics refuses invalid v2 surface declarations instead of signing an empty surface list', () => {
+  for (const [name, mutate] of [
+    ['missing', (packet) => packet.replace('affected_surfaces:\n  - ui\n', '')],
+    ['invalid', (packet) => packet.replace('  - ui\n', '  - not-a-surface\n')],
+  ]) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), `discipline-metrics-surface-${name}-`))
+    scaffold(root)
+    write(root, '.discipline/packets/STEP_5_SLICE_PACKET_13.md', mutate(completePacket('13')))
+    git(root, ['init', '-q'])
+    git(root, ['config', 'user.email', 'tests@example.invalid'])
+    git(root, ['config', 'user.name', 'Discipline Tests'])
+    git(root, ['add', '.'])
+    git(root, ['commit', '-q', '-m', 'baseline'])
+    const base = git(root, ['rev-parse', 'HEAD'])
+    const result = runTsx('tools/discipline/metrics.ts', ['--slice', '13', '--base', base, '--project-dir', root])
+    assert.notEqual(result.status, 0, `${name}: ${output(result)}`)
+    assert.match(output(result), /invalid v2 packet|affected_surfaces/)
+    assert.equal(fs.existsSync(path.join(root, '.discipline', 'metrics', 'slices.jsonl')), false)
+  }
 })
 
 test('metrics verifies signatures and serializes concurrent duplicate checks', async () => {
@@ -183,6 +216,15 @@ test('metrics verifies signatures and serializes concurrent duplicate checks', a
   const state = runTsx('tools/discipline/state-view.ts', ['--json', '--project-dir', root])
   assert.equal(state.status, 0, output(state))
   assert.match(JSON.parse(state.stdout).blockers.join('\n'), /signature mismatch/)
+
+  delete record.estimate.basis
+  const unsigned = { ...record }
+  delete unsigned.signature
+  record.signature = crypto.createHash('sha256').update(JSON.stringify(unsigned)).digest('hex')
+  write(root, '.discipline/metrics/slices.jsonl', `${JSON.stringify(record)}\n`)
+  const structurallyInvalid = runTsx('tools/discipline/state-view.ts', ['--json', '--project-dir', root])
+  assert.equal(structurallyInvalid.status, 0, output(structurallyInvalid))
+  assert.match(JSON.parse(structurallyInvalid.stdout).blockers.join('\n'), /substantive estimate BASIS/)
 })
 
 test('state-view is byte deterministic and --json exposes the same slice, gate, metric, and blocker state', () => {
@@ -194,7 +236,7 @@ test('state-view is byte deterministic and --json exposes the same slice, gate, 
   write(root, '.discipline/packets/SLICE_COMPLETION_PACKET_3.md', completionPacket('3'))
   write(root, 'progress.md', [
     '# progress.md', '', '## Current Status', '- Blockers: none', '', '---',
-    '### 2026-08-11 — Slice 3', '- **Status:** done', '- **Gates:** yes', '',
+    '### 2026-08-11 — Slice 3', '- **Slice:** 3', '- **Status:** done', '- **Gates:** yes', '',
   ].join('\n'))
   const metric = signedMetric()
   write(root, '.discipline/metrics/slices.jsonl', `${JSON.stringify(metric)}\n`)
@@ -256,6 +298,43 @@ test('state-view refuses partial consumption and expands multiline Open Errors',
   assert.match(parsed.blockers.join('\n'), /Slice 5 has an incomplete consumption transition: packet=consumed/)
 })
 
+test('progress logs canonical identity independently from the visible name and reads legacy separators', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'discipline-progress-id-'))
+  scaffold(root, [['S27E3b', 'done']])
+  write(root, '.discipline/packets/STEP_5_SLICE_PACKET_27e3b.md', completePacket('S27E3b', 'ready'))
+  write(root, '.discipline/packets/SLICE_COMPLETION_PACKET.md', [
+    '---', 'slice: S27E3b', '---', '# SLICE_COMPLETION_PACKET', '',
+    'SLICE_NAME: Shopping list', '', '### Outcome', '- done', '',
+    '### Gates passed', '- GATE_STATE: passed', '',
+  ].join('\n'))
+
+  const updated = runTsx('tools/discipline/update-progress.ts', ['--project-dir', root])
+  assert.equal(updated.status, 0, output(updated))
+  const progress = fs.readFileSync(path.join(root, 'progress.md'), 'utf8')
+  assert.match(progress, /### \d{4}-\d{2}-\d{2} — Shopping list/)
+  assert.match(progress, /- \*\*Slice:\*\* 27e3b/)
+
+  const markSource = `import { markSliceConsumed } from './tools/discipline/lib/slice-identity.ts'; console.log(JSON.stringify(markSliceConsumed(${JSON.stringify(root)}, 'S27E3b')))`
+  const marked = spawnSync(process.execPath, [tsxCli, '-e', markSource], { cwd: repoRoot, encoding: 'utf8' })
+  assert.equal(marked.status, 0, output(marked))
+  assert.equal(JSON.parse(marked.stdout).ok, true)
+  const state = runTsx('tools/discipline/state-view.ts', ['--json', '--project-dir', root])
+  assert.equal(state.status, 0, output(state))
+  assert.equal(JSON.parse(state.stdout).slices.find((slice) => slice.id === '27e3b').status, 'consumed')
+
+  const legacy = [
+    '### 2026-08-11 - Slice S13.2 - child', '- **Status:** done', '- **Gates:** yes',
+    '### 2026-08-12 — S27E3b — composite', '- **Status:** shipped', '- **Gates:** yes',
+    '### 2026-08-13 : Slice 14: colon', '- **Status:** done', '- **Gates:** yes',
+  ].join('\n')
+  const parseSource = `import { readProgressLog } from './tools/discipline/lib/progress-log.ts'; console.log(JSON.stringify(readProgressLog(${JSON.stringify(legacy)})))`
+  const parsed = spawnSync(process.execPath, [tsxCli, '-e', parseSource], { cwd: repoRoot, encoding: 'utf8' })
+  assert.equal(parsed.status, 0, output(parsed))
+  assert.deepEqual(JSON.parse(parsed.stdout).map((entry) => [entry.sliceId, entry.identitySource]), [
+    ['13.2', 'legacy-heading'], ['27e3b', 'legacy-heading'], ['14', 'legacy-heading'],
+  ])
+})
+
 test('Step 4 producer declares the metrics contract and v2 refuses a prose-only Estimate', () => {
   const skill = fs.readFileSync(path.join(repoRoot, '.claude', 'skills', 'discipline-step4', 'SKILL.md'), 'utf8')
   const templateEstimate = skill.match(/## Estimate\r?\n([\s\S]*?)\r?\n## UI Reference/)?.[1] ?? ''
@@ -268,23 +347,55 @@ test('Step 4 producer declares the metrics contract and v2 refuses a prose-only 
   const validation = runTsx('tools/discipline/assemble-paste-ready.ts', ['--step', '5', '--slice', '13', '--project-dir', root])
   assert.notEqual(validation.status, 0)
   assert.match(output(validation), /MAX_CHANGED_LINES: <positive integer>/)
+
+  for (const [name, estimate] of [
+    ['missing', '- MAX_CHANGED_LINES: 40'],
+    ['duplicate', '- MAX_CHANGED_LINES: 40\n- BASIS: comparable ui slice 1 measured 35 lines\n- BASIS: comparable ui slice 2 measured 38 lines'],
+    ['none', '- MAX_CHANGED_LINES: 40\n- BASIS: none'],
+    ['tbd', '- MAX_CHANGED_LINES: 40\n- BASIS: TBD'],
+  ]) {
+    write(root, '.discipline/packets/STEP_5_SLICE_PACKET_13.md', completePacket('13', 'ready', estimate))
+    const refused = runTsx('tools/discipline/assemble-paste-ready.ts', ['--step', '5', '--slice', '13', '--project-dir', root])
+    assert.notEqual(refused.status, 0, `${name}: ${output(refused)}`)
+    assert.match(output(refused), /exactly one substantive BASIS/)
+  }
+  write(root, '.discipline/packets/STEP_5_SLICE_PACKET_13.md', completePacket('13'))
+  const rationale = runTsx('tools/discipline/assemble-paste-ready.ts', ['--step', '5', '--slice', '13', '--project-dir', root])
+  assert.equal(rationale.status, 0, output(rationale))
 })
 
 test('document growth reports the 2,000-line threshold and Step 4 receives historical metrics', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'discipline-docs-'))
   scaffold(root)
-  write(root, 'task_plan.md', `${fs.readFileSync(path.join(root, 'task_plan.md'), 'utf8')}\n${Array.from({ length: 2001 }, (_, i) => `history ${i}`).join('\n')}`)
   write(root, '.discipline/metrics/slices.jsonl', `${JSON.stringify(signedMetric('12', 12))}\n`)
   write(root, '.discipline/packets/SLICE_COMPLETION_PACKET.md', '# SLICE_COMPLETION_PACKET\n')
 
-  const state = runTsx('tools/discipline/state-view.ts', ['--json', '--project-dir', root])
-  assert.equal(state.status, 0, output(state))
-  const parsed = JSON.parse(state.stdout)
-  assert.equal(parsed.documents.find((doc) => doc.file === 'task_plan.md').warning, 'normal')
+  write(root, 'task_plan.md', `${Array.from({ length: 2000 }, (_, i) => `line ${i + 1}`).join('\n')}\n`)
+  const exact = runTsx('tools/discipline/state-view.ts', ['--json', '--project-dir', root])
+  assert.equal(exact.status, 0, output(exact))
+  const exactDoc = JSON.parse(exact.stdout).documents.find((doc) => doc.file === 'task_plan.md')
+  assert.equal(exactDoc.lines, 2000)
+  assert.equal(exactDoc.warning, null)
+
+  write(root, 'task_plan.md', `${Array.from({ length: 2001 }, (_, i) => `line ${i + 1}`).join('\n')}\n`)
+  const over = runTsx('tools/discipline/state-view.ts', ['--json', '--project-dir', root])
+  assert.equal(over.status, 0, output(over))
+  const overDoc = JSON.parse(over.stdout).documents.find((doc) => doc.file === 'task_plan.md')
+  assert.equal(overDoc.lines, 2001)
+  assert.equal(overDoc.warning, 'normal')
 
   const assembled = runTsx('tools/discipline/assemble-paste-ready.ts', ['--step', '4-reentry', '--project-dir', root])
   assert.equal(assembled.status, 0, output(assembled))
   const handoff = fs.readFileSync(path.join(root, '.discipline', 'paste-ready', 'step-4-reentry.md'), 'utf8')
   assert.match(handoff, /\.discipline\/metrics\/slices\.jsonl \(context\)/)
   assert.match(handoff, /discipline\.slice_metric\.v1/)
+
+  const record = signedMetric('12', 12)
+  record.actual.changed_lines++
+  write(root, '.discipline/metrics/slices.jsonl', `${JSON.stringify(record)}\n`)
+  const before = fs.readFileSync(path.join(root, '.discipline', 'paste-ready', 'step-4-reentry.md'))
+  const refused = runTsx('tools/discipline/assemble-paste-ready.ts', ['--step', '4-reentry', '--project-dir', root])
+  assert.notEqual(refused.status, 0)
+  assert.match(output(refused), /signature mismatch/)
+  assert.deepEqual(fs.readFileSync(path.join(root, '.discipline', 'paste-ready', 'step-4-reentry.md')), before)
 })

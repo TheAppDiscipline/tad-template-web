@@ -4,7 +4,10 @@ import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { withWriterLock } from './locks.js';
 import { locateSlicePacket, normalizeSliceId } from './slice-identity.js';
-import { declaredSurfaces, plainDeclaration, sectionLines } from './step5-schema.js';
+import {
+  declaredSurfaces, evaluateAsV2, isEvasiveDeclaration, plainDeclaration, readStep5Packet,
+  sectionLines,
+} from './step5-schema.js';
 
 export const METRICS_SCHEMA = 'discipline.slice_metric.v1';
 export const METRICS_FILE = path.join('.discipline', 'metrics', 'slices.jsonl');
@@ -23,6 +26,7 @@ export interface LineTotals {
 export interface EstimateContract {
   raw: string;
   max_changed_lines: number;
+  basis: string;
   split_decision: 'split' | 'exception-approved' | null;
   duplicate_metrics: 'allowed' | null;
 }
@@ -49,34 +53,46 @@ interface NumstatEntry {
   binary: boolean;
 }
 
-function declarationValue(lines: string[], key: string): string | null {
+function declarationValues(lines: string[], key: string): string[] {
   const matcher = new RegExp(`^${key}\\s*:\\s*(.*?)\\s*$`, 'i');
+  const values: string[] = [];
   for (const raw of lines) {
     const match = plainDeclaration(raw).match(matcher);
-    if (match) return match[1].trim();
+    if (match) values.push(match[1].trim());
   }
-  return null;
+  return values;
 }
 
 export function readEstimateContract(packet: string): EstimateContract {
   const lines = sectionLines(packet, 'Estimate');
   if (!lines) throw new Error('STEP_5_SLICE_PACKET has no Estimate section.');
   const raw = lines.join('\n').trim();
-  const maxRaw = declarationValue(lines, 'MAX_CHANGED_LINES');
-  if (!maxRaw || !/^\d+$/.test(maxRaw) || Number(maxRaw) <= 0) {
-    throw new Error('Estimate must declare MAX_CHANGED_LINES: <positive integer> so measured scope has a falsifiable maximum.');
+  const maximums = declarationValues(lines, 'MAX_CHANGED_LINES');
+  const maxRaw = maximums[0];
+  if (maximums.length !== 1 || !maxRaw || !/^\d+$/.test(maxRaw) || Number(maxRaw) <= 0) {
+    throw new Error('Estimate must declare exactly one MAX_CHANGED_LINES: <positive integer> so measured scope has a falsifiable maximum.');
   }
-  const splitRaw = declarationValue(lines, 'SPLIT_DECISION');
+  const bases = declarationValues(lines, 'BASIS');
+  const basis = bases[0];
+  if (bases.length !== 1 || !basis || isEvasiveDeclaration(basis)) {
+    throw new Error('Estimate must declare exactly one substantive BASIS with comparable surfaces, or a concrete rationale when no comparable history exists.');
+  }
+  const splitValues = declarationValues(lines, 'SPLIT_DECISION');
+  const splitRaw = splitValues[0];
+  if (splitValues.length > 1) throw new Error('Estimate must not declare SPLIT_DECISION more than once.');
   if (splitRaw && splitRaw !== 'split' && splitRaw !== 'exception-approved') {
     throw new Error('SPLIT_DECISION must be split or exception-approved.');
   }
-  const duplicateRaw = declarationValue(lines, 'DUPLICATE_METRICS');
+  const duplicateValues = declarationValues(lines, 'DUPLICATE_METRICS');
+  const duplicateRaw = duplicateValues[0];
+  if (duplicateValues.length > 1) throw new Error('Estimate must not declare DUPLICATE_METRICS more than once.');
   if (duplicateRaw && duplicateRaw !== 'allowed') {
     throw new Error('DUPLICATE_METRICS, when present, must be allowed.');
   }
   return {
     raw,
     max_changed_lines: Number(maxRaw),
+    basis,
     split_decision: (splitRaw as EstimateContract['split_decision']) ?? null,
     duplicate_metrics: duplicateRaw === 'allowed' ? 'allowed' : null,
   };
@@ -205,8 +221,11 @@ export function readMetricRecords(root: string): SliceMetricRecord[] {
     if (typeof candidate.slice !== 'string'
       || !actual || typeof actual.changed_lines !== 'number'
       || !estimate || typeof estimate.max_changed_lines !== 'number'
+      || typeof estimate.basis !== 'string' || isEvasiveDeclaration(estimate.basis)
+      || !Array.isArray(candidate.affected_surfaces)
+      || candidate.affected_surfaces.some((surface) => typeof surface !== 'string')
       || typeof candidate.signature !== 'string' || !/^[a-f0-9]{64}$/.test(candidate.signature)) {
-      throw new Error(`${METRICS_FILE}:${index + 1} is missing slice, estimate, actual, or signature fields.`);
+      throw new Error(`${METRICS_FILE}:${index + 1} is missing slice, substantive estimate BASIS, surfaces, actual, or signature fields.`);
     }
     const { signature, ...unsigned } = parsed as SliceMetricRecord;
     const expected = recordSignature(unsigned);
@@ -257,6 +276,20 @@ function recordSliceMetricsLocked(root: string, slice: string, base: string, rec
   const located = locateSlicePacket(root, normalizedSlice, taskPlan);
   if (!located.ok) throw new Error(located.message);
   const packet = fs.readFileSync(located.path, 'utf-8');
+  const reading = readStep5Packet(packet, located.path);
+  if (reading.format === 'unsupported') {
+    throw new Error(reading.findings.map((finding) => finding.message).join('; '));
+  }
+  const declaration = declaredSurfaces(packet);
+  if (reading.format === 'v2') {
+    const invalid = evaluateAsV2(packet, located.path);
+    if (invalid.length > 0) {
+      throw new Error(`Cannot record metrics for an invalid v2 packet: ${invalid.map((finding) => finding.message).join('; ')}`);
+    }
+    if (!declaration.surfaces || declaration.surfaces.length === 0 || declaration.invalid.length > 0) {
+      throw new Error('Cannot record metrics for a v2 packet without valid affected_surfaces.');
+    }
+  }
   const estimate = readEstimateContract(packet);
   const records = readMetricRecords(root);
   const prior = records.filter((record) => normalizeSliceId(record.slice) === normalizedSlice);
@@ -270,7 +303,7 @@ function recordSliceMetricsLocked(root: string, slice: string, base: string, rec
       + 'Declare SPLIT_DECISION: split or SPLIT_DECISION: exception-approved in Estimate.',
     );
   }
-  const surfaces = declaredSurfaces(packet).surfaces ?? [];
+  const surfaces = declaration.surfaces ?? [];
   const unsigned: Omit<SliceMetricRecord, 'signature'> = {
     schema: METRICS_SCHEMA,
     recorded_at: recordedAt,

@@ -25,7 +25,9 @@ export function inspectDocument(root: string, file: string): DocumentHealth {
   if (!fs.existsSync(full)) return { file, exists: false, bytes: 0, lines: 0, warning: null };
   const bytes = fs.statSync(full).size;
   const content = fs.readFileSync(full, 'utf-8');
-  const lines = content.length === 0 ? 0 : content.split(/\r?\n/).length;
+  const lines = content.length === 0
+    ? 0
+    : content.split(/\r?\n/).length - (/\r?\n$/.test(content) ? 1 : 0);
   const warning = bytes > DOCUMENT_HIGH_WARNING_BYTES
     ? 'high'
     : bytes > DOCUMENT_WARNING_BYTES || lines > DOCUMENT_WARNING_LINES

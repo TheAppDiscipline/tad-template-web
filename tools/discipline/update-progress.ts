@@ -10,6 +10,7 @@ import {
   collectBullets, isNone, meaningfulItems, sectionItems, type GateState,
 } from './lib/completion-packet.js';
 import { compareSliceIds, findSliceHeadings, isSliceConsumed, markSliceConsumed, normalizeSliceId, resolveConsumptionTarget, resolvePacketIdentity } from './lib/slice-identity.js';
+import { buildProgressLogBody } from './lib/progress-log.js';
 
 const args = minimist(process.argv.slice(2));
 const projectRoot = resolveProjectRoot(args['project-dir']);
@@ -93,7 +94,7 @@ export async function updateProgress(root: string, completionPacketPath?: string
 
   // The log block is keyed on a date-independent fingerprint (slice name + body), so reprocessing
   // the same packet on a later day never stacks a duplicate; a changed body inserts a fresh block.
-  const logBody = buildLogBody(outcome, gatesPassed, scopeDelivered, nextRec);
+  const logBody = buildProgressLogBody({ sliceId: sliceId!, outcome, gates: gatesPassed, scope: scopeDelivered, next: nextRec });
   if (!progress.includes(`— ${sliceName}\n${logBody}`)) {
     progress = insertLog(progress, `### ${date} — ${sliceName}\n${logBody}`);
   }
@@ -246,15 +247,6 @@ function gateLabel(gate: { state: GateState; raw: string }): string {
   if (gate.state === 'passed') return 'yes';
   if (gate.state === 'failed') return `no (${firstLine(gate.raw).slice(0, 60)})`;
   return `unverified (${firstLine(gate.raw).slice(0, 60)})`;
-}
-
-// The body of a log entry, derived only from the packet (no date), so it doubles as a stable
-// idempotency fingerprint for reprocessing the same packet on a later day.
-function buildLogBody(outcome: string, gates: string, scope: string | null, next: string | null): string {
-  const parts = [`- **Status:** ${outcome}`, `- **Gates:** ${gates}`];
-  if (scope) parts.push(`- **Scope:** ${scope}`);
-  if (next) parts.push(`- **Next:** ${next}`);
-  return parts.join('\n');
 }
 
 // Insert the newest log block right after the "---" separator. Idempotent: re-running the same

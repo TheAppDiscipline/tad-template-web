@@ -265,7 +265,10 @@ Required sections: `Goal`, `Scope`, `Contracts`, `Provider Impact`, `AI Impact`,
 
 **Estimate feeds measured scope.** Step 4 declares `MAX_CHANGED_LINES: <positive integer>` for all
 four categories and a `BASIS:` from prior slices with overlapping affected surfaces (or an explicit
-file/risk rationale when no comparable history exists).
+file/risk rationale when no comparable history exists). Both values are structured into the signed
+metric record. Step 4 assembly verifies every JSONL signature before including history and writes no
+handoff when the log is invalid; `discipline metrics` likewise refuses an invalid v2 packet rather
+than signing missing surfaces.
 After implementation, `discipline metrics --slice <id> --base <ref>` compares that maximum with
 `git diff --numstat`, separates production, tests, fixtures/config and documentation, and appends
 a signed record to `.discipline/metrics/slices.jsonl`. Above the maximum, the packet must declare

@@ -9,6 +9,7 @@ import { copyToClipboard } from './lib/clipboard.js';
 import { STEP_ASSEMBLY_MAP, VALID_STEPS } from './lib/artifact-flow.js';
 import { locateSlicePacket, normalizeSliceId, packetStatus, slicePasteReadyFileName } from './lib/slice-identity.js';
 import { readStep5Packet } from './lib/step5-schema.js';
+import { METRICS_FILE, readMetricRecords } from './lib/metrics.js';
 
 const args = minimist(process.argv.slice(2));
 const projectRoot = resolveProjectRoot(args['project-dir']);
@@ -40,6 +41,14 @@ export async function assemblePasteReady(root: string, stepId: string, sliceId?:
   if (!config) throw new Error(`Step "${stepId}" is not valid. Valid steps: ${VALID_STEPS.join(', ')}`);
   if (sliceId !== undefined && stepId !== '5') {
     throw new Error(`--slice only applies to Step 5 (got --step ${stepId}). Every other step has one handoff, not one per slice.`);
+  }
+
+  // Step 4 consumes metric history as evidence, not as arbitrary context text. Validate every
+  // signature before any output directory or handoff is written; a blocker in state-view is too
+  // late when the same corrupted bytes have already been handed to the planning model.
+  const metricsContext = METRICS_FILE.replace(/\\/g, '/');
+  if (config.includeProjectFiles?.some((file) => file.replace(/\\/g, '/') === metricsContext)) {
+    readMetricRecords(root);
   }
 
   const packetsDir = path.join(root, '.discipline', 'packets');

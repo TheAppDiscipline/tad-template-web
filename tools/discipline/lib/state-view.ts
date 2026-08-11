@@ -15,6 +15,7 @@ import {
 } from './slice-identity.js';
 import { declaredSurfaces, readStep5Packet } from './step5-schema.js';
 import { meaningfulItems, sectionItems } from './completion-packet.js';
+import { progressRecordsClosure } from './progress-log.js';
 
 export const STATE_VIEW_SCHEMA = 'discipline.state_view.v1';
 export const STATE_VIEW_FILE = path.join('.discipline', 'views', 'current-state.md');
@@ -83,24 +84,6 @@ function progressBlockers(content: string | null): string[] {
     return openErrors.length ? openErrors : ['progress.md points to Open Errors, but that section has no blocker details.'];
   }
   return [value];
-}
-
-/** True only when update-progress recorded a terminal green log entry for this exact slice. */
-function progressRecordsClosure(content: string | null, sliceId: string): boolean {
-  if (content === null) return false;
-  const headings = [...content.matchAll(/^###\s+\d{4}-\d{2}-\d{2}\s+[—-]\s+(.+?)\s*$/gm)];
-  for (let index = 0; index < headings.length; index++) {
-    const label = headings[index][1];
-    const idMatch = label.match(/^(?:slice\s+)?([A-Za-z][A-Za-z0-9._-]*|\d[A-Za-z0-9._-]*)(?:\s|$)/i);
-    if (!idMatch || normalizeSliceId(idMatch[1]) !== normalizeSliceId(sliceId)) continue;
-    const start = (headings[index].index ?? 0) + headings[index][0].length;
-    const end = index + 1 < headings.length ? headings[index + 1].index ?? content.length : content.length;
-    const block = content.slice(start, end);
-    const status = block.match(/^\s*-\s*\*\*Status:\*\*\s*(\S+)/im)?.[1]?.toLowerCase() ?? null;
-    const gates = block.match(/^\s*-\s*\*\*Gates:\*\*\s*(\S+)/im)?.[1]?.toLowerCase() ?? null;
-    if (['done', 'shipped'].includes(status ?? '') && gates === 'yes') return true;
-  }
-  return false;
 }
 
 function latestMetricBySlice(records: SliceMetricRecord[]): Map<string, SliceMetricRecord> {
