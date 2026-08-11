@@ -41,14 +41,21 @@ export const PROGRESS_ANCHORS = [
   '## Deploy Notes',
 ] as const;
 
+export const TASK_PLAN_ARCHIVE_ANCHORS = ['## Archived Slices'] as const;
+export const FINDINGS_ARCHIVE_ANCHORS = ['## Archived Findings'] as const;
+
 export const PATCH_APPLICATION_ORDER = [
   'discipline.md',
   'task_plan.md',
   'findings.md',
+  'task_plan_archive.md',
+  'findings_archive.md',
 ] as const;
 
 // Whitelist of files that patches can target
-export const ALLOWED_PATCH_TARGETS = new Set(['discipline.md', 'task_plan.md', 'findings.md', 'progress.md']);
+export const ALLOWED_PATCH_TARGETS = new Set([
+  'discipline.md', 'task_plan.md', 'findings.md', 'progress.md', 'task_plan_archive.md', 'findings_archive.md',
+]);
 
 /**
  * Normalize line endings to LF. Critical on Windows where files have CRLF.

@@ -55,6 +55,8 @@ npm run discipline:status     # show pipeline dashboard
 npm run discipline:validate   # check pipeline integrity and packet completeness
 npm run discipline:migrate-packets  # legacy Step 5 packets -> the v2 contract (dry run; --write applies it)
 npm run discipline:gate:changed     # run only the gates the change needs (see Hybrid Gates); npm run gate is unchanged
+npm run discipline:metrics -- --slice <id> --base <ref>  # append measured slice size by category
+npm run discipline:state-view       # regenerate compact derived state; add --json for data
 npm run discipline:watch      # auto-run the plumbing on new packets
 ```
 
@@ -260,6 +262,13 @@ Required sections: `Goal`, `Scope`, `Contracts`, `Provider Impact`, `AI Impact`,
   the emphasis and the code ticks come off before any rule looks at the value. A contract you can
   satisfy by changing a bullet character is not a contract.
 
+**Estimate feeds measured scope.** Step 4 declares `MAX_CHANGED_LINES: <positive integer>`.
+After implementation, `discipline metrics --slice <id> --base <ref>` compares that maximum with
+`git diff --numstat`, separates production, tests, fixtures/config and documentation, and appends
+a signed record to `.discipline/metrics/slices.jsonl`. Above the maximum, the packet must declare
+`SPLIT_DECISION: split|exception-approved`. A second record for the same slice is refused unless
+the reviewed Estimate explicitly says `DUPLICATE_METRICS: allowed`.
+
 **Migrating existing packets** is a decision the operator takes between slices, with the pipeline idle:
 
 ```bash
@@ -352,6 +361,23 @@ answer ends the run at **exit 5 (incomplete)**, with the patches applied and the
 Running everything instead would look safer and is not: the comparison between what the packet
 declared and what the diff touched is the guarantee the run closes its slice on, and a full gate
 cannot make it. Restore the map or the repository, then re-run.
+
+## Metrics, document growth, and compact state
+
+`task_plan.md` keeps summary, order, dependencies and status; detailed slice specification lives
+in its suffixed Step 5 packet. Validation warns when `task_plan.md` or `findings.md` exceeds 250 KB
+or 2,000 lines, with a high warning above 500 KB. `task_plan_archive.md` and
+`findings_archive.md` hold reviewed history. The tooling never moves human prose automatically:
+archive changes arrive as ordinary reviewable patch blocks.
+
+`discipline state-view` derives `.discipline/views/current-state.md` from packets, the plan,
+metrics, the gate report and consumption state. It shows ready, in-progress and consumed slices,
+blockers, required gates, latest measurements and document sizes. The view is gitignored,
+contains no decisions, and identical inputs produce identical bytes. `--json` returns the same
+state as structured data. `discipline status` regenerates and links the view and prints sizes.
+
+Step 4 handoffs include `.discipline/metrics/slices.jsonl`. Compare a proposed slice with prior
+records that share affected surfaces; do not copy an estimate from an unrelated surface.
 
 ## Anchor Rules
 

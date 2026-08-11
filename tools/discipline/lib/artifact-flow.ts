@@ -1,6 +1,8 @@
 import type { StepAssemblyConfig, StepId } from './types.js';
 
-const STEP_4_CONTEXT_FILES = ['discipline.md', 'task_plan.md', 'findings.md', 'progress.md'];
+const STEP_4_CONTEXT_FILES = [
+  'discipline.md', 'task_plan.md', 'findings.md', 'progress.md', '.discipline/metrics/slices.jsonl',
+];
 
 export const STEP_ASSEMBLY_MAP: Record<StepId, StepAssemblyConfig> = {
   '1': {
@@ -34,6 +36,7 @@ export const STEP_ASSEMBLY_MAP: Record<StepId, StepAssemblyConfig> = {
     requiredPackets: ['STEP_4_EXECUTION_PACKET.md'],
     optionalPackets: ['UI_HANDOFF_PACKET.md', 'AI_IMPLEMENTATION_PACKET.md'],
     outputFile: 'step-4-input.md',
+    includeProjectFiles: STEP_4_CONTEXT_FILES,
   },
   '4-reentry': {
     step: '4-reentry',

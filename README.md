@@ -98,6 +98,8 @@ These scripts automate the mechanical operations between Discipline Loop pipelin
 
 ```bash
 npm run discipline:status     # Dashboard: where you are and what comes next
+npm run discipline:metrics -- --slice S1 --base main  # Record measured scope by category
+npm run discipline:state-view # Regenerate compact derived state (-- --json for structured output)
 npm run discipline:patch      # Apply pending patch blocks to discipline.md/task_plan.md/findings.md/progress.md
 npm run discipline:assemble   # Assemble the paste-ready file for the next step
 npm run discipline:progress   # Update progress.md from SLICE_COMPLETION_PACKET

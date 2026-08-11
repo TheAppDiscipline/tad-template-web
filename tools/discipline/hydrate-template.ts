@@ -22,7 +22,7 @@ const push = args.push === 'true' ? 'true' : 'false';
 const hosting = args.hosting || 'Vercel';
 const force = args.force === true;
 
-for (const dir of ['.discipline/packets', '.discipline/patches/pending', '.discipline/patches/applied', '.discipline/paste-ready', '.discipline/prompts', '.discipline/backups']) {
+for (const dir of ['.discipline/packets', '.discipline/patches/pending', '.discipline/patches/applied', '.discipline/paste-ready', '.discipline/prompts', '.discipline/backups', '.discipline/metrics', '.discipline/views']) {
   const full = path.join(projectDir, dir);
   if (!fs.existsSync(full)) { fs.mkdirSync(full, { recursive: true }); disciplineInfo(`Created: ${dir}/`); }
 }
@@ -138,6 +138,20 @@ writeIfNew('progress.md', `# progress.md — Current Status + Logs
 - N/A
 
 ---
+`);
+writeIfNew('task_plan_archive.md', `# task_plan_archive.md — Reviewed Slice History
+
+> Human-authored prose is moved here only through reviewable Discipline patch blocks.
+
+## Archived Slices
+- (none)
+`);
+writeIfNew('findings_archive.md', `# findings_archive.md — Reviewed Findings History
+
+> Human-authored prose is moved here only through reviewable Discipline patch blocks.
+
+## Archived Findings
+- (none)
 `);
 writeIfNew('.discipline/run-log.md', `# Run Log
 

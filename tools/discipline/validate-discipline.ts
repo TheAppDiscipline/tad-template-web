@@ -4,13 +4,18 @@ import minimist from 'minimist';
 import type { ValidationIssue } from './lib/types.js';
 import { disciplineInfo } from './lib/types.js';
 import { resolveProjectRoot, readDisciplineConfig } from './lib/discipline-config.js';
-import { DISCIPLINE_MD_ANCHORS, TASK_PLAN_ANCHORS, FINDINGS_ANCHORS, PROGRESS_ANCHORS } from './lib/anchors.js';
+import {
+  DISCIPLINE_MD_ANCHORS, TASK_PLAN_ANCHORS, FINDINGS_ANCHORS, PROGRESS_ANCHORS,
+  TASK_PLAN_ARCHIVE_ANCHORS, FINDINGS_ARCHIVE_ANCHORS,
+} from './lib/anchors.js';
 import { ALL_PACKET_NAMES } from './lib/artifact-flow.js';
 import { parsePacketFile } from './lib/parse-packet.js';
 import { parsePacketMeta } from './lib/packet-meta.js';
 import { findSliceHeadings, isActiveSlicePacketName, parseReadySlicesTable, resolvePacketIdentity, resolveSlice, slicePacketFileName, type SliceHeading } from './lib/slice-identity.js';
 import { readStep5Packet } from './lib/step5-schema.js';
 import { validateScorecard, type ScorecardMode } from './validate-scorecard.js';
+import { formatBytes, inspectDisciplineDocuments } from './lib/document-health.js';
+import { STATE_VIEW_FILE, writeStateView } from './lib/state-view.js';
 
 const args = minimist(process.argv.slice(2));
 const projectRoot = resolveProjectRoot(args['project-dir']);
@@ -61,6 +66,8 @@ export function validateDiscipline(root: string): ValidationIssue[] {
   checkAnchors(root, 'task_plan.md', [...TASK_PLAN_ANCHORS], issues);
   checkAnchors(root, 'findings.md', [...FINDINGS_ANCHORS], issues);
   checkAnchors(root, 'progress.md', [...PROGRESS_ANCHORS], issues);
+  checkOptionalArchive(root, 'task_plan_archive.md', [...TASK_PLAN_ARCHIVE_ANCHORS], issues);
+  checkOptionalArchive(root, 'findings_archive.md', [...FINDINGS_ARCHIVE_ANCHORS], issues);
 
   for (const dir of ['.discipline/packets', '.discipline/patches/pending', '.discipline/patches/applied', '.discipline/paste-ready']) {
     if (!fs.existsSync(path.join(root, dir))) {
@@ -72,8 +79,37 @@ export function validateDiscipline(root: string): ValidationIssue[] {
   checkPacketFrontmatter(root, issues);
   checkSliceIdentity(root, issues);
   checkProgressLength(root, issues);
+  checkDocumentGrowth(root, issues);
   checkProfileScorecard(root, issues);
   return issues;
+}
+
+function checkOptionalArchive(root: string, fileName: string, expected: string[], issues: ValidationIssue[]) {
+  const full = path.join(root, fileName);
+  if (!fs.existsSync(full)) {
+    issues.push({
+      severity: 'warning',
+      file: fileName,
+      message: `${fileName} is missing; run npm run discipline:hydrate to add the reviewable archive scaffold.`,
+    });
+    return;
+  }
+  checkAnchors(root, fileName, expected, issues);
+}
+
+function checkDocumentGrowth(root: string, issues: ValidationIssue[]) {
+  for (const document of inspectDisciplineDocuments(root).filter((item) => item.file === 'task_plan.md' || item.file === 'findings.md')) {
+    if (!document.warning) continue;
+    const high = document.warning === 'high' ? '[HIGH] ' : '';
+    issues.push({
+      severity: 'warning',
+      file: document.file,
+      message: `${high}${document.file} has ${formatBytes(document.bytes)} and ${document.lines} lines; archive reviewed human prose through patch blocks.`,
+      detail: document.warning === 'high'
+        ? 'Above 500 KB. Keep the current document compact and move history to its archive.'
+        : 'Warning threshold: 250 KB or 2,000 lines.',
+    });
+  }
 }
 
 /**
@@ -405,6 +441,17 @@ export function showStatus(root: string): void {
   const appliedDir = path.join(root, '.discipline', 'patches', 'applied');
   console.log(`\nPending patches: ${fs.existsSync(pendingDir) ? fs.readdirSync(pendingDir).filter(fileName => fileName.endsWith('.md')).length : 0}`);
   console.log(`Applied patches: ${fs.existsSync(appliedDir) ? fs.readdirSync(appliedDir).filter(fileName => fileName.endsWith('.md')).length : 0}`);
+
+  console.log('\nDocument sizes:');
+  for (const document of inspectDisciplineDocuments(root)) {
+    console.log(`  ${document.exists ? '[x]' : '[ ]'} ${document.file}: ${formatBytes(document.bytes)}, ${document.lines} lines${document.warning ? ` (${document.warning === 'high' ? 'HIGH ' : ''}warning)` : ''}`);
+  }
+  try {
+    writeStateView(root);
+    console.log(`\nCurrent derived view: ${STATE_VIEW_FILE.replace(/\\/g, '/')}`);
+  } catch (err) {
+    console.log(`\nCurrent derived view unavailable: ${(err as Error).message}`);
+  }
 
   const progressPath = path.join(root, 'progress.md');
   if (fs.existsSync(progressPath)) {

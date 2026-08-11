@@ -47,6 +47,8 @@ const COMMANDS: Record<string, CommandSpec> = {
   validate: { script: 'discipline:validate' },
   doctor: { script: 'discipline:doctor' },
   status: { script: 'discipline:status' },
+  metrics: { script: 'discipline:metrics' },
+  'state-view': { script: 'discipline:state-view' },
   patch: { script: 'discipline:patch' },
   assemble: { script: 'discipline:assemble' },
   'step4-origin': { script: 'discipline:step4-origin' },
@@ -82,6 +84,8 @@ function printHelp(): void {
       '  validate         Validates pipeline integrity',
       '  doctor           Project health diagnostics',
       '  status           Pipeline dashboard',
+      '  metrics          Record measured slice size: metrics --slice <id> --base <ref>',
+      '  state-view       Regenerate .discipline/views/current-state.md; add --json for structured output',
       '  gate --json      Runs the gate and writes .discipline/gate-report.json (machine-readable)',
       '  gate --changed [--base <ref>] [--slice <id>]',
       '                   Runs only the gates the change needs, from .discipline/gates.json. Refuses',
@@ -224,7 +228,10 @@ if (cmd === 'gate' && passthrough.includes('--json')) {
 
 const spec = COMMANDS[cmd]
 const forwardedArgs = [...(spec.prependArgs ?? []), ...passthrough]
-const npmArgs = ['run', spec.script, ...(forwardedArgs.length ? ['--', ...forwardedArgs] : [])]
+// Machine-readable state must stay machine-readable through this dispatcher. npm normally prints
+// its own script banner before stdout, which makes `discipline state-view --json` invalid JSON.
+const silent = cmd === 'state-view' && passthrough.includes('--json')
+const npmArgs = ['run', ...(silent ? ['--silent'] : []), spec.script, ...(forwardedArgs.length ? ['--', ...forwardedArgs] : [])]
 const result = spawnSync('npm', npmArgs, { stdio: 'inherit', shell: true })
 
 if (result.status === 0 && spec.note) {
