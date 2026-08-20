@@ -90,7 +90,7 @@ function loadFixtureActual(feature, caseId, inlineActual) {
 }
 
 // Transient provider errors (e.g. Gemini 503 UNAVAILABLE "high demand") are
-// server-side capacity blips, not contract failures — retrying the same request
+// server-side capacity blips, not contract failures - retrying the same request
 // usually succeeds. Retry those a few times with linear backoff so the live gate
 // does not flake on them. Non-transient errors (schema, auth, quota 429) throw
 // immediately so they surface as real failures.
@@ -135,7 +135,7 @@ async function runFeatureEval({ feature, mode, providerName, modelOverride, maxC
     const provider = mode === 'live' ? await getProvider(providerName) : null
 
     // In live mode, providers with native structured output receive a MINIMAL,
-    // provider-shaped schema — never the canonical JSON Schema 2020-12, which
+    // provider-shaped schema - never the canonical JSON Schema 2020-12, which
     // Gemini rejects with a 400 (Unknown name "$schema"). The canonical `schema`
     // still enforces validation via AJV below. See tools/LLM_TOOLS_README.md §8.
     let responseSchema = schema
@@ -144,7 +144,7 @@ async function runFeatureEval({ feature, mode, providerName, modelOverride, maxC
         responseSchema = resolved.schema
         if (resolved.source === 'canonical') {
             const providerLabel = normalizeProviderName(providerName) || '<provider>'
-            console.warn(`[WARN] ${feature}: no minimal provider schema found (looked for prompts/${feature}/schema.${providerLabel}.json then schema.aistudio.json). Passing the canonical schema.json as responseSchema — some providers accept it, but Gemini returns 400 for $schema/$defs/additionalProperties/minimum. Add prompts/${feature}/schema.${providerLabel}.json (OpenAI-shaped: additionalProperties:false + all fields required) or schema.aistudio.json (Gemini-shaped) to silence this.`)
+            console.warn(`[WARN] ${feature}: no minimal provider schema found (looked for prompts/${feature}/schema.${providerLabel}.json then schema.aistudio.json). Passing the canonical schema.json as responseSchema - some providers accept it, but Gemini returns 400 for $schema/$defs/additionalProperties/minimum. Add prompts/${feature}/schema.${providerLabel}.json (OpenAI-shaped: additionalProperties:false + all fields required) or schema.aistudio.json (Gemini-shaped) to silence this.`)
         } else {
             console.log(`[INFO] ${feature}: using ${resolved.source} response schema from ${resolved.path}; canonical schema.json still validates the response via AJV.`)
         }

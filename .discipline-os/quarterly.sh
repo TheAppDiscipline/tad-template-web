@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# .discipline-os/quarterly.sh — Discipline Loop quarterly maintenance (NN 17, NN 24, Gate E readiness)
+# .discipline-os/quarterly.sh - Discipline Loop quarterly maintenance (NN 17, NN 24, Gate E readiness)
 set -e
 
-echo "Discipline Loop quarterly maintenance — $(date +%Y-%m-%d)"
+echo "Discipline Loop quarterly maintenance - $(date +%Y-%m-%d)"
 echo ""
 echo "Timebox: 1 hour total. Beyond that, defer to a dedicated sprint."
 echo ""
 
 echo "=== 1/4 Full security review ==="
 echo "1a. Run 'Agent(discipline-security-reviewer)' on main branch. Save the JSON report to findings.md §Security."
-echo "1b. Run 'npx gitleaks detect --source . --redact' (no staged flag — full history scan)."
+echo "1b. Run 'npx gitleaks detect --source . --redact' (no staged flag - full history scan)."
 echo "1c. Review dependencies with known vulnerabilities: 'npm audit --production --json | jq .vulnerabilities'."
 echo ""
 
@@ -38,4 +38,4 @@ echo "  - Walk the 7 steps (Contain -> Assess -> Document -> Report -> Notify ->
 echo "  - Note gaps (missing contact, unclear comm template, stale IR plan)."
 echo "  - Journal in findings.md §Security/drills."
 echo ""
-echo "If the drill surfaces gaps, fix them this week — the next real breach will not wait."
+echo "If the drill surfaces gaps, fix them this week - the next real breach will not wait."

@@ -75,14 +75,14 @@ DEPLOY_READINESS_PACKET is missing. Complete the slices in Step 5 first.
 ```
 
 **Project context (always read):**
-3. `discipline.md` — extract: LANE, PROFILE, HOSTING, AUTH_MODE, BACKEND_PROVIDER, AI_FEATURES
+3. `discipline.md` - extract: LANE, PROFILE, HOSTING, AUTH_MODE, BACKEND_PROVIDER, AI_FEATURES
 4. `task_plan.md`
 5. `findings.md`
 6. `progress.md`
 
 **Optional (read if they exist):**
-7. `.discipline/packets/STEP_4_EXECUTION_PACKET.md` — to verify expected flows
-8. `.discipline/packets/UI_HANDOFF_PACKET.md` — for visual verification
+7. `.discipline/packets/STEP_4_EXECUTION_PACKET.md` - to verify expected flows
+8. `.discipline/packets/UI_HANDOFF_PACKET.md` - for visual verification
 
 ### Phase 1: Pre-deploy
 

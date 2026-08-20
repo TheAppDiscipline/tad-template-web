@@ -1,10 +1,10 @@
 /**
- * tests/rls/cross-space.mjs — RLS cross-user isolation test (SOP RLS §10).
+ * tests/rls/cross-space.mjs - RLS cross-user isolation test (SOP RLS §10).
  *
  * Proves RLS is *working*, not just *enabled*: user B must NOT read or write user
  * A's rows. Runs against a REAL Supabase project (local `supabase start` or a cloud
  * test project) using the seed `notifications` table. The service-role key is used
- * ONLY here, in the test setup — never in client code.
+ * ONLY here, in the test setup - never in client code.
  *
  * Implements the canonical `cross-space.spec.ts` pattern from the RLS SOP §10.
  * Plain Node ESM (no test framework / no extra deps) so it stays out of the gate's
@@ -26,7 +26,7 @@ const ANON_KEY = process.env.SUPABASE_ANON_KEY
 const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY
 
 function skip(reason) {
-  console.log(`\x1b[33m[SKIP]\x1b[0m test:rls — ${reason}`)
+  console.log(`\x1b[33m[SKIP]\x1b[0m test:rls - ${reason}`)
   process.exit(0)
 }
 

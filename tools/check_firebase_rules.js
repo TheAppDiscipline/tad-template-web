@@ -1,10 +1,10 @@
 /**
- * Discipline Loop Security Gate — Firebase Security Rules Authorization
+ * Discipline Loop Security Gate - Firebase Security Rules Authorization
  *
  * The Firebase lane had no authorization gate (GAP11/F2): `check_rls.js` SKIPs when
  * BACKEND_PROVIDER is not Supabase, and Firestore/Storage rules were never linted.
  * A rule like `allow read: if request.auth != null;` lets ANY signed-in user read
- * every document — the Firebase equivalent of `USING (auth.uid() IS NOT NULL)`.
+ * every document - the Firebase equivalent of `USING (auth.uid() IS NOT NULL)`.
  *
  * This gate FAILS when an `allow` rule is granted on pure authentication presence
  * (request.auth != null / a signed-in helper) with no ownership/membership scope.
@@ -59,7 +59,7 @@ const PURE_AUTH_LITERALS = new Set([
 
 // A function BODY is an ownership signal only if it inspects the document/owner:
 // reads resource data, does a document lookup, or compares request.auth.uid to a
-// field. A trivial helper (`return true`) is NOT ownership — that was the bypass.
+// field. A trivial helper (`return true`) is NOT ownership - that was the bypass.
 function bodyIsOwnership(body) {
   return /resource\.data/i.test(body)
     || /\b(?:exists|get|getAfter)\s*\(/i.test(body)
@@ -67,8 +67,8 @@ function bodyIsOwnership(body) {
 }
 
 // Collect user-defined functions, classified by what their body actually does:
-//   authOnly   — body is just an auth-presence check (signedIn() -> request.auth != null)
-//   ownership  — body inspects the document/owner (isMember() -> exists(...))
+//   authOnly - body is just an auth-presence check (signedIn() -> request.auth != null)
+//   ownership - body inspects the document/owner (isMember() -> exists(...))
 // Helpers that are neither (e.g. `alwaysTrue() { return true; }`) count as NEITHER,
 // so they cannot launder a pure-auth rule into looking ownership-scoped.
 function collectFunctions(content) {
@@ -97,7 +97,7 @@ function mentionsAuth(condition, authOnlyFns) {
   return /request\.auth\b/i.test(condition) || callsAny(condition, authOnlyFns);
 }
 
-// "Ownership signal": the condition actually checks the document/owner — it reads
+// "Ownership signal": the condition actually checks the document/owner - it reads
 // resource data, does a document lookup, or calls a function whose body inspects
 // ownership (a trivial/unknown helper does NOT count).
 function hasOwnershipSignal(condition, ownershipFns) {
@@ -108,7 +108,7 @@ function hasOwnershipSignal(condition, ownershipFns) {
 
 // Unsafe when the rule grants on authentication presence with NO ownership signal.
 // Catches `request.auth != null`, `request.auth != null && true`, `signedIn()`,
-// `request.auth.uid != null`, etc. — not just an exact literal match.
+// `request.auth.uid != null`, etc. - not just an exact literal match.
 function isAuthOnly(condition, fns) {
   return mentionsAuth(condition, fns.authOnly) && !hasOwnershipSignal(condition, fns.ownership);
 }

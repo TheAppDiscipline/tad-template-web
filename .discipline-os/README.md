@@ -1,4 +1,4 @@
-# .discipline-os/ — Maintenance Automation (Discipline Loop)
+# .discipline-os/ - Maintenance Automation (Discipline Loop)
 
 Scripts to keep solo-builder maintenance from becoming "intention without habit". The doctrine behind them lives in The App Discipline vault (sold separately).
 

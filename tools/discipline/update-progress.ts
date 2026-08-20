@@ -90,13 +90,13 @@ export async function updateProgress(root: string, completionPacketPath?: string
   progress = updateField(progress, 'Next:', nextRec || 'pending');
   progress = updateField(progress, 'Blockers:', openIssues.length ? 'see Open Errors' : 'none');
   if (openIssues.length) progress = mergeOpenErrors(progress, openIssues);
-  progress = shiftHistory(progress, sliceName, outcome, `${sliceName} — ${date} — ${outcome}`);
+  progress = shiftHistory(progress, sliceName, outcome, `${sliceName} - ${date} - ${outcome}`);
 
   // The log block is keyed on a date-independent fingerprint (slice name + body), so reprocessing
   // the same packet on a later day never stacks a duplicate; a changed body inserts a fresh block.
   const logBody = buildProgressLogBody({ sliceId: sliceId!, outcome, gates: gatesPassed, scope: scopeDelivered, next: nextRec });
-  if (!progress.includes(`— ${sliceName}\n${logBody}`)) {
-    progress = insertLog(progress, `### ${date} — ${sliceName}\n${logBody}`);
+  if (!progress.includes(` - ${sliceName}\n${logBody}`)) {
+    progress = insertLog(progress, `### ${date} - ${sliceName}\n${logBody}`);
   }
 
   fs.writeFileSync(progressPath, progress.replace(/\n/g, eol), 'utf-8');
@@ -312,8 +312,8 @@ function shiftHistory(content: string, sliceName: string, outcome: string, newEn
     else if (lines[i].trim() === '') continue;
     else break;
   }
-  if (entries[0] && entries[0].startsWith(`${sliceName} —`)) {
-    if (!entries[0].endsWith(`— ${outcome}`)) entries[0] = newEntry; // same slice, changed outcome
+  if (entries[0] && entries[0].startsWith(`${sliceName} - `)) {
+    if (!entries[0].endsWith(` - ${outcome}`)) entries[0] = newEntry; // same slice, changed outcome
   } else {
     entries.unshift(newEntry);
   }

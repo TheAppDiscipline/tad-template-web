@@ -27,10 +27,10 @@ build_output.txt
 *.sln
 *.sw?
 
-# Discipline Loop pipeline artifacts — versioned alongside code (packets = context handoff)
-# Do NOT ignore .discipline/ contents — they are project artifacts, not build output
+# Discipline Loop pipeline artifacts - versioned alongside code (packets = context handoff)
+# Do NOT ignore .discipline/ contents - they are project artifacts, not build output
 
-# Substrate runtime state — machine-local, not project artifacts (see AGENTS.md "Substrate")
+# Substrate runtime state - machine-local, not project artifacts (see AGENTS.md "Substrate")
 .discipline/locks/
 .discipline/ledger/
 .discipline/review/
@@ -45,6 +45,33 @@ build_output.txt
 !.env.example
 !.env.example.supabase
 !.env.example.firebase
+
+# Local credentials, signing material, source maps and recovery residue
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.der
+*.jks
+*.keystore
+*.p8
+*.mobileprovision
+id_rsa
+id_ed25519
+.npmrc
+credentials.json
+cookies.json
+auth.json
+*.map
+*.bak
+*.backup
+*.orig
+*.rej
+*.tmp
+*.temp
+*.dump
 
 # Local MCP credentials and per-user server configuration
 .mcp.json

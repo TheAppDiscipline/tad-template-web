@@ -96,7 +96,7 @@ function main() {
   console.log(`Average/active-day:         $${avgDaily.toFixed(2)}`);
   console.log(`Projected month end:        $${projected.toFixed(2)}`);
   console.log(`Budget:                     $${budget.toFixed(2)}`);
-  console.log(`Budget usage:               ${budgetPct.toFixed(0)}% — ${status}`);
+  console.log(`Budget usage:               ${budgetPct.toFixed(0)}% - ${status}`);
   console.log('');
   console.log(`(Day ${dayOfMonth}/${daysInMonth} of month. Override budget with DISCIPLINE_AI_BUDGET=<USD> env.)`);
 

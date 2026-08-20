@@ -1,7 +1,7 @@
-# progress.md — Current Status + Logs
+# progress.md - Current Status + Logs
 
 ## Current Status
-- Working on: N/A — template initialized
+- Working on: N/A - template initialized
 - Next: Fill discipline.md with project switches (Step 1)
 - Blockers: none
 

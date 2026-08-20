@@ -6,7 +6,7 @@ import { resolveProjectRoot } from './lib/discipline-config.js';
 import { disciplineError, disciplineInfo } from './lib/types.js';
 
 /**
- * Gate D/E — Scorecard-as-Code Validator
+ * Gate D/E - Scorecard-as-Code Validator
  *
  * Reads .discipline/scorecard.yaml and applies the validation rules documented
  * in the vault at 65a - Launch vs PROD + Scorecard as Code:
@@ -168,7 +168,7 @@ function evidenceFileExists(root: string, value: string): boolean {
   }
 }
 
-// A5: `evidence` must point to something verifiable — a URL, a PR/issue/commit
+// A5: `evidence` must point to something verifiable - a URL, a PR/issue/commit
 // reference, or a file that actually exists in the repo. An arbitrary non-empty
 // string ("done", "tested manually") no longer counts as evidence.
 function evidenceIsValid(item: ScorecardItem, root: string): boolean {
@@ -209,7 +209,7 @@ function evaluateItems(
       // If applies_when is true but status is not_applicable -> escape attempt.
       if (item.status === 'not_applicable') {
         errors.push(
-          `[${item.id}] ${item.name} — applies_when is true but status=not_applicable (escape attempt)`
+          `[${item.id}] ${item.name} - applies_when is true but status=not_applicable (escape attempt)`
         );
         continue;
       }
@@ -224,7 +224,7 @@ function evaluateItems(
     // Gate D would print "Passed: 0/10" and still exit 0.
     if (item.status === 'not_applicable') {
       const msg =
-        `[${item.id}] ${item.name} — not_applicable without applies_when (${severity}); ` +
+        `[${item.id}] ${item.name} - not_applicable without applies_when (${severity}); ` +
         `nothing declares when this item stops applying, so the claim is unverifiable. ` +
         `Either add an applies_when condition (syntax: applies_when: "BILLING == true"), ` +
         `or use done / not_done / deferred.`;
@@ -238,11 +238,11 @@ function evaluateItems(
     if (item.status === 'done') {
       passed += 1;
       if (!hasEvidence(item)) {
-        const msg = `[${item.id}] ${item.name} — done without evidence (${severity})`;
+        const msg = `[${item.id}] ${item.name} - done without evidence (${severity})`;
         if (severity === 'CRITICAL') errors.push(msg); else warnings.push(msg);
       } else if (!evidenceIsValid(item, root)) {
         // A5: present but unverifiable (not a URL / PR ref / existing file).
-        const msg = `[${item.id}] ${item.name} — done with unverifiable evidence (${severity}): "${item.evidence}". Use a URL, a PR/issue/commit reference, or an existing file path.`;
+        const msg = `[${item.id}] ${item.name} - done with unverifiable evidence (${severity}): "${item.evidence}". Use a URL, a PR/issue/commit reference, or an existing file path.`;
         if (severity === 'CRITICAL') errors.push(msg); else warnings.push(msg);
       }
       continue;
@@ -251,25 +251,25 @@ function evaluateItems(
     if (severity === 'CRITICAL') {
       if (item.status === 'not_done') {
         if (blockingFalseAllowed) {
-          warnings.push(`[${item.id}] ${item.name} — not_done (CRITICAL, blocking=false [audited])`);
+          warnings.push(`[${item.id}] ${item.name} - not_done (CRITICAL, blocking=false [audited])`);
         } else if (item.blocking === false) {
           errors.push(
-            `[${item.id}] ${item.name} — not_done (CRITICAL); blocking:false is NOT permitted for this item ` +
+            `[${item.id}] ${item.name} - not_done (CRITICAL); blocking:false is NOT permitted for this item ` +
             `(only ${[...BLOCKING_FALSE_ALLOWLIST].join(', ')} may defer). Complete it.`
           );
         } else {
-          errors.push(`[${item.id}] ${item.name} — not_done (CRITICAL)`);
+          errors.push(`[${item.id}] ${item.name} - not_done (CRITICAL)`);
         }
         continue;
       }
       if (item.status === 'deferred') {
         if (blockingFalseAllowed) {
           warnings.push(
-            `[${item.id}] ${item.name} — deferred (CRITICAL blocking=false [audited]); reason: ${item.deferred_reason ?? '(missing)'}`
+            `[${item.id}] ${item.name} - deferred (CRITICAL blocking=false [audited]); reason: ${item.deferred_reason ?? '(missing)'}`
           );
         } else {
           errors.push(
-            `[${item.id}] ${item.name} — CRITICAL cannot be deferred` +
+            `[${item.id}] ${item.name} - CRITICAL cannot be deferred` +
             (item.blocking === false
               ? ` (blocking:false is not permitted for this item; only ${[...BLOCKING_FALSE_ALLOWLIST].join(', ')} may defer).`
               : ` (blocking default=true). Use an audited blocking:false item, or complete it.`)
@@ -281,31 +281,31 @@ function evaluateItems(
 
     if (severity === 'RECOMMENDED') {
       if (item.status === 'not_done') {
-        warnings.push(`[${item.id}] ${item.name} — not_done (RECOMMENDED)`);
+        warnings.push(`[${item.id}] ${item.name} - not_done (RECOMMENDED)`);
         continue;
       }
       if (item.status === 'deferred') {
         if (!item.deferred_reason) {
-          errors.push(`[${item.id}] ${item.name} — deferred without deferred_reason`);
+          errors.push(`[${item.id}] ${item.name} - deferred without deferred_reason`);
           continue;
         }
         if (!item.expires_on) {
-          errors.push(`[${item.id}] ${item.name} — deferred without expires_on`);
+          errors.push(`[${item.id}] ${item.name} - deferred without expires_on`);
           continue;
         }
         const exp = new Date(item.expires_on);
         if (isNaN(exp.getTime())) {
-          errors.push(`[${item.id}] ${item.name} — invalid expires_on: ${item.expires_on}`);
+          errors.push(`[${item.id}] ${item.name} - invalid expires_on: ${item.expires_on}`);
           continue;
         }
         if (exp < today) {
           errors.push(
-            `[${item.id}] ${item.name} — expires_on passed (${item.expires_on}). Re-evaluate or re-defer.`
+            `[${item.id}] ${item.name} - expires_on passed (${item.expires_on}). Re-evaluate or re-defer.`
           );
           continue;
         }
         warnings.push(
-          `[${item.id}] ${item.name} — deferred until ${item.expires_on}: ${item.deferred_reason}`
+          `[${item.id}] ${item.name} - deferred until ${item.expires_on}: ${item.deferred_reason}`
         );
       }
     }

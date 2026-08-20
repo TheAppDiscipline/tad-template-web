@@ -2,11 +2,35 @@
 
 Template repository for building web applications following the **Discipline Loop** methodology.
 
-**Part of The App Discipline.** This is the public, MIT-licensed template (see `LICENSE`). The complete Discipline Loop methodology and vault (full system, playbooks, prompts, and extended materials) are a separate product, sold separately at <https://theappdiscipline.gumroad.com/l/tad>, and are **not** included in this repository.
+**Part of The App Discipline.** This template is MIT-licensed (see `LICENSE`) and can be used on its own. The proprietary Discipline Loop vault is not covered by this repository's MIT license. If you received the paid bundle, the vault is the sibling folder `The App Discipline Vault/`; otherwise, verify the current offer and availability in the seller's checkout before relying on it.
 
 **Stack:** React 19 + Vite 8 + TypeScript (strict) + semantic design tokens
 
 **Features:** Modular Backend Factory (Supabase, Firebase, Local), PWA skeleton, quality gates, pipeline automation scripts, agent integration via `AGENTS.md` (canonical; read by Codex, Cursor, Copilot, and Claude Code via a `CLAUDE.md` stub).
+
+## Inicio rápido desde el bundle
+
+Usa esta ruta si recibiste `Templates/tad-template-web` dentro del bundle de The App Discipline:
+
+1. Copia esta carpeta completa a una carpeta de trabajo nueva. No trabajes dentro del bundle ni combines la copia con un proyecto anterior.
+2. Abre una terminal en la copia. El directorio correcto contiene `package.json`.
+3. Ejecuta, en orden:
+
+```bash
+npm install
+npm run discipline:hydrate -- --lane WEB --profile LITE --backend LOCAL_ONLY --auth NONE --sync NONE
+npm run discipline:status
+npm run gate
+npm run dev
+```
+
+En Windows PowerShell usa `npm.cmd` en lugar de `npm`. Si ves `npm.ps1 cannot be loaded`, repite el mismo comando con `npm.cmd`; no necesitas cambiar la política del sistema.
+
+**Resultado esperado:** hydrate informa `Project hydrated`, status termina en `Status: OK`, gate vuelve al prompt sin error y `dev` muestra una URL `Local:`. Abre esa URL y detén el servidor con `Ctrl+C` al terminar. `npm run gate` demuestra el gate local de Web; no demuestra navegador visual, deploy, cuenta, CI ni producción.
+
+**Si falla:** conserva el primer error rojo y el comando exacto. Corre `npm run discipline:doctor` (`npm.cmd run discipline:doctor` en PowerShell), corrige una causa a la vez y repite. Después de dos intentos sin información nueva, detente y registra el blocker en `progress.md`.
+
+Para volver otro día, lee `progress.md` y corre `npm run discipline:status`. `LITE` es local; `LAUNCH` requiere evidencia antes de abrir a terceros; `PROD` requiere operación comercial verificada. La IA no decide por ti alcance, costos, credenciales, legal/fiscal, cobros ni publicación.
 
 ## Getting Started
 

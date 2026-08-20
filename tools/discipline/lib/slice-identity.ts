@@ -24,7 +24,7 @@ import { completionGate, isTerminalOutcome, readOutcome } from './completion-pac
  * keeps `## 4) Ready Slices` from reading as slice 4; the `s?\d` rule below is what keeps
  * `### C1` / `### AC2` / `### R1` from reading as slices at all.
  */
-const SLICE_HEADING_RE = /^(#{2,4})[ \t]+(?:slice[ \t]+)?([A-Za-z][A-Za-z0-9._-]*|\d[A-Za-z0-9._-]*)[ \t]*(?:\[[^\]]*\])?[ \t]*(?:[-–—:][ \t]*.*)?$/gim;
+const SLICE_HEADING_RE = /^(#{2,4})[ \t]+(?:slice[ \t]+)?([A-Za-z][A-Za-z0-9._-]*|\d[A-Za-z0-9._-]*)[ \t]*(?:\[[^\]]*\])?[ \t]*(?:[-–\u2014:][ \t]*.*)?$/gim;
 
 /** A `## Slice <id> - <title>` heading found in task_plan.md. */
 export interface SliceHeading {
@@ -140,7 +140,7 @@ export function findSliceHeadings(taskPlan: string): SliceHeading[] {
       id,
       // The `[status]` marker belongs to the status reader, not to the title.
       title: (lines[i].slice(match[0].indexOf(match[2]) + match[2].length) || '')
-        .trim().replace(/^\[[^\]]*\]\s*/, '').replace(/^[-–—:]\s*/, ''),
+        .trim().replace(/^\[[^\]]*\]\s*/, '').replace(/^[-–\u2014:]\s*/, ''),
       line: i,
       level: match[1].length,
     });

@@ -1,9 +1,9 @@
 /**
- * Discipline Loop Security Gate — Dependency Audit (production deps)
+ * Discipline Loop Security Gate - Dependency Audit (production deps)
  *
  * Runs `npm audit --omit=dev --audit-level=high` and FAILS if any high/critical
  * advisory affects a *shipped* (production) dependency. Build-only devDependency
- * advisories are tracked separately (they never reach users) — see KNOWN-ISSUES.
+ * advisories are tracked separately (they never reach users) - see KNOWN-ISSUES.
  *
  * If the registry is unreachable (offline sandbox), it SKIPs rather than failing
  * the whole launch gate on a network hiccup; CI runs it with network.
@@ -44,7 +44,7 @@ console.log(`\x1b[31m[FAIL]\x1b[0m ${critical} critical + ${high} high advisory(
 const advisories = parsed?.vulnerabilities ?? {};
 for (const [name, info] of Object.entries(advisories)) {
   if (info?.severity === 'high' || info?.severity === 'critical') {
-    console.log(`  ${name} — ${info.severity}`);
+    console.log(`  ${name} - ${info.severity}`);
   }
 }
 console.log('Fix: `npm audit fix`, bump the offending dependency, or replace it before launch.');

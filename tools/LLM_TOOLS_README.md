@@ -1,4 +1,4 @@
-# LLM Tools (Discipline Loop) — Smoke Test + Evals
+# LLM Tools (Discipline Loop) - Smoke Test + Evals
 
 These scripts support the AI Studio Lane with:
 - **Smoke test** (Link Phase): verify provider/keys and JSON response
@@ -12,10 +12,10 @@ These scripts support the AI Studio Lane with:
 For a feature `<feature>`:
 
 - `prompts/<feature>/system.md`
-- `prompts/<feature>/schema.json` — canonical JSON Schema 2020-12 (validation boundary)
-- `prompts/<feature>/schema.<provider>.json` — **optional**, per-provider minimal
+- `prompts/<feature>/schema.json` - canonical JSON Schema 2020-12 (validation boundary)
+- `prompts/<feature>/schema.<provider>.json` - **optional**, per-provider minimal
   schema for live mode (e.g. `schema.openai.json`). Use for OpenAI/openai-compatible.
-- `prompts/<feature>/schema.aistudio.json` — **optional**, generic Gemini-shaped
+- `prompts/<feature>/schema.aistudio.json` - **optional**, generic Gemini-shaped
   minimal schema for live mode. See §8 for how the eval runner picks between them.
 - `evals/<feature>.jsonl`
 
@@ -160,7 +160,7 @@ If `AI_FEATURES=none`, the script skips without loading optional SDKs.
 
 ---
 
-## 5) Evals (goldens) — fixture mode (cheap)
+## 5) Evals (goldens) - fixture mode (cheap)
 
 No provider calls. Uses saved outputs in:
 
@@ -177,7 +177,7 @@ node tools/llm_eval.js --feature=extract_tasks --mode=fixture
 
 ---
 
-## 6) Evals (goldens) — live mode (calls provider)
+## 6) Evals (goldens) - live mode (calls provider)
 
 Uses `LLM_PROVIDER` and calls the real model. Validates:
 
@@ -239,24 +239,24 @@ If evals fail by schema repeatedly:
 
 ---
 
-## 8) Structured output: JSON Schema (AJV) vs OpenAPI subset (provider) — gotchas
+## 8) Structured output: JSON Schema (AJV) vs OpenAPI subset (provider) - gotchas
 
 Providers with native structured output (Gemini `responseSchema`, OpenAI
 `json_schema`, Grok, Mistral, ...) do **not** consume full JSON Schema. Each one
 accepts a restricted, OpenAPI-3.0-style subset. That forces **two representations
 of the same contract**, which this tooling already relies on:
 
-- **Canonical** — `prompts/<feature>/schema.json`, full JSON Schema 2020-12: the
+- **Canonical** - `prompts/<feature>/schema.json`, full JSON Schema 2020-12: the
   `ok/data/error` envelope, `$defs`/`$ref`, `additionalProperties`, and every
-  numeric/size constraint. This is the validation boundary — `tools/llm_eval.js`
+  numeric/size constraint. This is the validation boundary - `tools/llm_eval.js`
   validates each response against it with AJV, and any endpoint that persists the
   output should re-validate too. It needs the draft-2020-12 build of AJV:
   `import Ajv2020 from 'ajv/dist/2020.js'`. A plain `new Ajv()` cannot resolve the
   `.../2020-12/schema` meta-schema and throws.
-- **Provider** — a hand-minimized copy (e.g. `prompts/<feature>/schema.aistudio.json`
+- **Provider** - a hand-minimized copy (e.g. `prompts/<feature>/schema.aistudio.json`
   or `prompts/<feature>/schema.openai.json`) passed to the model as `responseSchema`.
   The adapter (`tools/llm_providers/payloads.js` → `buildGeminiJsonRequest`) forwards
-  `responseSchema` **verbatim, without sanitizing it** — that is deliberate: the
+  `responseSchema` **verbatim, without sanitizing it** - that is deliberate: the
   adapter transports the request shape, it does not rewrite schema content. So the
   **caller** owns which representation to pass, and must pass the minimal version,
   never the canonical one.
@@ -272,13 +272,13 @@ The eval runner is a caller, so it does the picking for you via
 the call. Only the canonical `schema.json` keeps validating the response with AJV
 afterwards. Resolution is by precedence:
 
-1. `prompts/<feature>/schema.<provider>.json` — provider-specific (e.g.
+1. `prompts/<feature>/schema.<provider>.json` - provider-specific (e.g.
    `schema.openai.json`). **This is the correct path for OpenAI/openai-compatible**,
    whose `json_schema` strict mode requires the OPPOSITE of Gemini:
    `additionalProperties: false` and every property listed in `required`.
-2. `prompts/<feature>/schema.aistudio.json` — generic Gemini-shaped minimal schema.
+2. `prompts/<feature>/schema.aistudio.json` - generic Gemini-shaped minimal schema.
    Safe **only** for Gemini and Gemini-shaped providers; it would fail OpenAI strict.
-3. Canonical `schema.json` — fallback, emitted with a clear `[WARN]`. Some providers
+3. Canonical `schema.json` - fallback, emitted with a clear `[WARN]`. Some providers
    accept it; Gemini returns `400 INVALID_ARGUMENT: Unknown name "$schema"`.
 
 **Do not reuse one minimal file across providers.** The Gemini shape (drop
@@ -293,10 +293,10 @@ both shapes derived from the same canonical `schema.json`.
 
 - `additionalProperties` → explicit error: `Unknown key: additionalProperties`.
 - type-arrays like `"type": ["object", "null"]` → use `"nullable": true` instead.
-- `$defs` / `$ref` / `allOf` / `if`/`then` — no composition or references; inline
+- `$defs` / `$ref` / `allOf` / `if`/`then` - no composition or references; inline
   everything.
 - `minimum` / `maximum` / `minItems` / `maxItems` → these fail with a **generic**
-  `An internal error has occurred` (in AI Studio), with no useful message — very
+  `An internal error has occurred` (in AI Studio), with no useful message - very
   hard to isolate. Drop them from the provider schema.
 
 In practice Gemini's accepted subset is essentially only `type`, `properties`,
@@ -317,7 +317,7 @@ The "Structured outputs" panel asks for an "OpenAPI schema object". Use the
   the official `@google/genai` SDK (the one `tools/llm_providers/gemini.js` uses):
   set `config.tools = [{ googleSearch: {} }]` together with `config.responseSchema`
   and `config.responseMimeType = 'application/json'`. The Vercel `@ai-sdk/google`
-  wrapper blocks this (it forces a second, tool-free call) — prefer the official
+  wrapper blocks this (it forces a second, tool-free call) - prefer the official
   SDK for grounded structured output.
 - In AI Studio you **cannot** enable Google Search + Google Maps + Structured
   outputs at the same time ("not compatible with the current active tools"); verify
@@ -325,7 +325,7 @@ The "Structured outputs" panel asks for an "OpenAPI schema object". Use the
 - **Grounding injects citations into string values.** Even when the prompt forbids
   it, grounded responses embed markers like `[[1](https://…vertexaisearch…)]`
   inside string fields (occasionally a bare non-URL artifact such as `[1.1.7]`).
-  This is grounding-system behavior, not prompt non-compliance — reinforcing the
+  This is grounding-system behavior, not prompt non-compliance - reinforcing the
   prompt does not stop it. Any consumer that persists grounded text **must** strip
   them (e.g. `/\s*\[\[?\d+\]?\((https?:\/\/[^)]+)\)\]?/g`) or read
   `candidates[].groundingMetadata` separately instead of trusting the inline text.
@@ -335,7 +335,7 @@ The "Structured outputs" panel asks for an "OpenAPI schema object". Use the
 The Gemini API free tier calls Flash models without a card, but **grounding
 (Search/Maps) returns `429` ("check your plan and billing") unless billing is
 enabled**. The consumer Gemini / Google AI Pro subscription ($20/mo) does **not**
-grant API access — it is a separate product. Any feature that uses grounding needs
+grant API access - it is a separate product. Any feature that uses grounding needs
 a billing-enabled API key.
 
 ---

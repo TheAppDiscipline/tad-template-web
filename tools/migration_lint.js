@@ -72,7 +72,7 @@ function extractParenClause(block, keywordRe) {
 
 // A predicate is ownership-scoped only if it compares auth.uid() to a REAL column
 // (directly `user_id = auth.uid()`, or inside a membership subquery). The other
-// side must be a column identifier — NOT auth.uid() again (`auth.uid() = auth.uid()`
+// side must be a column identifier - NOT auth.uid() again (`auth.uid() = auth.uid()`
 // is a tautology: true for every authenticated user), a function, or a literal.
 // Declared as a function (hoisted) because lintFile runs before this point.
 function isOwnershipScoped(expr) {
@@ -90,7 +90,7 @@ function isOwnershipScoped(expr) {
 // Collect SQL helper functions whose BODY actually scopes to ownership
 // (`<col> = auth.uid()`), e.g. a SECURITY DEFINER `is_space_member()` used to
 // break RLS recursion. A policy that calls one of these is ownership-scoped.
-// A trivial helper (`select true`) is NOT collected — it can't launder a policy.
+// A trivial helper (`select true`) is NOT collected - it can't launder a policy.
 function collectOwnershipFunctions(content) {
   const names = new Set();
   const fnRe = /create\s+(?:or\s+replace\s+)?function\s+(?:[a-z_][a-z0-9_]*\.)?([a-z_][a-z0-9_]*)\s*\([\s\S]*?\bas\s+\$([a-z0-9_]*)\$([\s\S]*?)\$\2\$/gi;
@@ -115,9 +115,9 @@ function permissiveReason(expr) {
   const e = expr.replace(/\s+/g, ' ').trim();
   if (/^\(*\s*true\s*\)*$/i.test(e)) return 'evaluates to true';
   if (/auth\.uid\(\)\s*=\s*auth\.uid\(\)/i.test(e)) return 'auth.uid() = auth.uid() is a tautology, not ownership';
-  if (/auth\.uid\(\)\s+is\s+not\s+null/i.test(e)) return 'auth.uid() IS NOT NULL — authenticated, not ownership';
-  if (/auth\.role\s*\(/i.test(e)) return 'auth.role()-based — any authenticated user, not ownership';
-  if (/auth\.jwt\s*\(/i.test(e)) return 'auth.jwt()-based — not row ownership';
+  if (/auth\.uid\(\)\s+is\s+not\s+null/i.test(e)) return 'auth.uid() IS NOT NULL - authenticated, not ownership';
+  if (/auth\.role\s*\(/i.test(e)) return 'auth.role()-based - any authenticated user, not ownership';
+  if (/auth\.jwt\s*\(/i.test(e)) return 'auth.jwt()-based - not row ownership';
   return 'no "<col> = auth.uid()" comparison with a real ownership column';
 }
 
@@ -208,8 +208,8 @@ function lintFile(filePath, content, directoryOwnershipFns = new Set()) {
   }
 
   // Check 6: RLS policies must scope rows to OWNERSHIP, not just authentication
-  // (C1). We require a positive ownership binding — `<col> = auth.uid()` (directly
-  // or inside a membership subquery) — in EACH present predicate clause, rather
+  // (C1). We require a positive ownership binding - `<col> = auth.uid()` (directly
+  // or inside a membership subquery) - in EACH present predicate clause, rather
   // than blacklisting specific literals. This catches the equivalent bypasses:
   // `USING (true)`, `((auth.uid() is not null))`, `auth.role() = 'authenticated'`,
   // `auth.jwt() ->> ...`, and role-only policies with no predicate at all.

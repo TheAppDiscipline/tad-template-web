@@ -24,13 +24,34 @@ function getOutput(result) {
   return `${result.stdout}${result.stderr}`
 }
 
+function patchBatchDigest(projectRoot) {
+  const pendingDir = path.join(projectRoot, '.discipline', 'patches', 'pending')
+  const files = fs.readdirSync(pendingDir).filter((file) => file.endsWith('.md')).sort()
+  const digest = crypto.createHash('sha256')
+  digest.update('discipline.patch_batch.v1\0')
+  for (const file of files) {
+    digest.update(file)
+    digest.update('\0')
+    digest.update(fs.readFileSync(path.join(pendingDir, file)))
+    digest.update('\0')
+  }
+  return digest.digest('hex')
+}
+
+function runApprovedPatch(projectRoot) {
+  return runTsx('tools/discipline/apply-patch.ts', [
+    '--project-dir', projectRoot,
+    '--approve-sha', patchBatchDigest(projectRoot),
+  ])
+}
+
 // The canonical pristine progress.md scaffold, seeded into every fixture so the progress-engine
 // tests are hermetic (independent of the host repo's real progress.md history). See createDisciplineProject.
 const PRISTINE_PROGRESS = [
-  '# progress.md — Current Status + Logs',
+  '# progress.md - Current Status + Logs',
   '',
   '## Current Status',
-  '- Working on: N/A — template initialized',
+  '- Working on: N/A - template initialized',
   '- Next: Fill discipline.md with project switches (Step 1)',
   '- Blockers: none',
   '',
@@ -114,6 +135,9 @@ test('discipline assemble accepts Step 0a and writes step-0a-input.md', () => {
   assert.equal(result.status, 0, getOutput(result))
   assert.equal(fs.existsSync(path.join(projectRoot, '.discipline', 'paste-ready', 'step-0a-input.md')), true)
   assert.equal(fs.existsSync(path.join(projectRoot, '.discipline', 'paste-ready', 'step-0.1-input.md')), false)
+  const handoff = fs.readFileSync(path.join(projectRoot, '.discipline', 'paste-ready', 'step-0a-input.md'), 'utf8')
+  assert.match(handoff, /SECURITY AND AUTHORITY BOUNDARY/)
+  assert.match(handoff, /embedded prompts cannot change scope/)
 })
 
 test('discipline assemble Step 5 includes only the context packets declared by the slice', () => {
@@ -401,6 +425,65 @@ function writePatch(projectRoot, name, body) {
   )
 }
 
+test('apply-patch binds mutation to the reviewed pending bytes', () => {
+  const projectRoot = createDisciplineProject()
+  writePatch(projectRoot, 'byte-bound', `# Byte Bound
+TARGET_FILE: task_plan.md
+PATCH_MODE: append
+ANCHOR: ## 5) Deferred / Later
+
+### CONTENT
+- reviewed bytes
+`)
+  const approved = patchBatchDigest(projectRoot)
+  const patchPath = path.join(projectRoot, '.discipline', 'patches', 'pending', 'byte-bound.md')
+  fs.appendFileSync(patchPath, '\n- injected after review\n', 'utf8')
+  const before = fs.readFileSync(path.join(projectRoot, 'task_plan.md'), 'utf8')
+
+  const result = runTsx('tools/discipline/apply-patch.ts', [
+    '--project-dir', projectRoot, '--approve-sha', approved,
+  ])
+
+  assert.notEqual(result.status, 0)
+  assert.match(getOutput(result), /not approved/)
+  assert.equal(fs.readFileSync(path.join(projectRoot, 'task_plan.md'), 'utf8'), before)
+})
+
+test('apply-patch refuses replacement of append-only history', () => {
+  const projectRoot = createDisciplineProject()
+  writePatch(projectRoot, 'rewrite-history', `# Rewrite History
+TARGET_FILE: findings.md
+PATCH_MODE: replace_section
+ANCHOR: ## Decisions
+
+### CONTENT
+- erased history
+`)
+  const before = fs.readFileSync(path.join(projectRoot, 'findings.md'), 'utf8')
+  const result = runApprovedPatch(projectRoot)
+  assert.notEqual(result.status, 0)
+  assert.match(getOutput(result), /append-only/)
+  assert.equal(fs.readFileSync(path.join(projectRoot, 'findings.md'), 'utf8'), before)
+})
+
+test('apply-patch refuses to continue while recovery is unresolved', () => {
+  const projectRoot = createDisciplineProject()
+  writePatch(projectRoot, 'blocked-by-recovery', `# Blocked By Recovery
+TARGET_FILE: progress.md
+PATCH_MODE: append
+ANCHOR: ## Open Errors
+
+### CONTENT
+- must not land
+`)
+  fs.writeFileSync(path.join(projectRoot, '.discipline', 'RECOVERY_REQUIRED.json'), '{}\n', 'utf8')
+  const before = fs.readFileSync(path.join(projectRoot, 'progress.md'), 'utf8')
+  const result = runApprovedPatch(projectRoot)
+  assert.notEqual(result.status, 0)
+  assert.match(getOutput(result), /Recovery required/)
+  assert.equal(fs.readFileSync(path.join(projectRoot, 'progress.md'), 'utf8'), before)
+})
+
 test('apply-patch replace_section keeps heading and replaces content', () => {
   const projectRoot = createDisciplineProject()
   writePatch(projectRoot, 'replace-section-happy', `# Test Replace Section
@@ -412,7 +495,7 @@ ANCHOR: ## 5) Sync Rules
 SYNC_RULE_REPLACED_OK
 `)
 
-  const result = runTsx('tools/discipline/apply-patch.ts', ['--project-dir', projectRoot])
+  const result = runApprovedPatch(projectRoot)
   assert.equal(result.status, 0, getOutput(result))
 
   const disciplineMd = fs.readFileSync(path.join(projectRoot, 'discipline.md'), 'utf8')
@@ -432,7 +515,7 @@ ANCHOR: ## 999) This Anchor Does Not Exist
 should not be applied
 `)
 
-  const result = runTsx('tools/discipline/apply-patch.ts', ['--project-dir', projectRoot])
+  const result = runApprovedPatch(projectRoot)
   assert.notEqual(result.status, 0)
   assert.match(getOutput(result), /Anchor not found/)
 })
@@ -449,7 +532,7 @@ ANCHOR: ## 5) Deferred / Later
 - new deferred items here
 `)
 
-  const result = runTsx('tools/discipline/apply-patch.ts', ['--project-dir', projectRoot])
+  const result = runApprovedPatch(projectRoot)
   assert.equal(result.status, 0, getOutput(result))
 
   const taskPlan = fs.readFileSync(path.join(projectRoot, 'task_plan.md'), 'utf8')
@@ -472,7 +555,7 @@ ANCHOR: ## Decisions
 - replaced
 `)
 
-  const result = runTsx('tools/discipline/apply-patch.ts', ['--project-dir', projectRoot])
+  const result = runApprovedPatch(projectRoot)
   assert.notEqual(result.status, 0)
   assert.match(getOutput(result), /Target file not found|findings\.md/)
 })
@@ -480,26 +563,24 @@ ANCHOR: ## Decisions
 test('apply-patch insert_after adds content after the section', () => {
   const projectRoot = createDisciplineProject()
   writePatch(projectRoot, 'insert-after-happy', `# Test Insert After
-TARGET_FILE: findings.md
+TARGET_FILE: task_plan.md
 PATCH_MODE: insert_after
-ANCHOR: ## Decisions
+ANCHOR: ## 5) Deferred / Later
 
 ### CONTENT
-## New Decision Section
-- inserted after Decisions
+## New Planned Section
+- inserted after Deferred
 `)
 
-  const result = runTsx('tools/discipline/apply-patch.ts', ['--project-dir', projectRoot])
+  const result = runApprovedPatch(projectRoot)
   assert.equal(result.status, 0, getOutput(result))
 
-  const findings = fs.readFileSync(path.join(projectRoot, 'findings.md'), 'utf8')
-  assert.match(findings, /## Decisions/)
-  assert.match(findings, /## New Decision Section/)
-  assert.match(findings, /inserted after Decisions/)
-  // The new block appears after Decisions and before the next canonical section.
-  const decisionsIdx = findings.indexOf('## Decisions')
-  const newSectionIdx = findings.indexOf('## New Decision Section')
-  assert.ok(newSectionIdx > decisionsIdx, 'inserted block should be after Decisions')
+  const taskPlan = fs.readFileSync(path.join(projectRoot, 'task_plan.md'), 'utf8')
+  assert.match(taskPlan, /## 5\) Deferred \/ Later/)
+  assert.match(taskPlan, /## New Planned Section/)
+  const deferredIdx = taskPlan.indexOf('## 5) Deferred / Later')
+  const newSectionIdx = taskPlan.indexOf('## New Planned Section')
+  assert.ok(newSectionIdx > deferredIdx, 'inserted block should be after Deferred')
 })
 
 test('apply-patch insert_after fails when patch mode value is invalid', () => {
@@ -513,7 +594,7 @@ ANCHOR: ## Decisions
 should not be applied
 `)
 
-  const result = runTsx('tools/discipline/apply-patch.ts', ['--project-dir', projectRoot])
+  const result = runApprovedPatch(projectRoot)
   assert.notEqual(result.status, 0)
   assert.match(getOutput(result), /PATCH_MODE/)
 })
@@ -529,7 +610,7 @@ ANCHOR: ## Last Completed Slices
 - Slice 99: appended via patch test
 `)
 
-  const result = runTsx('tools/discipline/apply-patch.ts', ['--project-dir', projectRoot])
+  const result = runApprovedPatch(projectRoot)
   assert.equal(result.status, 0, getOutput(result))
 
   const progress = fs.readFileSync(path.join(projectRoot, 'progress.md'), 'utf8')
@@ -548,7 +629,7 @@ ANCHOR: ## anything
 should not be applied
 `)
 
-  const result = runTsx('tools/discipline/apply-patch.ts', ['--project-dir', projectRoot])
+  const result = runApprovedPatch(projectRoot)
   assert.notEqual(result.status, 0)
   assert.match(getOutput(result), /TARGET_FILE not allowed/)
 })
@@ -570,7 +651,7 @@ ANCHOR: ## 5) Sync Rules
 SYNC_RULE_NO_DUPLICATE_HEADING
 `)
 
-  const result = runTsx('tools/discipline/apply-patch.ts', ['--project-dir', projectRoot])
+  const result = runApprovedPatch(projectRoot)
   assert.equal(result.status, 0, getOutput(result))
   assert.match(getOutput(result), /CONTENT repeated the anchor/)
 
@@ -594,7 +675,7 @@ ANCHOR: ## 5) Sync Rules
 SYNC_RULE_BLOCK_KEEPS_HEADING
 `)
 
-  const result = runTsx('tools/discipline/apply-patch.ts', ['--project-dir', projectRoot])
+  const result = runApprovedPatch(projectRoot)
   assert.equal(result.status, 0, getOutput(result))
   assert.doesNotMatch(getOutput(result), /CONTENT repeated the anchor/)
 
@@ -632,7 +713,7 @@ never applied
 `)
   const findingsBefore = fs.readFileSync(path.join(projectRoot, 'findings.md'), 'utf8')
 
-  const result = runTsx('tools/discipline/apply-patch.ts', ['--project-dir', projectRoot])
+  const result = runApprovedPatch(projectRoot)
   assert.notEqual(result.status, 0, getOutput(result))
   assert.match(getOutput(result), /Rollback complete/)
 
@@ -681,7 +762,7 @@ ANCHOR: ## Decisions
 `)
   const findingsBefore = fs.readFileSync(path.join(projectRoot, 'findings.md'), 'utf8')
 
-  const result = runTsx('tools/discipline/apply-patch.ts', ['--project-dir', projectRoot])
+  const result = runApprovedPatch(projectRoot)
   assert.notEqual(result.status, 0, getOutput(result))
   assert.match(getOutput(result), /Rollback complete/)
 
@@ -728,7 +809,7 @@ never applied
   fs.writeFileSync(
     script,
     `import fs from 'node:fs'
-import { applyPatches } from '${pathToImport(path.join(repoRoot, 'tools', 'discipline', 'apply-patch.ts'))}'
+import { applyPatches, pendingPatchBatchDigest } from '${pathToImport(path.join(repoRoot, 'tools', 'discipline', 'apply-patch.ts'))}'
 // A restore is a copy whose DESTINATION is the state file; backups copy the other way, so this
 // only breaks the undo, exactly like a read-only target or a deleted backup would.
 const ops = {
@@ -739,7 +820,7 @@ const ops = {
   },
   renameSync: (src, dest) => { fs.renameSync(src, dest) },
 }
-try { await applyPatches(${JSON.stringify(projectRoot)}, false, ops) } catch (err) { console.log('FAILED:' + err.message) }
+try { await applyPatches(${JSON.stringify(projectRoot)}, false, ops, pendingPatchBatchDigest(${JSON.stringify(projectRoot)})) } catch (err) { console.log('FAILED:' + err.message) }
 `,
     'utf8',
   )
@@ -764,6 +845,8 @@ try { await applyPatches(${JSON.stringify(projectRoot)}, false, ops) } catch (er
   assert.equal(failure.rolled_back, 1)
   assert.equal(failure.rollback_failures, 1)
   assert.equal(failure.stranded_patches, 0)
+  assert.equal(fs.existsSync(path.join(projectRoot, '.discipline', 'RECOVERY_REQUIRED.json')), true,
+    'an incomplete rollback must persist a fail-closed recovery marker')
 })
 
 // Two patches against the SAME file inside one batch, with the clock frozen so both backups
@@ -804,8 +887,8 @@ never applied
     script,
     `// Freeze the clock so every backup in the batch wants the same base name.
 Date.now = () => 1780000000000
-const { applyPatches } = await import('${pathToImport(path.join(repoRoot, 'tools', 'discipline', 'apply-patch.ts'))}')
-try { await applyPatches(${JSON.stringify(projectRoot)}) } catch (err) { console.log('FAILED:' + err.message) }
+const { applyPatches, pendingPatchBatchDigest } = await import('${pathToImport(path.join(repoRoot, 'tools', 'discipline', 'apply-patch.ts'))}')
+try { await applyPatches(${JSON.stringify(projectRoot)}, false, undefined, pendingPatchBatchDigest(${JSON.stringify(projectRoot)})) } catch (err) { console.log('FAILED:' + err.message) }
 `,
     'utf8',
   )
@@ -848,10 +931,10 @@ never applied
   fs.writeFileSync(
     script,
     `import fs from 'node:fs'
-import { applyPatches, PatchBatchError } from '${pathToImport(path.join(repoRoot, 'tools', 'discipline', 'apply-patch.ts'))}'
+import { applyPatches, PatchBatchError, pendingPatchBatchDigest } from '${pathToImport(path.join(repoRoot, 'tools', 'discipline', 'apply-patch.ts'))}'
 let code = 0
 try {
-  await applyPatches(${JSON.stringify(projectRoot)})
+  await applyPatches(${JSON.stringify(projectRoot)}, false, undefined, pendingPatchBatchDigest(${JSON.stringify(projectRoot)}))
   code = 99 // must not reach: the batch fails
 } catch (err) {
   console.log('CAUGHT:' + (err instanceof PatchBatchError ? 'PatchBatchError' : err?.constructor?.name))
@@ -1453,7 +1536,7 @@ test('discipline patch matches an NFD heading against its NFC anchor', () => {
     'utf8',
   )
 
-  const result = runTsx('tools/discipline/apply-patch.ts', ['--project-dir', projectRoot])
+  const result = runApprovedPatch(projectRoot)
   assert.equal(result.status, 0, getOutput(result))
   assert.match(fs.readFileSync(progressPath, 'utf8'), /replaced via NFC-normalized anchor/)
 })
@@ -1469,7 +1552,7 @@ test('discipline patch flags NFC/NFD twin headings as duplicate anchors', () => 
     'utf8',
   )
 
-  const result = runTsx('tools/discipline/apply-patch.ts', ['--project-dir', projectRoot])
+  const result = runApprovedPatch(projectRoot)
   assert.notEqual(result.status, 0)
   assert.match(getOutput(result), /Duplicate anchor/)
   assert.doesNotMatch(fs.readFileSync(progressPath, 'utf8'), /must not apply/)
@@ -1793,6 +1876,34 @@ test('pre-tool-guard: asks on migrations, workflows, and npm install', async () 
   assert.equal(decide({ tool_name: 'Write', tool_input: { file_path: 'firestore.rules' } }).decision, 'ask')
   assert.equal(decide({ tool_name: 'Bash', tool_input: { command: 'npm install left-pad' } }).decision, 'ask')
   assert.equal(decide({ tool_name: 'Bash', tool_input: { command: 'npm i' } }).decision, 'ask')
+  assert.equal(decide({ tool_name: 'Bash', tool_input: { command: 'npm ci' } }).decision, 'ask')
+  assert.equal(decide({ tool_name: 'Bash', tool_input: { command: 'npx unknown-tool' } }).decision, 'ask')
+  assert.equal(decide({ tool_name: 'Bash', tool_input: { command: 'git commit -m ok' } }).decision, 'ask')
+  assert.equal(decide({ tool_name: 'Bash', tool_input: { command: 'git tag v1.0.0' } }).decision, 'ask')
+  assert.equal(decide({ tool_name: 'Bash', tool_input: { command: 'git push origin main' } }).decision, 'ask')
+  assert.equal(decide({ tool_name: 'Bash', tool_input: { command: 'vercel deploy --prod' } }).decision, 'ask')
+  assert.equal(decide({ tool_name: 'Bash', tool_input: { command: 'npm publish' } }).decision, 'ask')
+  assert.equal(decide({ tool_name: 'Edit', cwd: '/repo', tool_input: { file_path: '../other/file.txt' } }).decision, 'ask')
+  assert.equal(decide({ tool_input: { command: 'git push origin main' } }).decision, 'ask')
+})
+
+test('pre-tool-guard: denies shell secret reads and environment exfiltration', async () => {
+  const { decide } = await importHook('pre-tool-guard.mjs')
+  assert.equal(decide({ tool_name: 'Bash', tool_input: { command: 'cat .env' } }).decision, 'deny')
+  assert.equal(decide({ tool_name: 'Bash', tool_input: { command: 'Get-Content .env.local' } }).decision, 'deny')
+  assert.equal(decide({ tool_name: 'Bash', tool_input: { command: 'printenv' } }).decision, 'deny')
+  assert.equal(decide({ tool_name: 'Bash', tool_input: { command: 'Get-ChildItem Env:' } }).decision, 'deny')
+})
+
+test('pre-tool-guard: malformed stdin fails closed to ask', () => {
+  const result = spawnSync(process.execPath, [path.join(hooksDir, 'pre-tool-guard.mjs')], {
+    cwd: repoRoot,
+    input: '{not-json',
+    encoding: 'utf8',
+  })
+  assert.equal(result.status, 0)
+  const output = JSON.parse(result.stdout)
+  assert.equal(output.hookSpecificOutput.permissionDecision, 'ask')
 })
 
 test('pre-tool-guard: allows plain ls and a src/ edit silently', async () => {
@@ -2717,10 +2828,12 @@ test('run: end-to-end with a fake builder stops before commit with all artifacts
   const locksDir = path.join(repo, '.discipline', 'locks')
   assert.ok(!fs.existsSync(locksDir) || !fs.readdirSync(locksDir).some((f) => f.startsWith('slice-')), 'lease released')
   assert.equal(spawnSync('git', ['log', '--oneline'], { cwd: repo, encoding: 'utf8' }).stdout.trim().split('\n').length, 1)
-  assert.match(spawnSync('git', ['tag'], { cwd: repo, encoding: 'utf8' }).stdout, /disc\/run-/)
+  assert.equal(spawnSync('git', ['tag'], { cwd: repo, encoding: 'utf8' }).stdout.trim(), '',
+    'the runner must not create a tag without separate human authorization')
   const ledgerDir = path.join(repo, '.discipline', 'ledger')
   const ledger = fs.readFileSync(path.join(ledgerDir, fs.readdirSync(ledgerDir)[0]), 'utf8')
   assert.match(ledger, /run_started/)
+  assert.match(ledger, /pre_run_head/)
   assert.match(ledger, /run_finished/)
   assert.match(ledger, /gate_result/)
   fs.rmSync(repo, { recursive: true, force: true })
@@ -3060,14 +3173,14 @@ test('discipline:progress detects the next slice across heading styles (###, em 
   const projectRoot = createDisciplineProject({ 'SLICE_COMPLETION_PACKET.md': CANONICAL_COMPLETION_PACKET })
   fs.writeFileSync(
     path.join(projectRoot, 'task_plan.md'),
-    '# task_plan.md\n\n### Slice 3 — item list · [done]\n### Slice 4 — offline cache · [ready]\n',
+    '# task_plan.md\n\n### Slice 3 - item list · [done]\n### Slice 4 - offline cache · [ready]\n',
     'utf8',
   )
   assert.equal(runProgress(projectRoot).status, 0)
   const progress = fs.readFileSync(path.join(projectRoot, 'progress.md'), 'utf8')
-  // The old '## Slice N - ' matcher missed '### ... — ...' headings and mislabeled this
+  // The old '## Slice N - ' matcher missed '### ... - ...' headings and mislabeled this
   // "all slices completed"; buyers write slice headings by hand in exactly these styles.
-  assert.match(progress, /- Working on: Slice 4 — offline cache/)
+  assert.match(progress, /- Working on: Slice 4 - offline cache/)
   assert.doesNotMatch(progress, /- Working on: all slices completed/)
 })
 
@@ -3163,8 +3276,8 @@ test('discipline:progress reads the gate state only from an explicit GATE_STATE 
   assert.match(gatesOf('- the suite passes locally but is flaky on CI'), /^unverified /)
   // Regression: an English failure-word blocklist used to read these as a FALSE RED, which silently
   // stalled a green pipeline. "red" is Spanish for "network"; "0 errors"/"0 errores" is a pass.
-  assert.match(gatesOf('- npm run ai:eval — 7/7 (fixture, sin red)'), /^unverified /)
-  assert.match(gatesOf('- npm run gate — verde, 128/128, 0 errores'), /^unverified /)
+  assert.match(gatesOf('- npm run ai:eval - 7/7 (fixture, sin red)'), /^unverified /)
+  assert.match(gatesOf('- npm run gate - verde, 128/128, 0 errores'), /^unverified /)
   assert.match(gatesOf('- npm run test: 128 passed, 0 errors'), /^unverified /)
   // The explicit machine-readable GATE_STATE is the ONLY source of a recorded state; it must be one
   // exact, unambiguous declaration. Placeholder, trailing prose, and conflicting declarations are not.
@@ -3714,7 +3827,7 @@ test('step 4: the patch blocks the skill teaches apply to a fresh template, and 
   fs.writeFileSync(path.join(pending, '2026-08-09_TASK_PLAN_PATCH_step4.md'), table, 'utf8')
   fs.writeFileSync(path.join(pending, '2026-08-09_TASK_PLAN_SLICES_step4.md'), sections, 'utf8')
 
-  const patched = runTsx('tools/discipline/apply-patch.ts', ['--project-dir', projectRoot])
+  const patched = runApprovedPatch(projectRoot)
   assert.equal(patched.status, 0, getOutput(patched))
   const plan = fs.readFileSync(path.join(projectRoot, 'task_plan.md'), 'utf8')
   // The table landed under the real anchor, and the sections already in the file survived it.

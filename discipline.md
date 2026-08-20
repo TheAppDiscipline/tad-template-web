@@ -5,7 +5,7 @@
   etc.); the discipline:patch scripts depend on the exact heading text.
 -->
 
-# discipline.md — Project Constitution
+# discipline.md - Project Constitution
 
 ## 0) Profile
 - PROJECT_NAME:

@@ -143,7 +143,7 @@ Offer the user:
 Do you want to verify that it boots? This runs the lane's dev command for 10 seconds to confirm the bundler builds the app without errors. (Y/N)
 ```
 
-If Y, run the lane's dev command in the background (`npm run dev &`; on Mobile/Expo the script is `npm run start &` — there is no `dev`), wait 10s, and verify:
+If Y, run the lane's dev command in the background (`npm run dev &`; on Mobile/Expo the script is `npm run start &` - there is no `dev`), wait 10s, and verify:
 - Web/Desktop: HTTP 200 on localhost:5173 or equivalent.
 - Mobile: Expo CLI prints the QR without errors.
 - Extension: WXT prints "ready" without errors.

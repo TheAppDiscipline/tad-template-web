@@ -56,6 +56,14 @@ const SEMANTIC_PACKET_RULES: Record<string, SemanticPacketRule> = {
 
 export function validateDiscipline(root: string): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
+  if (fs.existsSync(path.join(root, '.discipline', 'RECOVERY_REQUIRED.json'))) {
+    issues.push({
+      severity: 'error',
+      file: '.discipline/RECOVERY_REQUIRED.json',
+      message: 'Patch recovery is incomplete; automation remains stopped.',
+      detail: 'Compare state files with .discipline/backups/, repair manually, and remove the marker only after human verification.',
+    });
+  }
   const pendingDir = path.join(root, '.discipline', 'patches', 'pending');
   if (fs.existsSync(pendingDir)) {
     const pending = fs.readdirSync(pendingDir).filter(f => f.endsWith('.md'));

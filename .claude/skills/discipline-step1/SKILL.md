@@ -88,7 +88,7 @@ Once the description covers all 4 axes, continue:
 | Public beta / first paying users, without a complete PROD scorecard | PROFILE | LAUNCH |
 | Roles, permissions, admin, multiple flows, commercial >=50 active | PROFILE | PROD |
 | "login", "create account", "users", "team", "members" | AUTH | MAGIC_LINK (default if no method is specified) |
-| "Google login", "sign in with Google", social login | AUTH | MAGIC_LINK (OAuth/social is not a v1 AUTH_MODE — valid values: MAGIC_LINK, EMAIL_PASSWORD, BOTH, NONE; start with MAGIC_LINK and add social login later as its own slice) |
+| "Google login", "sign in with Google", social login | AUTH | MAGIC_LINK (OAuth/social is not a v1 AUTH_MODE - valid values: MAGIC_LINK, EMAIL_PASSWORD, BOTH, NONE; start with MAGIC_LINK and add social login later as its own slice) |
 | "no login", "no account", personal use without mentioning accounts | AUTH | NONE |
 | If AUTH=NONE and there is no mention of sharing or sync across devices | BACKEND | LOCAL_ONLY |
 | If it needs accounts, shared data, or sync | BACKEND | SUPABASE (recommended cloud) |

@@ -1,17 +1,45 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import minimist from 'minimist';
 import { disciplineError, disciplineErrorMessage, disciplineInfo, disciplineWarn } from './lib/types.js';
 import { resolveProjectRoot } from './lib/discipline-config.js';
 import { parsePatchFile } from './lib/parse-patch.js';
-import { findSectionBounds, isDuplicateAnchor, stripLeadingAnchorLine, PATCH_APPLICATION_ORDER, ALLOWED_PATCH_TARGETS, normalizeLineEndings } from './lib/anchors.js';
+import { findSectionBounds, isDuplicateAnchor, stripLeadingAnchorLine, PATCH_APPLICATION_ORDER, ALLOWED_PATCH_TARGETS, APPEND_ONLY_PATCH_TARGETS, normalizeLineEndings } from './lib/anchors.js';
 import { withWriterLock } from './lib/locks.js';
 import { appendLedger } from './lib/ledger.js';
 
 const args = minimist(process.argv.slice(2));
 const projectRoot = resolveProjectRoot(args['project-dir']);
 const dryRun = args['dry-run'] === true;
+const approvedSha = typeof args['approve-sha'] === 'string' ? args['approve-sha'] : undefined;
+
+export const RECOVERY_REQUIRED_FILE = '.discipline/RECOVERY_REQUIRED.json';
+
+export function assertNoRecoveryRequired(root: string): void {
+  const marker = path.join(root, RECOVERY_REQUIRED_FILE);
+  if (fs.existsSync(marker)) {
+    throw new Error(`Recovery required: ${RECOVERY_REQUIRED_FILE} exists. Compare state files with .discipline/backups/, repair manually, and remove the marker only after human verification.`);
+  }
+}
+
+/** Digest the exact pending filenames and bytes in deterministic order. */
+export function pendingPatchBatchDigest(root: string): string {
+  const pendingDir = path.join(root, '.discipline', 'patches', 'pending');
+  const files = fs.existsSync(pendingDir)
+    ? fs.readdirSync(pendingDir).filter((file) => file.endsWith('.md')).sort()
+    : [];
+  const digest = crypto.createHash('sha256');
+  digest.update('discipline.patch_batch.v1\0');
+  for (const file of files) {
+    digest.update(file);
+    digest.update('\0');
+    digest.update(fs.readFileSync(path.join(pendingDir, file)));
+    digest.update('\0');
+  }
+  return digest.digest('hex');
+}
 
 /** One written file and how to undo it. `appliedPath` stays empty until the patch file moves. */
 type RollbackEntry = { targetPath: string; backupPath: string; patchSourcePath: string; appliedPath: string };
@@ -152,12 +180,25 @@ function atomicWriteWithBackup(root: string, filePath: string, content: string):
   return backupPath;
 }
 
-export async function applyPatches(root: string, isDryRun = false, rollbackOps: RollbackOps = realRollbackOps): Promise<number> {
+export async function applyPatches(
+  root: string,
+  isDryRun = false,
+  rollbackOps: RollbackOps = realRollbackOps,
+  approvedDigest?: string,
+): Promise<number> {
   const pendingDir = path.join(root, '.discipline', 'patches', 'pending');
   if (!fs.existsSync(pendingDir)) { disciplineInfo('No .discipline/patches/pending/ directory.'); return 0; }
 
-  const files = fs.readdirSync(pendingDir).filter(f => f.endsWith('.md'));
+  const files = fs.readdirSync(pendingDir).filter(f => f.endsWith('.md')).sort();
   if (files.length === 0) { disciplineInfo('No pending patches.'); return 0; }
+
+  const batchDigest = pendingPatchBatchDigest(root);
+  if (!isDryRun) {
+    assertNoRecoveryRequired(root);
+    if (!approvedDigest || approvedDigest.toLowerCase() !== batchDigest) {
+      throw new Error(`Pending patch bytes are not approved. Run the dry-run, review BATCH_SHA256, then pass --approve-sha ${batchDigest} without changing pending files.`);
+    }
+  }
 
   const patches = files.map(f => {
     const fullPath = path.join(pendingDir, f);
@@ -170,6 +211,9 @@ export async function applyPatches(root: string, isDryRun = false, rollbackOps: 
       // Throw, never exit: same reason as the batch failure below, this function is imported.
       throw new Error(`TARGET_FILE not allowed: "${patch.targetFile}". Allowed: ${[...ALLOWED_PATCH_TARGETS].join(', ')}`);
     }
+    if (APPEND_ONLY_PATCH_TARGETS.has(patch.targetFile) && patch.patchMode !== 'append') {
+      throw new Error(`Historical file "${patch.targetFile}" is append-only; PATCH_MODE must be append (got ${patch.patchMode}).`);
+    }
   }
 
   patches.sort((a, b) => {
@@ -181,6 +225,7 @@ export async function applyPatches(root: string, isDryRun = false, rollbackOps: 
   // Dry-run mode: validate and preview without applying
   if (isDryRun) {
     disciplineInfo('[DRY-RUN] Previewing patches (no files will be modified):\n');
+    disciplineInfo(`BATCH_SHA256: ${batchDigest}`);
     for (const patch of patches) {
       const targetPath = path.join(root, patch.targetFile);
       const exists = fs.existsSync(targetPath);
@@ -209,6 +254,19 @@ export async function applyPatches(root: string, isDryRun = false, rollbackOps: 
     // restored, and only the files the rollback could not put back when it was not. Counting the
     // patches that had reached applied/ would overstate it, since the rollback undoes those too.
     const failure = err instanceof PatchBatchError ? err : null;
+    if (failure && failure.rollbackFailures > 0) {
+      const markerPath = path.join(root, RECOVERY_REQUIRED_FILE);
+      fs.mkdirSync(path.dirname(markerPath), { recursive: true });
+      fs.writeFileSync(markerPath, JSON.stringify({
+        schema: 'discipline.recovery_required.v1',
+        recorded_at: new Date().toISOString(),
+        reason: 'patch rollback incomplete',
+        target_file: failure.targetFile,
+        unrestored: failure.unrestored,
+        stranded_patches: failure.stranded,
+        next_action: 'Compare state files with .discipline/backups/ and repair manually before removing this marker.',
+      }, null, 2) + '\n', 'utf-8');
+    }
     try {
       appendLedger(root, {
         event: 'patch_applied',
@@ -328,5 +386,5 @@ function applyPatchesLocked(root: string, patches: PatchList, rollbackOps: Rollb
 // When imported from another module (for example watch.ts), do not auto-execute.
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
-  applyPatches(projectRoot, dryRun).catch(e => disciplineError(e.message));
+  applyPatches(projectRoot, dryRun, realRollbackOps, approvedSha).catch(e => disciplineError(e.message));
 }

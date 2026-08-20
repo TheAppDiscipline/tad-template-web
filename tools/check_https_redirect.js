@@ -1,5 +1,5 @@
 /**
- * Discipline Loop Security Gate — No HTTP URLs in Production Paths
+ * Discipline Loop Security Gate - No HTTP URLs in Production Paths
  *
  * Scans for hardcoded `http://` URLs (non-localhost, non-example) in
  * production-bound code/config. All production traffic must be HTTPS.

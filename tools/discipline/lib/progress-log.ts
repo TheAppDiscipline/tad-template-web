@@ -47,13 +47,13 @@ function fieldValues(block: string, name: string): string[] {
 function legacyHeadingSlice(label: string): string | null {
   // Old logs carried identity only in the visible title. Keep reading their composite IDs and all
   // separators update-progress historically emitted, but never use this fallback for new writes.
-  const match = label.match(/^(?:slice\s+)?([A-Za-z][A-Za-z0-9._-]*|\d[A-Za-z0-9._-]*)(?=\s|[-—:]|$)/i);
+  const match = label.match(/^(?:slice\s+)?([A-Za-z][A-Za-z0-9._-]*|\d[A-Za-z0-9._-]*)(?=\s|[-\u2014:]|$)/i);
   return match ? normalizeSliceId(match[1]) : null;
 }
 
 /** One parser for both state-view and future progress consumers. */
 export function readProgressLog(content: string): ProgressLogEntry[] {
-  const headings = [...content.matchAll(/^###\s+\d{4}-\d{2}-\d{2}\s+(?:—|-|:)\s+(.+?)\s*$/gm)];
+  const headings = [...content.matchAll(/^###\s+\d{4}-\d{2}-\d{2}\s+(?: - |-|:)\s+(.+?)\s*$/gm)];
   return headings.map((heading, index) => {
     const start = (heading.index ?? 0) + heading[0].length;
     const end = index + 1 < headings.length ? headings[index + 1].index ?? content.length : content.length;

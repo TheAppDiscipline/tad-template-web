@@ -321,7 +321,7 @@ function report(root: string, result: MigrationResult, write: boolean): void {
       continue;
     }
     const verb = write ? 'migrated' : 'would migrate';
-    disciplineInfo(`  ${plan.file}: ${verb} to ${plan.target} (slice ${plan.slice}, status: ${plan.status})${plan.reason ? ` — ${plan.reason}` : ''}`);
+    disciplineInfo(`  ${plan.file}: ${verb} to ${plan.target} (slice ${plan.slice}, status: ${plan.status})${plan.reason ? ` - ${plan.reason}` : ''}`);
   }
   if (!write) {
     disciplineInfo('');

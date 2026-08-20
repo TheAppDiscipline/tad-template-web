@@ -1,5 +1,5 @@
 /**
- * Discipline Loop Query Discipline Gate — FK Columns Must Have Indexes
+ * Discipline Loop Query Discipline Gate - FK Columns Must Have Indexes
  *
  * Scans supabase/migrations/**.sql and supabase/migrations_templates/**.sql for foreign key columns and verifies
  * that each has a corresponding index created in the same migration file

@@ -1,5 +1,5 @@
 /**
- * Discipline Loop Query Discipline Gate — List Queries Must Bound
+ * Discipline Loop Query Discipline Gate - List Queries Must Bound
  *
  * Heuristic: finds Supabase query chains like `.from(x).select(...)` that
  * do not include a bounding modifier (`.limit()`, `.range()`, `.single()`,

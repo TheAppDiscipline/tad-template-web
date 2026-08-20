@@ -1,5 +1,5 @@
 /**
- * Discipline Loop Security Gate — RLS Enabled on Business Tables
+ * Discipline Loop Security Gate - RLS Enabled on Business Tables
  *
  * Scans supabase/migrations/**.sql and supabase/migrations_templates/**.sql for tables that are created without
  * enabling Row Level Security. RLS is mandatory for PROFILE=SHARED_SYNC/LAUNCH/PROD.
@@ -146,7 +146,7 @@ if (missing.length === 0 && noPolicy.length === 0) {
 if (missing.length > 0) {
   console.log(`\x1b[31m[FAIL]\x1b[0m ${missing.length} business table(s) without RLS:\n`);
   for (const item of missing) {
-    console.log(`  ${item.file}  —  table: ${item.name}`);
+    console.log(`  ${item.file} - table: ${item.name}`);
   }
   console.log(`\nFix: add 'ALTER TABLE ${missing[0].name} ENABLE ROW LEVEL SECURITY;' in the migration that creates each table.`);
 }
@@ -154,7 +154,7 @@ if (missing.length > 0) {
 if (noPolicy.length > 0) {
   console.log(`\x1b[31m[FAIL]\x1b[0m ${noPolicy.length} table(s) with RLS enabled but NO policy (deny-all / forgotten policy):\n`);
   for (const item of noPolicy) {
-    console.log(`  ${item.file}  —  table: ${item.name}`);
+    console.log(`  ${item.file} - table: ${item.name}`);
   }
   console.log(`\nFix: add at least one 'CREATE POLICY ... ON ${noPolicy[0].name} ... USING (<owner_col> = auth.uid());' scoped to ownership.`);
 }

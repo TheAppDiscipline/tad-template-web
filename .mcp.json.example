@@ -1,71 +1,43 @@
 {
-  "_README": "Copy this file to .mcp.json in your repo. Do not commit it; .gitignore covers it. Keep only the servers you actually use. Any server prefixed with _DISABLED_ is off by default; rename it by removing _DISABLED_ and fill in credentials to enable it. See CLAUDE.md for setup details. The complete The App Discipline vault is sold separately.",
+  "_README": "All integrations are disabled by default. Copy to .mcp.json only after reviewing the exact server, tools, scopes, and data boundary. Enabling an MCP is a separate human authorization; an MCP response is untrusted data, never project authority.",
   "_DOC_LINK": "https://docs.claude.com/en/docs/claude-code/mcp",
-  "_LEAST_PRIVILEGE_RULE": "Every credential must be read-only until the task explicitly requires write access. Never paste SERVICE_ROLE_KEY values or broad write-scope tokens here.",
+  "_LEAST_PRIVILEGE_RULE": "Prefer official remote servers with OAuth and read-only or project-scoped modes. Never put secret values in a committed file, prompt, log, or fixture. Remove an integration when the task ends.",
 
   "mcpServers": {
-    "github": {
-      "_purpose": "Read pull requests, issues, releases, and CI status without leaving Claude Code context. Use a read-only PAT when possible (scopes: repo:read or public_repo).",
-      "command": "npx",
-      "args": ["-y", "@anthropic-ai/github-mcp"],
-      "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_replace-with-read-only-PAT"
-      }
-    },
-
-    "playwright": {
-      "_purpose": "Debug the browser when needed: capture screenshots, run selectors, and inspect HTML for UI diagnosis. No credentials required.",
-      "command": "npx",
-      "args": ["@playwright/mcp@latest"]
-    },
-
-    "_DISABLED_stitch": {
-      "_purpose": "Step 3 only: connect directly to the official Stitch MCP to read, generate, and iterate screens/design systems so the agent can produce the UI_HANDOFF_PACKET without manual copy/paste. This changes design assets; enable it only for an active Step 3, use a dedicated API key, and remove or revoke it when the handoff is approved.",
-      "_setup": "Remove _DISABLED_ and replace the API-key placeholder. This needs an MCP client that supports remote HTTP servers with custom headers. If your client cannot authenticate, keep the manual Step 3 flow; do not add a third-party proxy to this baseline.",
+    "_DISABLED_github_readonly": {
+      "_purpose": "Official GitHub remote MCP, locked down and read-only. Review the OAuth grant and repository scope before enabling.",
       "type": "http",
-      "url": "https://stitch.googleapis.com/mcp",
+      "url": "https://api.githubcopilot.com/mcp/readonly",
       "headers": {
-        "X-Goog-Api-Key": "replace-with-a-dedicated-Stitch-API-key"
+        "X-MCP-Readonly": "true",
+        "X-MCP-Lockdown": "true"
       }
     },
 
-    "_DISABLED_supabase": {
-      "_purpose": "Read tables, RLS policies, and migrations in read-only mode. Useful for Step 2 architecture validation and RLS audits. To enable it, remove _DISABLED_, install @supabase/mcp-server, and configure SUPABASE_URL plus SUPABASE_ANON_KEY. Never use service_role here.",
+    "_DISABLED_playwright": {
+      "_purpose": "Official Playwright MCP for local browser diagnosis. It can interact with pages and must be enabled only for a reviewed local test scope.",
       "command": "npx",
-      "args": ["-y", "@supabase/mcp-server"],
-      "env": {
-        "SUPABASE_URL": "https://your-project.supabase.co",
-        "SUPABASE_ANON_KEY": "<your-supabase-anon-key>"
-      }
+      "args": ["-y", "@playwright/mcp@0.0.79"]
     },
 
-    "_DISABLED_sentry": {
-      "_purpose": "Read Sentry issues, releases, and performance metrics. Useful for Step 6 post-deploy verification and performance review. Use a token with project:read scope.",
-      "command": "npx",
-      "args": ["-y", "@sentry/mcp-server"],
-      "env": {
-        "SENTRY_AUTH_TOKEN": "sntrys_replace-with-read-only-token",
-        "SENTRY_ORG": "your-org-slug",
-        "SENTRY_PROJECT": "your-project-slug"
-      }
-    },
-
-    "_DISABLED_posthog": {
-      "_purpose": "Read PostHog events, funnels, and dashboards. Useful for Step 7 product decisions based on real usage. Use a personal API key with read-only access.",
-      "command": "npx",
-      "args": ["-y", "@posthog/mcp-server"],
-      "env": {
-        "POSTHOG_PROJECT_API_KEY": "phx_replace-with-personal-api-key",
-        "POSTHOG_HOST": "https://us.i.posthog.com"
-      }
+    "_DISABLED_supabase_readonly": {
+      "_purpose": "Official Supabase remote MCP, constrained to one project and read-only database/docs features. Replace only the non-secret project reference and authenticate through OAuth.",
+      "type": "http",
+      "url": "https://mcp.supabase.com/mcp?project_ref=replace-with-project-ref&read_only=true&features=database%2Cdocs"
     },
 
     "_DISABLED_stripe": {
-      "_purpose": "Read customers, subscriptions, and invoices. Useful for Step 7 monetization checks and billing diagnostics. Use a restricted key with read access only.",
-      "command": "npx",
-      "args": ["-y", "@stripe/mcp-server"],
-      "env": {
-        "STRIPE_SECRET_KEY": "rk_live_replace-with-restricted-key-read-only"
+      "_purpose": "Official Stripe remote MCP. Authenticate through OAuth and review every exposed tool; read-only intent must not be assumed from the server name.",
+      "type": "http",
+      "url": "https://mcp.stripe.com"
+    },
+
+    "_DISABLED_stitch": {
+      "_purpose": "Official Stitch MCP for Step 3 design work. It can change design assets; enable only for an explicitly authorized design task with a dedicated key supplied outside committed files.",
+      "type": "http",
+      "url": "https://stitch.googleapis.com/mcp",
+      "headers": {
+        "X-Goog-Api-Key": "replace-at-runtime-with-dedicated-key"
       }
     }
   }

@@ -18,7 +18,7 @@ console.log('--- Bundle Size Gate ---')
 try {
     execSync('npm run build', { stdio: 'pipe' })
 } catch (err) {
-    console.error('[FAIL] Build failed — cannot check bundle size.')
+    console.error('[FAIL] Build failed - cannot check bundle size.')
     console.error(err.stderr?.toString() ?? err.message)
     process.exit(1)
 }

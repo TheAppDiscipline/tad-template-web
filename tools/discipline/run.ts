@@ -35,7 +35,7 @@ import { acquireSliceLease, releaseSliceLease, sliceLeaseStatus, acquireWriterLo
 import { appendLedger, errorSignature } from './lib/ledger.js';
 import { assemblePasteReady } from './assemble-paste-ready.js';
 import { extractEmbeddedPatches } from './lib/parse-patch.js';
-import { applyPatches } from './apply-patch.js';
+import { applyPatches, assertNoRecoveryRequired, pendingPatchBatchDigest } from './apply-patch.js';
 import { locateSlicePacket, normalizeSliceId, packetStatus, resolvePacketIdentity, resolveSlice, slicePasteReadyFileName } from './lib/slice-identity.js';
 import { readCompletion } from './lib/completion-packet.js';
 import { recordClosure } from './update-progress.js';
@@ -345,6 +345,7 @@ function ledgerStepFinished(outcome: RunAdapterOutcome): Record<string, unknown>
 }
 
 export async function runReconciler(root: string, opts: RunOptions): Promise<number> {
+  assertNoRecoveryRequired(root);
   // (a) STOP switch + autonomy.
   if (isStopped(root)) {
     disciplineWarn('.discipline/STOP is present: the pipeline is paused. Remove it to run. Aborting.');
@@ -509,17 +510,18 @@ export async function runReconciler(root: string, opts: RunOptions): Promise<num
   };
 
   try {
-    safeLedger(root, { event: 'run_started', run_id: runId, slice: opts.slice, autonomy: autonomy.level, builder: builderName, validator: validatorName });
-
-    // (d) Pre-run safety tag: rollback = git reset --hard <tag>. Kept on clean finish (cheap, documented).
-    const preTag = `disc/run-${runId}-pre`;
-    const tagProc = spawnSync('git', ['tag', preTag], { cwd: root, encoding: 'utf-8' });
-    if (tagProc.status !== 0) disciplineWarn(`Could not create pre-run tag ${preTag}: ${(tagProc.stderr || '').trim()} (continuing).`);
-    else disciplineInfo(`Pre-run tag: ${preTag} (rollback: git reset --hard ${preTag}).`);
-    // The gate measures the change against this tag, so a commit made mid-run is
-    // still part of what gets gated. Without the tag there is no base to measure
-    // from, and the gate falls back to the working tree alone.
-    const gateBase = tagProc.status === 0 ? preTag : null;
+    // Capture an immutable, read-only recovery reference. Creating a tag is a Git
+    // mutation and therefore a separate human authorization boundary; a local
+    // runner must not perform it implicitly. Refuse to run when HEAD cannot be
+    // identified because a gate without a trustworthy base can misstate scope.
+    const headProc = spawnSync('git', ['rev-parse', '--verify', 'HEAD'], { cwd: root, encoding: 'utf-8' });
+    const preRunHead = headProc.status === 0 ? String(headProc.stdout || '').trim() : '';
+    if (!/^[0-9a-f]{40}$/i.test(preRunHead)) {
+      throw new Error(`Could not resolve the pre-run HEAD: ${(headProc.stderr || '').trim() || 'invalid SHA'}`);
+    }
+    safeLedger(root, { event: 'run_started', run_id: runId, slice: opts.slice, autonomy: autonomy.level, builder: builderName, validator: validatorName, pre_run_head: preRunHead });
+    disciplineInfo(`Pre-run HEAD (read-only recovery reference): ${preRunHead}.`);
+    const gateBase = preRunHead;
 
     // (e) Builder prompt, for THIS slice.
     const builderPrompt = await buildBuilderPrompt(root, opts.slice);
@@ -602,7 +604,7 @@ export async function runReconciler(root: string, opts: RunOptions): Promise<num
       repairState.signatures.push(sig);
       if (decision.action === 'stop') {
         disciplineWarn(`Repair loop stopped: ${decision.reason}. Signature: ${sig}.`);
-        const outcome = await terminalStop(root, runId, opts, preTag, 'stopped-by-repair-budget');
+        const outcome = await terminalStop(root, runId, opts, preRunHead, 'stopped-by-repair-budget');
         releaseLease();
         return outcome === 'ok' ? RUN_EXIT.REPAIR_STOP : RUN_EXIT.REPAIR_STOP;
       }
@@ -644,7 +646,7 @@ export async function runReconciler(root: string, opts: RunOptions): Promise<num
     const closure = await recordClosureUnderLock(root, opts.slice, completionPath);
     if (!closure.ok) {
       // terminalStop writes the run_finished event for this path, so `incomplete` must not.
-      await terminalStop(root, runId, opts, preTag, 'incomplete');
+      await terminalStop(root, runId, opts, preRunHead, 'incomplete');
       releaseLease();
       return incomplete(`the closure could not be recorded: ${closure.reason}`, true, true);
     }
@@ -657,7 +659,7 @@ export async function runReconciler(root: string, opts: RunOptions): Promise<num
     }
 
     // (j) Terminal state ALWAYS stops before commit.
-    await terminalStop(root, runId, opts, preTag, 'green');
+    await terminalStop(root, runId, opts, preRunHead, 'green');
     releaseLease();
     return RUN_EXIT.GREEN;
   } finally {
@@ -791,7 +793,7 @@ async function applyPlanUnderLock(root: string, patches: ParsedPatch[]): Promise
       );
     }
     disciplineInfo(`Extracted ${patches.length} patch block(s) from this run's packets; applying...`);
-    await applyPatches(root);
+    await applyPatches(root, false, undefined, pendingPatchBatchDigest(root));
   } finally {
     releaseWriterLock(root);
   }
@@ -852,7 +854,7 @@ async function terminalStop(
   root: string,
   runId: string,
   opts: RunOptions,
-  preTag: string,
+  preRunHead: string,
   outcome: string,
 ): Promise<'ok'> {
   // Checkpoint (reuse checkpoint.ts create, kind pre-commit).
@@ -883,7 +885,7 @@ async function terminalStop(
   disciplineInfo(`1. Review the diff${diffHtmlPath ? `: ${path.relative(root, diffHtmlPath)}` : ' (git diff)'}`);
   disciplineInfo(`2. Approve the checkpoint:  npm run discipline -- approve ${checkpointRef}`);
   disciplineInfo(`3. Commit (after approval): git add -A && git commit -m "feat(${opts.slice}): <describe the slice>"`);
-  disciplineInfo(`4. Rollback if wrong:       git reset --hard ${preTag}`);
+  disciplineInfo(`4. Recovery reference:      pre-run HEAD ${preRunHead}; inspect the diff and choose a human-reviewed recovery plan.`);
   disciplineInfo(outcome === 'green' ? 'Outcome: GREEN gate. Yours to review.' : `Outcome: ${outcome}. Review before deciding.`);
   return 'ok';
 }

@@ -1,4 +1,4 @@
-# task_plan.md — Plan by Phases + Slices
+# task_plan.md - Plan by Phases + Slices
 
 ## 1) Current Goal
 - N/A

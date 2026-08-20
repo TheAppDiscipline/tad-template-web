@@ -51,7 +51,7 @@ test.describe('Post-deploy verification', () => {
   test('router handles non-existent routes (no blank page)', async ({ page }) => {
     const response = await page.goto(`${BASE_URL}/this-route-does-not-exist-404-check`)
 
-    // Accept: a 404 page, or a redirect to home — both are valid
+    // Accept: a 404 page, or a redirect to home - both are valid
     expect(response).not.toBeNull()
     const status = response!.status()
     expect([200, 301, 302, 404]).toContain(status)

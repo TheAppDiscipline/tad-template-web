@@ -53,15 +53,15 @@ The STEP_3_STITCH_PACKET is missing. Run /discipline-step1 first.
 ```
 
 **Project context (always read):**
-3. `discipline.md` — switches, contracts, rules
-4. `.discipline/packets/STEP_4_EXECUTION_PACKET.md` — validated architecture, slices, data contracts
+3. `discipline.md` - switches, contracts, rules
+4. `.discipline/packets/STEP_4_EXECUTION_PACKET.md` - validated architecture, slices, data contracts
 5. `task_plan.md`
 6. `findings.md`
 
 **Optional (read if they exist):**
-7. `.discipline/step1-outputs/06_UI_States.md` — UI states from Step 1
-8. `.discipline/step1-outputs/04_User_Stories.md` — user stories to understand flows
-9. `.discipline/packets/AI_IMPLEMENTATION_PACKET.md` — if there are AI features that affect the UI
+7. `.discipline/step1-outputs/06_UI_States.md` - UI states from Step 1
+8. `.discipline/step1-outputs/04_User_Stories.md` - user stories to understand flows
+9. `.discipline/packets/AI_IMPLEMENTATION_PACKET.md` - if there are AI features that affect the UI
 
 **Detect Stitch MCP.** Check whether the Stitch MCP is available:
 - Look for `stitch` in the list of configured MCPs
@@ -105,7 +105,7 @@ Patterns: same as web, but consider that the first render comes from the server.
 
 **Prompt construction gotchas** (observed in real runs; they apply to Phase 1A and 1B alike):
 
-- **State the app name explicitly and defend it.** If the prompt describes the *feeling* of the design with a noun ("calm", "serenity", "trust"), Stitch tends to adopt that noun as the **brand name** and stamps it on every screen header. Always include: `The app is called "<NAME>". Words describing the intended feeling are NOT the name.` If the name drifts, correct it **immediately** — otherwise it propagates to every screen generated afterwards.
+- **State the app name explicitly and defend it.** If the prompt describes the *feeling* of the design with a noun ("calm", "serenity", "trust"), Stitch tends to adopt that noun as the **brand name** and stamps it on every screen header. Always include: `The app is called "<NAME>". Words describing the intended feeling are NOT the name.` If the name drifts, correct it **immediately** - otherwise it propagates to every screen generated afterwards.
 - **Ask for states in the prompt text, not with the "multiple variants" toggle.** That toggle produces alternative *visual styles* of one screen (an exploration tool). It does NOT produce the normal/loading/empty/error **states** this step needs, and using it after the design system is fixed breaks visual consistency across screens.
 - **Lock the design system in the first prompt**, then generate every remaining screen in the **same project/thread** so they inherit it.
 - **Generate only the states that are visually distinctive** (screens whose empty/error/special state differs structurally from normal). Trivial loading/empty/error states are cheaper to document from the contracts in Phase 2 than to generate.
@@ -149,7 +149,7 @@ Stitch MCP is not available. Use Stitch manually:
    inherit the design system
 5. Use the Play button to navigate the flow
 6. Export: choose ".zip". It downloads the code locally with no third party involved.
-   Do NOT pick "AI Studio" — that submits the content to Google AI Studio's terms.
+   Do NOT pick "AI Studio" - that submits the content to Google AI Studio's terms.
    The export caps at ~16 screens per download; if you generated more, either
    deselect the least structural screens (plain empty/error states) or run a second
    export. Superseded duplicates of a screen should NOT be exported: two conflicting
@@ -176,10 +176,10 @@ Report: `✓ Operator completed Stitch manually: <N> screens`
 
 These are mandatory. If Stitch did not generate one explicitly, infer it from the normal screen and the project contracts:
 
-1. **normal** — layout, components, primary action, secondary actions, per-role variants
-2. **loading** — skeleton/spinner, what is already visible vs what is waiting on data
-3. **empty** — action-oriented message, suggested illustration, distinguish "new" vs "no results"
-4. **error** — user-friendly message, recovery action, error boundaries
+1. **normal** - layout, components, primary action, secondary actions, per-role variants
+2. **loading** - skeleton/spinner, what is already visible vs what is waiting on data
+3. **empty** - action-oriented message, suggested illustration, distinguish "new" vs "no results"
+4. **error** - user-friendly message, recovery action, error boundaries
 
 **Apply per-LANE adaptations** (mandatory):
 - WEB: responsive notes, PWA considerations
@@ -240,15 +240,15 @@ Report: `✓ UI_HANDOFF_PACKET assembled with <N> screens`
 
 **Handle the Stitch export.** The `.zip` extracts to one folder per screen containing `code.html` and `screen.png`, plus a `<project>/DESIGN.md`. Three rules:
 
-1. **Read `DESIGN.md`. Never infer design tokens from screenshots.** Stitch ALWAYS emits a `DESIGN.md` in the export with the authoritative token set (Material-3-style color roles, typographic scale, radii, spacing, layout, component guidance). Eyeballing hex values off a swatch image gets them **wrong** — swatch tiles show container/variant shades, not the base role, so the `primary` you read from the image is typically the `primary-container`. Open the file.
+1. **Read `DESIGN.md`. Never infer design tokens from screenshots.** Stitch ALWAYS emits a `DESIGN.md` in the export with the authoritative token set (Material-3-style color roles, typographic scale, radii, spacing, layout, component guidance). Eyeballing hex values off a swatch image gets them **wrong** - swatch tiles show container/variant shades, not the base role, so the `primary` you read from the image is typically the `primary-container`. Open the file.
 2. **Write a `README.md` in `design/stitch-export/`** stating that the export is **reference, not source**: do not copy the mockup HTML into `src/`, it bypasses the backend adapter, the semantic-token rule, and the `limit` rule. The contract for Step 5 is the UI_HANDOFF_PACKET, not the mockups.
 3. **Warn about hotlinked assets.** Stitch mockups reference AI-generated avatars/illustrations from Google's CDN (`lh3.googleusercontent.com/...`). Harmless in a mockup; in production it is a privacy leak to a third party and a link that will rot. The README must say: use your own assets.
 
-**Generate a DESIGN_MD_READY_BLOCK** whenever a `DESIGN.md` exists in the export (with Stitch, it always does). Transcribe the real token set from that file — colors, typography, radii, spacing, layout — and frame the hex values as **brand values that populate semantic tokens** in Step 5, never as raw hex for components (`discipline.md §8` forbids raw hex; the `check-tokens` gate enforces it).
+**Generate a DESIGN_MD_READY_BLOCK** whenever a `DESIGN.md` exists in the export (with Stitch, it always does). Transcribe the real token set from that file - colors, typography, radii, spacing, layout - and frame the hex values as **brand values that populate semantic tokens** in Step 5, never as raw hex for components (`discipline.md §8` forbids raw hex; the `check-tokens` gate enforces it).
 
 **Flag the dark-theme gap.** Stitch emits a **light-mode token set only**, while `discipline.md §8` requires light **and** dark. This mismatch is systematic, not project-specific. Record it as an explicit gap in the DESIGN_MD_READY_BLOCK so Step 5 derives the dark palette instead of assuming §8 is satisfied.
 
-**Contract-mapping gate (mandatory before closing Step 3).** Stitch mockups routinely add actions, computed metrics, navigation targets and empty-state CTAs that have NO contract behind them. Transcribing them into the handoff turns mockup embellishment into fake spec, and Step 5 then tries to build uncontracted features. Before closing, reconcile **every visible element** against the contracts (`discipline.md`, `STEP_4_EXECUTION_PACKET`) — the contracts win. Each item must map to something that exists, or be removed / explicitly marked P1/P2; never copied as spec from the tool:
+**Contract-mapping gate (mandatory before closing Step 3).** Stitch mockups routinely add actions, computed metrics, navigation targets and empty-state CTAs that have NO contract behind them. Transcribing them into the handoff turns mockup embellishment into fake spec, and Step 5 then tries to build uncontracted features. Before closing, reconcile **every visible element** against the contracts (`discipline.md`, `STEP_4_EXECUTION_PACKET`) - the contracts win. Each item must map to something that exists, or be removed / explicitly marked P1/P2; never copied as spec from the tool:
 
 - **Actions/buttons → a concrete P0 adapter operation.** No operation ⇒ remove or mark deferred (and, if wanted, send it back to Step 2/4 to be contracted first).
 - **Computed metrics → a contracted output (IO shape).** No invented history or projections (month-over-month deltas, payoff dates) unless the data/op exists in P0.
@@ -298,7 +298,7 @@ Next step: /discipline-step4 (Executable slices)
 - If LANE is BACKEND or CLI: stop immediately. This is not an error, it is an expected skip.
 - If STEP_3_STITCH_PACKET does not exist: stop with "Run /discipline-step1 first."
 - If Stitch MCP fails: fall back to guided mode (Phase 1B). Report the MCP error.
-- If Stitch cannot generate some screen: document it in the UI_HANDOFF_PACKET with "TODO: requires manual generation" and log it in findings.md.
+- If Stitch cannot generate a screen: mark that screen `BLOCKED: requires manual generation` in the UI_HANDOFF_PACKET and log the blocker in findings.md.
 - If the operator reports that Stitch did not cover a flow: document it as a gap and include it in the handoff so that Step 5 resolves it during implementation.
 - If `npm run discipline:assemble` fails: report it. The UI_HANDOFF_PACKET is already in `.discipline/packets/`.
 - If `npm run discipline:log` fails: report it but do not block.
@@ -319,5 +319,5 @@ Next step: /discipline-step4 (Executable slices)
 - **Design tokens come from the export's `DESIGN.md`, never from screenshots.** Reading hex off a swatch image yields the container shade, not the base role.
 - **The export is reference, not source.** It ships with a README saying so, and never gets copied into `src/`. Its hotlinked CDN images never reach production.
 - **Stitch only emits light-mode tokens.** `discipline.md §8` demands light and dark: record the dark-theme gap explicitly rather than letting Step 5 assume §8 is met.
-- **Verify the contract-critical states against `discipline.md`, not against how good the screen looks.** A state that must show *no value* (an uncomputable metric, a blocked suggestion) must show no value — not a placeholder zero. Generators reach for `0` by default; that is a contract violation, and it is the single most likely thing to slip through this step.
+- **Verify the contract-critical states against `discipline.md`, not against how good the screen looks.** A state that must show *no value* (an uncomputable metric, a blocked suggestion) must show no value - not a placeholder zero. Generators reach for `0` by default; that is a contract violation, and it is the single most likely thing to slip through this step.
 - **Nothing ships in the handoff without a contract.** Every visible action, computed metric, navigation target and empty-state CTA must map to a P0 adapter operation / IO shape / screen, or be removed or marked P1/P2. Never transcribe a tool's embellishment as spec. Apply the contract-mapping gate (Phase 2) before closing.

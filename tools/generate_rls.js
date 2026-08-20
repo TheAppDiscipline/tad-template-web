@@ -1,5 +1,5 @@
 /**
- * discipline:rls-generate — Generates a Supabase migration SQL file for a new table
+ * discipline:rls-generate - Generates a Supabase migration SQL file for a new table
  * with full RLS setup, indexes, and updated_at trigger.
  *
  * Usage:

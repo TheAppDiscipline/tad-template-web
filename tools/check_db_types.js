@@ -1,5 +1,5 @@
 /**
- * check-db-types — opt-in drift check (7.3-B): Supabase DB schema vs committed TS types.
+ * check-db-types - opt-in drift check (7.3-B): Supabase DB schema vs committed TS types.
  *
  * READ-ONLY: never writes a file. Repair drift with `npm run db:types:generate`.
  *

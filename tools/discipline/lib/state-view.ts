@@ -258,7 +258,7 @@ export function buildStateView(root: string): DisciplineStateView {
 }
 
 function cell(value: string | null | undefined): string {
-  return (value ?? '—').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+  return (value ?? ' - ').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
 }
 
 function renderSliceTable(slices: SliceStateView[]): string[] {
@@ -269,8 +269,8 @@ function renderSliceTable(slices: SliceStateView[]): string[] {
     ...slices.map((slice) => {
       const metric = slice.latest_metric
         ? `${slice.latest_metric.changed_lines}/${slice.latest_metric.max_changed_lines} lines @ ${slice.latest_metric.recorded_at}; surfaces=${slice.latest_metric.affected_surfaces.join(', ') || 'none'}; split=${slice.latest_metric.split_decision ?? 'none'}; sig=${slice.latest_metric.signature}`
-        : '—';
-      const packet = slice.packet ? `${slice.packet.file} (${slice.packet.status ?? 'no status'})` : '—';
+        : ' - ';
+      const packet = slice.packet ? `${slice.packet.file} (${slice.packet.status ?? 'no status'})` : ' - ';
       return `| ${cell(slice.id)} | ${cell(slice.title)} | ${cell(slice.plan_status)} | ${cell(packet)} | ${cell(slice.packet?.affected_surfaces.join(', '))} | ${cell(slice.packet?.required_gates.join(', '))} | ${metric} |`;
     }),
   ];

@@ -1,5 +1,5 @@
 /**
- * Discipline Loop env-check — fail-fast on credentials and legacy architecture vars.
+ * Discipline Loop env-check - fail-fast on credentials and legacy architecture vars.
  *
  * Import this module once at app startup (main.tsx). Provider and auth come from
  * the generated, versioned contract; .env contains credentials only.
@@ -40,7 +40,7 @@ if (provider === 'FIREBASE') {
 
 if (errors.length > 0) {
     throw new Error([
-        '[Discipline Loop] env-check failed — fix before continuing:',
+        '[Discipline Loop] env-check failed - fix before continuing:',
         ...errors.map(e => `  • ${e}`),
     ].join('\n'))
 }

@@ -59,4 +59,4 @@ Return **only** the JSON envelope below as your final message: no prose, no mark
 
 - Modify files or revert changes.
 - Block the commit by itself; only flags and recommends.
-- Decide whether a refactor is "scope creep" or "necessary cleanup" — returns the observation; the human decides.
+- Decide whether a refactor is "scope creep" or "necessary cleanup" - returns the observation; the human decides.

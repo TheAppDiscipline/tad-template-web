@@ -63,7 +63,7 @@ export function isNone(text: string): boolean {
  * heading" was too loose, and it ate the `### GATES` or `### OUTCOME` that opens a packet whose
  * identity lives in frontmatter, hiding the declaration inside it.
  */
-const PACKET_TITLE_RE = /^#{1,3}[ \t]+[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*_PACKET(?:_[A-Za-z0-9.-]+)?(?:[ \t]*[-–—:][ \t]*.*)?$/;
+const PACKET_TITLE_RE = /^#{1,3}[ \t]+[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*_PACKET(?:_[A-Za-z0-9.-]+)?(?:[ \t]*[-–\u2014:][ \t]*.*)?$/;
 
 export function completionBody(fileContent: string): string {
   const normalized = fileContent.replace(/^\uFEFF/, '');

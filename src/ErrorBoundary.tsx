@@ -10,7 +10,7 @@ interface State {
 }
 
 /**
- * Discipline Loop ErrorBoundary — catches React render errors and shows the error UI state
+ * Discipline Loop ErrorBoundary - catches React render errors and shows the error UI state
  * instead of a blank screen. Wrap the app root (or individual sections) with this.
  *
  * Replace the default fallback with your app's error UI once Slice 0 is done.

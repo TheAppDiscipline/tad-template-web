@@ -9,7 +9,7 @@ import { routeFromPackets, resolveStep4Origin } from './lib/step4-origin.js';
 import { resolveProjectRoot } from './lib/discipline-config.js';
 import { copyToClipboard as writeTextToClipboard } from './lib/clipboard.js';
 import { extractEmbeddedPatches } from './lib/parse-patch.js';
-import { applyPatches } from './apply-patch.js';
+import { applyPatches, assertNoRecoveryRequired, pendingPatchBatchDigest } from './apply-patch.js';
 import { isSliceConsumed, resolveConsumptionTarget, resolvePacketIdentity, selectStep5Packets, slicePasteReadyFileName } from './lib/slice-identity.js';
 import { recordClosure, completionGateState, hasCompletionPacket } from './update-progress.js';
 import { readCompletion } from './lib/completion-packet.js';
@@ -93,6 +93,7 @@ async function safeLog(root: string, fileName: string, notes: string[], outputPa
 }
 
 export async function handlePacket(root: string, filePath: string) {
+  assertNoRecoveryRequired(root);
   const fileName = path.basename(filePath);
   // Set when a packet's own declarations contradict each other: nothing advances on top of that.
   let identityBlocked = false;
@@ -174,7 +175,7 @@ export async function handlePacket(root: string, filePath: string) {
       }
 
       disciplineInfo('  Applying patches...');
-      await applyPatches(root);
+      await applyPatches(root, false, undefined, pendingPatchBatchDigest(root));
       logNotes.push(`patches=${patches.length}`);
     }
 

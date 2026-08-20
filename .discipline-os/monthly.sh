@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# .discipline-os/monthly.sh — Discipline Loop monthly maintenance (NN 14, NN 17, NN 20)
+# .discipline-os/monthly.sh - Discipline Loop monthly maintenance (NN 14, NN 17, NN 20)
 set -e
 
-echo "Discipline Loop monthly maintenance — $(date +%Y-%m-%d)"
+echo "Discipline Loop monthly maintenance - $(date +%Y-%m-%d)"
 echo ""
 
 echo "=== 1/5 Backups verification ==="
@@ -13,7 +13,7 @@ echo ""
 
 echo "=== 2/5 Bundle audit ==="
 if [ -f "package.json" ] && grep -q '"build"' package.json; then
-  npm run build || echo "⚠ build failed — investigate."
+  npm run build || echo "⚠ build failed - investigate."
   echo "Check bundle size vs NN 20 threshold."
   echo "  Web: entry <200 KB gzipped."
   echo "  Mobile (Hermes): bundle <2 MB."

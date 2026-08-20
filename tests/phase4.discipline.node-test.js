@@ -261,7 +261,7 @@ test('state-view is byte deterministic and --json exposes the same slice, gate, 
   write(root, '.discipline/packets/SLICE_COMPLETION_PACKET_3.md', completionPacket('3'))
   write(root, 'progress.md', [
     '# progress.md', '', '## Current Status', '- Blockers: none', '', '---',
-    '### 2026-08-11 — Slice 3', '- **Slice:** 3', '- **Status:** done', '- **Gates:** yes', '',
+    '### 2026-08-11 - Slice 3', '- **Slice:** 3', '- **Status:** done', '- **Gates:** yes', '',
   ].join('\n'))
   const packetOne = fs.readFileSync(path.join(root, '.discipline', 'packets', 'STEP_5_SLICE_PACKET_1.md'))
   const metric = signedMetric('1', 42, crypto.createHash('sha256').update(packetOne).digest('hex'))
@@ -364,7 +364,7 @@ test('progress logs canonical identity independently from the visible name and r
   const updated = runTsx('tools/discipline/update-progress.ts', ['--project-dir', root])
   assert.equal(updated.status, 0, output(updated))
   const progress = fs.readFileSync(path.join(root, 'progress.md'), 'utf8')
-  assert.match(progress, /### \d{4}-\d{2}-\d{2} — Shopping list/)
+  assert.match(progress, /### \d{4}-\d{2}-\d{2} - Shopping list/)
   assert.match(progress, /- \*\*Slice:\*\* 27e3b/)
 
   const markSource = `import { markSliceConsumed } from './tools/discipline/lib/slice-identity.ts'; console.log(JSON.stringify(markSliceConsumed(${JSON.stringify(root)}, 'S27E3b')))`
@@ -377,7 +377,7 @@ test('progress logs canonical identity independently from the visible name and r
 
   const legacy = [
     '### 2026-08-11 - Slice S13.2 - child', '- **Status:** done', '- **Gates:** yes',
-    '### 2026-08-12 — S27E3b — composite', '- **Status:** shipped', '- **Gates:** yes',
+    '### 2026-08-12 - S27E3b - composite', '- **Status:** shipped', '- **Gates:** yes',
     '### 2026-08-13 : Slice 14: colon', '- **Status:** done', '- **Gates:** yes',
   ].join('\n')
   const parseSource = `import { readProgressLog } from './tools/discipline/lib/progress-log.ts'; console.log(JSON.stringify(readProgressLog(${JSON.stringify(legacy)})))`
@@ -397,13 +397,13 @@ test('state-view denies consumption for duplicate fields and contradictory progr
   }
   write(root, 'progress.md', [
     '# progress.md', '', '## Current Status', '- Blockers: none', '',
-    '### 2026-08-11 — Slice 13',
+    '### 2026-08-11 - Slice 13',
     '- **Slice:** 13', '- **Slice:** 99',
     '- **Status:** done', '- **Status:** blocked',
     '- **Gates:** yes', '- **Gates:** no', '',
-    '### 2026-08-12 — Slice 14', '- **Slice:** 14', '- **Status:** done', '- **Gates:** yes', '',
-    '### 2026-08-13 — Slice 14 retry', '- **Slice:** 14', '- **Status:** blocked', '- **Gates:** no', '',
-    '### 2026-08-14 — Shopping list', '- **Slice:** 99', '- **Slice:** 99', '- **Status:** done', '- **Gates:** yes', '',
+    '### 2026-08-12 - Slice 14', '- **Slice:** 14', '- **Status:** done', '- **Gates:** yes', '',
+    '### 2026-08-13 - Slice 14 retry', '- **Slice:** 14', '- **Status:** blocked', '- **Gates:** no', '',
+    '### 2026-08-14 - Shopping list', '- **Slice:** 99', '- **Slice:** 99', '- **Status:** done', '- **Gates:** yes', '',
   ].join('\n'))
 
   const result = runTsx('tools/discipline/state-view.ts', ['--json', '--project-dir', root])

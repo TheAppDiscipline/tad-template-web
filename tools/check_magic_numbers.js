@@ -1,5 +1,5 @@
 /**
- * Discipline Loop Visual Gate — No Magic Numbers in UI
+ * Discipline Loop Visual Gate - No Magic Numbers in UI
  *
  * Heuristic scan for hardcoded typography / spacing / shadow values inside
  * JSX style props or styled-component / template-literal CSS. The goal is

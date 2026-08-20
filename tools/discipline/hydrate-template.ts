@@ -35,7 +35,7 @@ function writeIfNew(relPath: string, content: string) {
   if (!force) disciplineInfo(`Created: ${relPath}`);
 }
 
-writeIfNew('discipline.md', `# discipline.md — Project Constitution
+writeIfNew('discipline.md', `# discipline.md - Project Constitution
 
 ## 0) Profile
 - PROJECT_NAME: <APP_NAME>
@@ -116,7 +116,7 @@ writeIfNew('findings.md', `# findings.md
 
 ## Deferred
 `);
-writeIfNew('progress.md', `# progress.md — Current Status + Logs
+writeIfNew('progress.md', `# progress.md - Current Status + Logs
 
 ## Current Status
 - Working on: N/A
@@ -139,14 +139,14 @@ writeIfNew('progress.md', `# progress.md — Current Status + Logs
 
 ---
 `);
-writeIfNew('task_plan_archive.md', `# task_plan_archive.md — Reviewed Slice History
+writeIfNew('task_plan_archive.md', `# task_plan_archive.md - Reviewed Slice History
 
 > Human-authored prose is moved here only through reviewable Discipline patch blocks.
 
 ## Archived Slices
 - (none)
 `);
-writeIfNew('findings_archive.md', `# findings_archive.md — Reviewed Findings History
+writeIfNew('findings_archive.md', `# findings_archive.md - Reviewed Findings History
 
 > Human-authored prose is moved here only through reviewable Discipline patch blocks.
 

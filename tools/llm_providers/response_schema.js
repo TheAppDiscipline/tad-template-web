@@ -16,14 +16,14 @@ function readJsonFile(filePath) {
  * Resolve the schema representation passed to a provider as `responseSchema` in
  * live mode.
  *
- * Native structured-output providers do NOT accept full JSON Schema 2020-12 —
+ * Native structured-output providers do NOT accept full JSON Schema 2020-12:
  * each one accepts a different, restricted OpenAPI-style subset (see
  * tools/LLM_TOOLS_README.md §8). Gemini rejects `$schema`/`$defs`/
  * `additionalProperties`/`minimum` with a 400; OpenAI `json_schema` strict, on
  * the contrary, REQUIRES `additionalProperties: false` and every field in
  * `required`. Because the two shapes are mutually exclusive, the minimal
  * representation is provider-specific and cannot be derived generically from the
- * canonical schema — it must be hand-curated per target.
+ * canonical schema - it must be hand-curated per target.
  *
  * This resolver looks for that hand-curated minimal schema by precedence and
  * only falls back to the canonical one (which some providers accept and Gemini

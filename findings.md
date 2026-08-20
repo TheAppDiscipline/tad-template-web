@@ -5,7 +5,7 @@
   headings; discipline:patch depends on exact heading text.
 -->
 
-# findings.md — Discoveries, Assumptions, Constraints
+# findings.md - Discoveries, Assumptions, Constraints
 
 ## Decisions
 - N/A

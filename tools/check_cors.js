@@ -1,8 +1,8 @@
 /**
- * Discipline Loop Security Gate — No CORS Wildcard
+ * Discipline Loop Security Gate - No CORS Wildcard
  *
  * Scans server-side code for `Access-Control-Allow-Origin: *` or equivalent.
- * Wildcard CORS in production is a security risk — origins must be explicit.
+ * Wildcard CORS in production is a security risk - origins must be explicit.
  *
  * Heuristic: scan known server dirs (api/, server/, functions/, pages/api/)
  * for CORS headers with wildcard values.
@@ -56,7 +56,7 @@ const WILDCARD_PATTERNS = [
   {
     // 2-arg setHeader/header form: res.setHeader('Access-Control-Allow-Origin', '*')
     pattern: /(?:set)?header\s*\(\s*['"]access-control-allow-origin['"]\s*,\s*['"]\*['"]/i,
-    label: 'setHeader/header("Access-Control-Allow-Origin", "*") — wildcard via 2-arg form',
+    label: 'setHeader/header("Access-Control-Allow-Origin", "*") - wildcard via 2-arg form',
   },
   {
     // cors() with no options defaults to Access-Control-Allow-Origin: * (permissive).

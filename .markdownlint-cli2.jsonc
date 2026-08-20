@@ -1,7 +1,7 @@
 {
   // Docs CI runs this on every push and PR, so the rules must match how this
   // content is actually written. It previously ran only on PRs, and every PR
-  // failed here before reaching Vale — which is why Vale had never executed once.
+  // failed here before reaching Vale - which is why Vale had never executed once.
   //
   // Kept ON: rules that catch real defects (broken/empty/reversed links, bad
   // anchors, hard tabs). Those can break the buyer's docs or the patch engine.

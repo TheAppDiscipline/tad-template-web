@@ -1,9 +1,9 @@
 /**
- * tests/storage/private-access.mjs — private Storage isolation test (A7).
+ * tests/storage/private-access.mjs - private Storage isolation test (A7).
  *
  * Proves that a private file is actually private: an anonymous (logged-out) client
  * canNOT download user A's object, and a signed URL stops working after it expires.
- * Service-role key is used ONLY here, to seed the object — never in client code.
+ * Service-role key is used ONLY here, to seed the object - never in client code.
  *
  * Plain Node ESM. Wired to `npm run test:storage:privacy`; required by scorecard
  * item L17 when UPLOADS=true. Skips cleanly when env/bucket are absent so it never
@@ -21,7 +21,7 @@ const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY
 const BUCKET = process.env.TEST_PRIVATE_BUCKET
 
 function skip(reason) {
-  console.log(`\x1b[33m[SKIP]\x1b[0m test:storage:privacy — ${reason}`)
+  console.log(`\x1b[33m[SKIP]\x1b[0m test:storage:privacy - ${reason}`)
   process.exit(0)
 }
 

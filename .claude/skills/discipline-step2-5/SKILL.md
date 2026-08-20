@@ -119,7 +119,7 @@ Paste your schema:
 
 Generate `prompts/<feature-name>/schema.json` with the full wrapper. Validate with AJV (already in deps).
 
-> **Gotcha — providers need a second, minimal schema.** Models with native
+> **Gotcha - providers need a second, minimal schema.** Models with native
 > structured output (Gemini `responseSchema`, OpenAI `json_schema`, Grok,
 > Mistral) consume a restricted OpenAPI subset, not full JSON Schema. Gemini
 > rejects `additionalProperties`, type-arrays (`["string","null"]` → use

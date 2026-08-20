@@ -1,5 +1,5 @@
 /**
- * db:types:generate — repair action for check-db-types (7.3-B).
+ * db:types:generate - repair action for check-db-types (7.3-B).
  *
  * Generates `src/lib/backend/supabase/database.types.ts` from the local Supabase
  * schema. This is the ONLY script that writes the types file; `check-db-types`

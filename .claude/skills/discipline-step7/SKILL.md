@@ -247,7 +247,7 @@ Report: `✓ Output 4/5: PROD_HARDENING_PACKET`
 
 Generate the 3 blocks:
 
-1. **DISCIPLINE_MD_PATCH_BLOCK** — change PROFILE to PROD and update the relevant sections:
+1. **DISCIPLINE_MD_PATCH_BLOCK** - change PROFILE to PROD and update the relevant sections:
 
 ```markdown
 ## DISCIPLINE_MD_PATCH_BLOCK - Step 7 profile change
@@ -265,7 +265,7 @@ PROFILE: PROD
 
 If the hardening adds new gates, rate limits, or contracts, generate additional patches for the corresponding sections of discipline.md.
 
-2. **TASK_PLAN_PATCH_BLOCK** — add hardening slices to Ready Slices:
+2. **TASK_PLAN_PATCH_BLOCK** - add hardening slices to Ready Slices:
 
 ```markdown
 ## TASK_PLAN_PATCH_BLOCK - Step 7 hardening slices
@@ -284,7 +284,7 @@ ANCHOR: ## 4) Ready Slices
 ...
 ```
 
-3. **FINDINGS_APPEND_BLOCK** — document the decisions:
+3. **FINDINGS_APPEND_BLOCK** - document the decisions:
 
 ```markdown
 ## FINDINGS_APPEND_BLOCK - Step 7 hardening decision

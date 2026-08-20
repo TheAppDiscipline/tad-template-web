@@ -7,7 +7,7 @@ description: "Capture real-usage findings days after a deploy WITHOUT re-running
 
 This skill covers the gap between Step 6 (deploy + verify) and the next Step 4 feedback loop: you deployed, you used the app for days, and now you have findings to register. Step 6 is the wrong tool for that moment (its contract requires gates, build, and a deploy). This skill only captures, classifies, and records.
 
-**Scope fence (why this skill is narrow).** In Fase 1 the pipeline has no handoff-consumption model: the Step 4 origin resolver routes by the PRESENCE of packet files. Therefore this skill NEVER creates or modifies packets — a new packet type would become an unreadable router signal and increase origin collisions. Everything it writes goes through `FINDINGS_APPEND_BLOCK`s into `findings.md`, which Step 4 already reads (both the in-repo skill and the assembled paste-ready include it). A future version (Fase 2) will add deploy-scoped immutable deltas; this one deliberately does not.
+**Scope fence (why this skill is narrow).** In Fase 1 the pipeline has no handoff-consumption model: the Step 4 origin resolver routes by the PRESENCE of packet files. Therefore this skill NEVER creates or modifies packets - a new packet type would become an unreadable router signal and increase origin collisions. Everything it writes goes through `FINDINGS_APPEND_BLOCK`s into `findings.md`, which Step 4 already reads (both the in-repo skill and the assembled paste-ready include it). A future version (Fase 2) will add deploy-scoped immutable deltas; this one deliberately does not.
 
 ## What the user sees
 
@@ -55,10 +55,10 @@ Do not interview, do not create files, do not offer to resolve it from inside th
 
 Then read these files. Only `findings.md` is required.
 
-1. `findings.md` — verify the canonical anchors exist (`## Decisions`, `## Open Questions`, `## Risks`, `## Constraints`, `## Assumptions`, `## Deferred`). If any is missing, stop: "findings.md is missing canonical anchors. Run npm run discipline:validate and fix before intake."
-2. `.discipline/packets/POST_DEPLOY_FEEDBACK_PACKET.md` (optional) — extract: DEPLOY_TARGET, GENERATED date, the list of open issues and UX frictions. This packet is **immutable evidence of its deploy and a router signal: never edit it.**
-3. `progress.md` (optional) — deploy notes, open errors.
-4. `task_plan.md` (optional, read-only) — pending backlog items, for dedupe only.
+1. `findings.md` - verify the canonical anchors exist (`## Decisions`, `## Open Questions`, `## Risks`, `## Constraints`, `## Assumptions`, `## Deferred`). If any is missing, stop: "findings.md is missing canonical anchors. Run npm run discipline:validate and fix before intake."
+2. `.discipline/packets/POST_DEPLOY_FEEDBACK_PACKET.md` (optional) - extract: DEPLOY_TARGET, GENERATED date, the list of open issues and UX frictions. This packet is **immutable evidence of its deploy and a router signal: never edit it.**
+3. `progress.md` (optional) - deploy notes, open errors.
+4. `task_plan.md` (optional, read-only) - pending backlog items, for dedupe only.
 
 Build an internal list of KNOWN OPEN ITEMS (issue + where it is recorded). Show it to the operator up front:
 
@@ -97,7 +97,7 @@ For each finding, record:
 - **Type:** bug | ux-friction | missing-feature | performance | security/data | priority-change | open-question | non-issue
 - **Severity (operator's call):** blocks-main-flow | friction | minor
 - **Deploy context:** URL/date from Phase 0/1, or "local usage" if none
-- **Dedupe status:** new | update-to-known (name the known item; an update adds the new information and references the original — it never duplicates the entry)
+- **Dedupe status:** new | update-to-known (name the known item; an update adds the new information and references the original - it never duplicates the entry)
 
 If EVERYTHING the operator reports is already recorded and brings no new information, stop here: "Nothing new to record. findings.md and the packet already cover this." Write no files.
 
@@ -124,7 +124,7 @@ PATCH_MODE: append
 ANCHOR: ## Risks
 
 ### CONTENT
-- <YYYY-MM-DD> · [<bug|ux-friction|performance|security> · <severity>] <observed behavior> — impact: <impact>. Evidence/repro: <steps or screen>. (deploy: <URL or "local usage">)
+- <YYYY-MM-DD> · [<bug|ux-friction|performance|security> · <severity>] <observed behavior> - impact: <impact>. Evidence/repro: <steps or screen>. (deploy: <URL or "local usage">)
 ```
 
 **Deferred block:** save to `.discipline/patches/pending/FEEDBACK_INTAKE_<RUN_STAMP>_deferred.md`
@@ -192,7 +192,7 @@ npm run discipline:log -- --step 6-intake --tool "Claude" --notes "Usage feedbac
 Feedback intake complete.
 
 Recorded: <N> new findings, <M> updates to known items
-Applied to: findings.md (<§Risks, §Deferred, §Decisions, §Open Questions — only the ones written>)
+Applied to: findings.md (<§Risks, §Deferred, §Decisions, §Open Questions - only the ones written>)
 Paste-ready: <refreshed step-4-feedback.md | skipped (<reason>)>
 
 Next (your call, not mine):

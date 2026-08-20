@@ -57,6 +57,13 @@ export const ALLOWED_PATCH_TARGETS = new Set([
   'discipline.md', 'task_plan.md', 'findings.md', 'progress.md', 'task_plan_archive.md', 'findings_archive.md',
 ]);
 
+// Historical decision and plan records are append-only. Current claims may be
+// resolved by dated additions; replacing or deleting the reviewed history is
+// never a valid automated patch.
+export const APPEND_ONLY_PATCH_TARGETS = new Set([
+  'findings.md', 'task_plan_archive.md', 'findings_archive.md',
+]);
+
 /**
  * Normalize line endings to LF. Critical on Windows where files have CRLF.
  */

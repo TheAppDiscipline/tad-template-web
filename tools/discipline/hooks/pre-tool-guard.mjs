@@ -19,10 +19,8 @@
  *     the normal permission flow proceed, which is our ALLOW.
  *
  * Failure policy (documented, deliberate): this guard fails CLOSED to ASK when
- * the tool_name and inputs parsed successfully but our own rule evaluation threw
- * (better to prompt the human than to silently allow). On a TOTAL parse failure
- * (stdin is not the expected shape at all) it ALLOWS and logs one stderr line:
- * a broken hook must not brick every tool call in the session.
+ * the payload is malformed or rule evaluation throws. A broken or spoofed hook
+ * payload must never become a silent authorization channel.
  *
  * Heuristic limits (intentional, see decide()): command matching is a simple
  * regex over the Bash command string, not a shell parser. It can therefore
@@ -35,6 +33,8 @@
  */
 
 // --- Path helpers -----------------------------------------------------------
+
+import * as path from 'node:path';
 
 /** Normalize a path-ish string to forward slashes, lowercased, for matching. */
 function normPath(p) {
@@ -58,6 +58,17 @@ function editPaths(toolInput) {
     if (typeof v === 'string' && v.length) out.push(v);
   }
   return out;
+}
+
+/** True when a mutation target resolves outside the project working directory. */
+function escapesWorkingTree(p, cwd) {
+  const candidate = String(p ?? '');
+  if (!candidate) return false;
+  if (!cwd) return normPath(candidate).split('/').includes('..');
+  const root = path.resolve(String(cwd));
+  const resolved = path.resolve(root, candidate);
+  const relative = path.relative(root, resolved);
+  return relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
 }
 
 // --- ASK rules for Edit/Write file targets ----------------------------------
@@ -113,9 +124,37 @@ function classifyBash(command) {
     return { decision: 'deny', reason: 'blocked by doctrine: piping a download into a shell (curl|sh) is never auto-approved.' };
   }
 
-  // ASK: new dependencies. npm install / npm i / npm add (and yarn/pnpm add).
-  if (/\bnpm\s+(install|i|add)\b/i.test(cmd) || /\b(yarn|pnpm)\s+add\b/i.test(cmd)) {
-    return { decision: 'ask', reason: 'installs dependencies: new deps are never auto-approved (review before adding).' };
+  // DENY: command-line reads of secret files or wholesale environment dumps.
+  if (/(^|[\s"'=\/\\])\.env(?:\.[\w.-]+)?(?:$|[\s"'|;&])/i.test(cmd)
+    || /\b(printenv|env)\b(?:\s|$)/i.test(cmd)
+    || /\b(get-childitem|gci|dir)\s+(?:-path\s+)?env:/i.test(cmd)) {
+    return { decision: 'deny', reason: 'blocked by doctrine: secret files and environment-value dumps must not be read or exposed automatically.' };
+  }
+
+  // ASK: dependencies and lifecycle-capable package execution. Even lockfile-only
+  // installs can change reviewed bytes; npx/dlx can download and execute code.
+  if (/\bnpm\s+(install|i|add|ci|exec)\b/i.test(cmd)
+    || /\bnpx\b/i.test(cmd)
+    || /\b(yarn|pnpm|bun)\s+(install|add|i|ci|dlx|exec|x)\b/i.test(cmd)) {
+    return { decision: 'ask', reason: 'installs or executes package supply-chain code: dependency operations require explicit human approval.' };
+  }
+
+  // ASK: every local or external publication boundary is independent of a green
+  // gate or checkpoint.
+  if (/\bgit\s+(commit|tag)\b/i.test(cmd)
+    || (/\bgit\s+push\b/i.test(cmd) && !/(--force(-with-lease)?|\s-f\b)/i.test(cmd))
+    || /\b(npm|pnpm|yarn)\s+publish\b/i.test(cmd)
+    || /\bgh\s+release\s+(create|upload)\b/i.test(cmd)
+    || /\b(vercel|netlify|firebase|fly|railway)\s+(deploy|up)\b/i.test(cmd)
+    || /\bwrangler\s+(deploy|publish|pages\s+deploy)\b/i.test(cmd)
+    || /\beas\s+(build|submit|update)\b/i.test(cmd)
+    || /\bsupabase\s+(db\s+push|functions\s+deploy)\b/i.test(cmd)
+    || /\b(docker\s+push|twine\s+upload)\b/i.test(cmd)) {
+    return { decision: 'ask', reason: 'crosses a commit, tag, push, deploy, upload, or publication boundary that requires explicit human approval.' };
+  }
+
+  if (/\bdiscipline(?::lease|\s+lease)\b[\s\S]*--force\b/i.test(cmd)) {
+    return { decision: 'ask', reason: 'force-overrides a slice lease; confirm ownership and recovery before proceeding.' };
   }
 
   return { decision: 'allow', reason: '' };
@@ -130,6 +169,10 @@ function classifyBash(command) {
 export function decide(payload) {
   const toolName = payload?.tool_name;
   const toolInput = payload?.tool_input ?? {};
+
+  if (typeof toolName !== 'string' || !toolName) {
+    return { decision: 'ask', reason: 'malformed hook payload: missing tool_name; asking to fail closed.' };
+  }
 
   // Bash: classify the command string.
   if (toolName === 'Bash') {
@@ -147,6 +190,9 @@ export function decide(payload) {
   // Edit/Write to sensitive project files -> ASK (never silently auto-approve).
   if (toolName === 'Edit' || toolName === 'Write' || toolName === 'NotebookEdit' || toolName === 'MultiEdit') {
     for (const p of editPaths(toolInput)) {
+      if (escapesWorkingTree(p, payload?.cwd)) {
+        return { decision: 'ask', reason: 'mutation resolves outside the current project; scope expansion requires explicit human approval.' };
+      }
       const reason = editTargetAsksReason(p);
       if (reason) return { decision: 'ask', reason: `never auto-approved: ${reason}.` };
     }
@@ -185,9 +231,10 @@ async function main() {
   try {
     payload = JSON.parse(raw);
   } catch {
-    // Total parse failure: allow (exit 0) and log one stderr line. A broken hook
-    // must not brick every tool call.
-    process.stderr.write('[discipline pre-tool-guard] could not parse hook payload; allowing.\n');
+    process.stdout.write(JSON.stringify(toHookOutput({
+      decision: 'ask',
+      reason: 'discipline pre-tool-guard could not parse the hook payload; asking to fail closed.',
+    })));
     process.exit(0);
     return;
   }

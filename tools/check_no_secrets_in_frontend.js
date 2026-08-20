@@ -1,5 +1,5 @@
 /**
- * Discipline Loop Security Gate — No Secrets in Frontend
+ * Discipline Loop Security Gate - No Secrets in Frontend
  *
  * Scans client-shipped code for API keys, server-only key references, and
  * secret-like literals. Server tooling and Edge Functions may reference env var
@@ -13,7 +13,7 @@ const ROOTS = ['src', 'public', 'tools', pathJoin('supabase', 'functions')];
 const CLIENT_ROOTS = ['src', 'public'];
 // Client-shipped files that live at the repo root (mobile entrypoint, Expo config,
 // EAS build config). A leaked service-role key here ships to the client just the
-// same, so scan them explicitly — A4.
+// same, so scan them explicitly - A4.
 const CLIENT_ROOT_FILES = [
   'App.tsx', 'App.jsx', 'App.ts', 'App.js', 'index.tsx', 'index.jsx',
   'app.json', 'app.config.js', 'app.config.ts', 'app.config.cjs', 'app.config.mjs',
@@ -34,7 +34,7 @@ const LITERAL_PATTERNS = [
 const CLIENT_REFERENCE_PATTERNS = [
   // Any token containing SERVICE_ROLE (service_role, SUPABASE_SERVICE_ROLE_KEY,
   // and crucially the prefixed VITE_SERVICE_ROLE_KEY / EXPO_PUBLIC_SERVICE_ROLE_KEY
-  // that the old `\bSERVICE_ROLE_KEY\b` missed — A4).
+  // that the old `\bSERVICE_ROLE_KEY\b` missed - A4).
   { pattern: /service[_-]?role/i, label: 'Server-only service_role reference in client code' },
   { pattern: /process\.env\.(?!VITE_|EXPO_PUBLIC_)[A-Z0-9_]+/, label: 'Server-only process.env reference in client code' },
   { pattern: /process\.env\[\s*['"](?!VITE_|EXPO_PUBLIC_)[A-Za-z_]/, label: 'Server-only process.env[...] bracket reference in client code' },
